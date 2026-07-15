@@ -27,7 +27,16 @@ Patterns ported from DeepCollector (referenced, not forked). Supervisor provided
 
 ## Infrastructure
 
-- **LLM**: self-hosted vLLM on UCL DIAS cluster (`ssh dias`), GPU partition (3× A100 80GB).
+- **LLM**: self-hosted vLLM on UCL DIAS cluster (`ssh dias`), GPU partition = 1 node,
+  3× A100 80GB PCIe, 128 CPU, 515GB RAM. **Empirically verified 2026-07-15** (submitted a
+  3-GPU probe job): SLURM grants all 3 (no per-job cap — QOS `normal` unrestricted), but
+  **effective per-model limit is 2 cards (~158GB)** because (a) TP=3 fails head-divisibility
+  for most models (Llama-70B = 64 heads, 64/3 ∉ ℤ) and (b) topology — **no NVLink, all
+  PCIe**; GPU0↔GPU1 are same-NUMA (`NODE`, the fast pair to tensor-parallel), GPU2 is
+  cross-NUMA (`SYS`, slowest link). So: big model TP=2 on GPU0+1, and — since all 3 are
+  allocatable in one job — a 2nd small model TP=1 on GPU2 concurrently (heterogeneous
+  big-reasoner + cheap-extractor split, confirmed available). The MuLE "only 2 GPUs" was
+  this TP/topology limit, NOT a scheduler cap.
   Serving `NousResearch/Meta-Llama-3.1-8B-Instruct` via Apptainer image
   `~/hepcoveragekg_setup/images/vllm-openai-v0.8.5.sif`. Submission script: `hpc/serve_vllm.sh`
   (requires `VLLM_API_KEY` env var). Jobs live 24h max, then need resubmission.

@@ -71,6 +71,41 @@ Ship with two critics if time bites; fidelity critic is the research question's 
   `EXTRACTION_METHODS` must distinguish it from plain single-pass RAG, so the comparison
   arms stay separable in the graph itself.
 
+## Compute feasibility on DIAS (discussed 2026-07-15)
+
+**Usable ceiling: 160GB VRAM per model** (2× A100 80GB — a single model tensor-parallels
+across at most 2 of the 3 cards; see overview infra note). The 3rd card runs a separate
+TP=1 server.
+
+- **Model ladder for the size-comparison experiment**: `8B → 32B → 70B`. All fit; 70B in
+  BF16 (~140GB) is *tight* on 160GB (~20GB KV cache) → prefer **4-bit** (~40GB, ~120GB KV,
+  comfortable). 120B-class only quantized (~62GB). 405B is out (and overkill for grounding-
+  hard extraction anyway). Comparison is sequential (one model at a time) so you only need
+  the largest single model resident.
+- **Bigger embeddings are NOT a compute concern**: even 7B-class embedders (~14GB) are
+  trivial and run once-per-paper cached. The whole compute story is the LLM.
+- **Agents ≠ models**: N concurrent agents on ONE shared model = one set of weights + KV
+  cache. Concurrency *helps* GPU utilization (vLLM batches independent requests — parallel
+  agents are exactly what it wants). Resource consumed is KV cache (peak sequences ×
+  context), not weights. Default design: **one model, many roles** (a "physics critic" is a
+  prompt, not a checkpoint).
+- **The real ceiling is concurrent *distinct large models*** (~160GB): 70B+32B doesn't fit;
+  even 70B-BF16 + 8B has no KV room. Mitigations: share model within a capability tier;
+  quantize; big-model-on-2-cards + small-on-1; hosted API (D-012) for a frontier agent (zero
+  local VRAM). Route by tier, don't give each agent its own checkpoint.
+- **At high agent concurrency the bottleneck leaves the GPU**: external tool rate limits
+  (InspireHEP won't love hundreds of concurrent queries), orchestrator CPU/RAM, and the
+  shared-node + 24h-wall reality. An *always-on* swarm fights DIAS's shared-batch nature —
+  batch/offline runs fit, persistent services don't.
+- **Orchestration must be async / high-concurrency**: agent chains are sequential
+  dependencies (critic waits on extractor), so run many paper-trajectories at once to keep
+  vLLM batched — else a 70B sits at single-digit % utilization waiting between calls.
+
 ## Open
 
 - Which 1–2 components to build; evaluation gold-set design; when the baseline counts as done.
+- ~~Verify whether the 2-GPU-per-model limit is TP head-divisibility or a SLURM cap~~
+  **RESOLVED 2026-07-15** (3-GPU probe job): no SLURM cap — all 3 allocatable in one job;
+  the 2-per-model limit is TP=3 head-divisibility + PCIe/NUMA topology (no NVLink; GPU0+1
+  same-NUMA fast pair, GPU2 cross-NUMA slow). Two-server trick (TP=2 big on GPU0+1, TP=1
+  small on GPU2) is confirmed available. See overview infra note.
