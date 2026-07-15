@@ -1,7 +1,7 @@
 # Overview — current state
 
 *Living document: always reflects the present. History lives in `decisions.md` and `logs/`.*
-*Last updated: 2026-07-10*
+*Last updated: 2026-07-15*
 
 ## What this project is
 
@@ -60,3 +60,13 @@ Patterns ported from DeepCollector (referenced, not forked). Supervisor provided
 - Hybrid `vocab_policy` per predicate: designed, leaning yes, **not explicitly signed off** → `ideas/open-vocab-reconciliation.md`
 - Repo may be merged into a supervisor-created repository in the coming weeks — vault is
   self-contained in `vault/` to move atomically.
+
+## Dissertation shape (emerging, planning-stage)
+
+Three acts, each separately evaluable: **(1) baseline pipeline** (harvest→extract→KG, mostly
+built) → **(2) quality**: critic panel + reconciliation, measured against baseline
+(`ideas/multi-agent-extension.md`) → **(3) payoff**: deterministic gap enumeration + reasoning
+layer producing ranked, literature-checked gap hypotheses (`ideas/gap-hypothesis-system.md`).
+Baseline must be built and measured before the agentic arms. Also open: Pydantic guided-decoding
+ablation at the LLM boundary (`ideas/pydantic-validation.md`). Critical path stays the baseline:
+kg layer + paper list + final-state fix.
