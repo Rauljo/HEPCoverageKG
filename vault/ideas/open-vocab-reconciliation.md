@@ -23,6 +23,23 @@ Add `vocab_policy` to each PREDICATE_SCHEMA entry:
   escape hatch adds recall. `NEW:` labels become **provisional** nodes (flagged, so
   queries can include/exclude them).
 
+### Closed `detector_object` still needs an escape-hatch flag (AgentRivet, 2026-07-15)
+
+A refinement, NOT a reversal, of the closed-`detector_object` stance. AgentRivet's dominant
+failure was *silent omission* producing a schema-valid record that quietly mislabels. Our
+danger: a search requiring an object our (finite) vocab can't express — a substructure-tagged
+large-R jet (W/top-tagged, not just `large_r_jet`), a displaced vertex as a *signal* object, an
+anomalous-dE/dx track — gets filed under the nearest ordinary class (e.g. "1 jet + MET").
+**This yields a false _covered_, strictly worse than a false _absent_**: absent gets
+investigated, covered gets trusted — a later "has anything looked at 1 jet + MET?" returns yes
+and points at a boosted-diboson search that would never have seen the user's signal. (Note:
+our `DETECTOR_OBJECT_VOCAB` is already richer than browser-Claude assumed — it has large_r_jet,
+hadronic_tau, track, vertex — but finite-and-closed still can't express substructure tags or
+genuinely novel objects.) **Proposed cheap fix**: add an `unmapped_object_requirements` field
+(bool + free text); if it fires, the final-state class label carries a caveat instead of
+standing alone. Cheap now, a schema change + full re-run if deferred. **Needs sign-off**
+alongside the `vocab_policy` decision.
+
 ## Reconciliation loop (adopted, D-016)
 
 Every N papers, a batch script (~150 lines, NOT an agent — no planning/tool-choice exists in the task):

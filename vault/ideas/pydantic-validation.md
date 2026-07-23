@@ -39,6 +39,20 @@ Caveats:
 - **It's evaluable**: freeform-parse (current) vs guided-decoding — extraction
   precision/recall + parse-failure rate, head to head. A results-table ablation, not plumbing.
 
+## Field-level in, object-level out (AgentRivet, 2026-07-15)
+
+AgentRivet treats model outputs as untrusted until schema-validated, and gets both
+structured-output constraint and post-hoc validation from one Pydantic class. Two caveats it
+confirms: **validation ≠ confidence** (well-formed ≠ true; AgentRivet has no confidence
+anywhere, only its review loop), and a whole-object Pydantic model over the *assembled* record
+is a **trap** — one bad field fails the entire construction, reintroducing exactly the
+monolithic failure cellular RAG exists to avoid. Pattern: **validate per cell on the way in**
+(`TypeAdapter(int).validate_python(v)`, or one tiny model per field), reserve whole-object
+Pydantic for the **derived** layer where all-or-nothing is genuinely wanted. Our design is
+already close (per-field extraction + per-field checks in rag_engine; object-level `validate()`
+only at the end). Concrete: `PLAUSIBILITY_THRESHOLDS` could become Pydantic `Field(ge=…, le=…)`
+constraints rather than the bespoke `_validate_plausibility` — if guided decoding is adopted.
+
 ## Open
 
 - Run the guided-decoding ablation once a gold set exists (ties to multi-agent baseline eval).

@@ -56,6 +56,21 @@ ablatable (baseline → +1 → +2 → +3, measuring per-critic flag precision on
 
 Ship with two critics if time bites; fidelity critic is the research question's heart.
 
+## Authority ordering: blocker vs advisory (from AgentRivet, 2026-07-15)
+
+Principle (AgentRivet's Code-Reviewer vs Physics-Reviewer split): **if something outside the
+LLM pipeline can check a claim, that claim wins automatically and may overwrite; if nothing
+external can check it, it is only advisory — flag/quarantine/lower-confidence, never
+overwrite.** "External" does the work — a compiler earns authority by not caring what any LLM
+thinks. AgentRivet's Physics-Reviewer kept demanding an impossible observable; because it was
+*advisory*, the Coder could correctly refuse — as a blocker the loop would never terminate.
+Our mapping: HEPData / SimpleAnalysis / pyhf = **blocker** (ATLAS published it, external →
+overwrites the extractor); every LLM critic above = **advisory** (grades its own homework off
+the same paper → flag only). This is the *principled reason* our critics are flag-only (D-018)
+and makes grounding load-bearing — see [grounding-and-evaluation.md](grounding-and-evaluation.md).
+Inverting it fails **silently**: a confident critic overwriting a grounded count errors
+nothing, hangs nothing, and the map is simply wrong.
+
 ## Guardrails
 
 - **Sequencing**: baseline first (kg layer, paper list, final-state fix, measured simple
@@ -70,6 +85,13 @@ Ship with two critics if time bites; fidelity critic is the research question's 
 - **Provenance** (the absorbed seed): when agent-derived extraction exists,
   `EXTRACTION_METHODS` must distinguish it from plain single-pass RAG, so the comparison
   arms stay separable in the graph itself.
+- **Critics must re-read the SOURCE, not just the extracted fields** (AgentRivet's
+  Physics-Reviewer blind spot: it judged the Coder against the Analyst's *summary*, so it could
+  never catch the Analyst dropping a definition — and silent omission was the dominant failure).
+  A fidelity critic reading only assertions replicates that blind spot exactly.
+- **Test any critic on a known-clean case** (AgentRivet's Claude-Opus never once returned
+  "approved" even when instructed to — hedging, not grading). If our critic never says "clean,"
+  everything lands in quarantine and a quarantine of everything tells us nothing.
 
 ## Compute feasibility on DIAS (discussed 2026-07-15)
 
