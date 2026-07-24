@@ -1,81 +1,118 @@
 # Overview — current state
 
 *Living document: always reflects the present. History lives in `decisions.md` and `logs/`.*
-*Last updated: 2026-07-15*
+*Last updated: 2026-07-24*
 
 ## What this project is
 
 A typed knowledge graph mapping which HEP final states have been measured, by which
 experiment (ATLAS/CMS), at which energy — to surface coverage gaps for BSM physics.
-Three-layer pipeline: **harvest** (fixed list of HTML pages) → **RAG extraction**
-(per-paper, per-predicate) → **knowledge graph** (SQLite + NetworkX, Neo4j later).
+
+**Two tracks now exist, and the center of gravity has shifted (2026-07-23):**
+
+1. **KG construction from given bundles (the current critical path).** Gabriel's acquisition
+   pipeline (`HEPKG_promopt_tests`) extracts 60 ATLAS/CMS papers into versioned "bundles"
+   (schema `hepkg-acquisition-v0.2`). My job = **import** those bundles into one queryable
+   graph, preserving status/evidence/history. The facts are *given*; correctness isn't my job;
+   the output is the graph. Graded by the repo's integration fixtures + count targets.
+   Milestones 1–4. Design: `ideas/bundle-importer-design.md` (D-021..D-026).
+2. **My own RAG extraction pipeline (repositioned, not retired).** The original
+   harvest → RAG extraction → KG stack (below) still works and is verified, but it's no longer
+   the way the KG gets built — it moves to the *payoff/quality arms* (gap finder, critic panel,
+   held-out validation) and to a baseline comparison ("my extraction vs Gabriel's bundles").
+   Exactly how prominent it stays is **still open** (possibly a supervisor conversation).
+
 Patterns ported from DeepCollector (referenced, not forked). Supervisor provided
 `graph_schema.py`/`graph_extractor.py` (kept untouched at repo root as reference).
 
-## Layer status
+## Milestone 1 — the bundle importer (active build)
+
+- **Input:** `HEPKG_promopt_tests/pilot/bundles/*.json.gz` (60 papers, read-only).
+- **Store:** SQLite as system of record; graph (NetworkX/Neo4j Community) as a projection from
+  it, later (D-022).
+- **Validation:** `jsonschema` shape gate + hand-written semantic layer; Pydantic deferred (D-023).
+- **✅ MILESTONE 1 COMPLETE (2026-07-24):** all 8 build steps done, **108 tests green**. The CLI
+  imports all 60 bundles and reproduces **14,188 / 11,309 / 2,555 / 324** exactly
+  (`verify-counts` → target met), reimport is a no-op, and all 7 contract pass conditions hold.
+  Run it: `python -m hepcoveragekg.cli import <bundles-dir>` then `verify-counts`.
+- **Acceptance (the M1 gate, MET):** reproduce **14,188 / 11,309 / 2,555 / 324** by status across
+  the 60 bundles, AND pass the 4 `examples/integration/` fixtures against the 7 pass conditions.
+- **Key modeling:** paper=`arxiv_id` vs bundle=`bundle_id`; entity split (merged node +
+  per-paper `entity_occurrence`, merge-never-abort); qualifiers lossless JSON (no promoted
+  columns); completeness findings isolated; accepted-view = a filter (D-024).
+- **Identity/conflict (D-027, corrects D-024):** `bundle_id` is **identity-only**
+  (schema+paper+source+normalization) and is *stable across re-extractions* — so the whole-bundle
+  hash is only the "byte-identical → no-op" fast path. **Conflict detection is per assertion**:
+  new id → insert (corrections land here); only `status` differs → update + log; anything else
+  differs → abort. Status transitions are preserved in `assertion_status_history` (D-028).
+- **Modules:** `kg/` (store/schema.sql/queries/export/graph) · `ingest/` (reader/validate/
+  canonical/importer) · `aliases/` (normalize; D-025) · `cli.py` · tests (D-026).
+- **Build progress:** ✅ step 1 (store: 15 tables/view/indexes) · ✅ step 2 (`canonical.py`
+  fingerprints, pinned byte-for-byte to the supervisor's ids) · ✅ step 3 (`reader.py` + vendored
+  schema + `errors.py`; 60/60 bundles pass the shape gate) · ✅ step 4 (`validate.py`: semantic
+  gate — 0 violations and 0 warnings across all 60 bundles) · ✅ step 5 (`importer.py`:
+  **all 60 imported through the real importer reproduce 14,188 / 11,309 / 2,555 / 324 exactly**;
+  order-independent entity merge) · ✅ step 6 (re-import guard: identical→no-op, conflict→abort,
+  changed→skip+warn; all 60 imported twice = no change) · ✅ step 7 (**all 7 contract pass
+  conditions green**; minimal `queries.py` with the trace query) · ✅ step 8 (`cli.py` + count gate
+  — **M1 COMPLETE**) · **108 tests green**.
+- **Verified against the data:** 0 signatures populated; assertion_ids never collide; entity_ids
+  collide by design (347 shared, 334 divergent — merge); 487 IDs → 223 concepts on spelling
+  alone (→ aliases layer); one quote backs up to 37 assertions (→ many-to-many mandatory).
+
+## RAG pipeline layer status (repositioned track)
 
 | Layer | Status |
 |---|---|
-| `harvesting/html_harvester.py` | **Working, verified** against arXiv 2307.01094 (ATLAS SUSY). Handles custom-macro title/abstract fallback + MathML annotation stripping. Tables not extracted (D-008). |
-| `harvesting/paper_list.py`, `chain.py` | Stubs. No paper list exists yet — may come as a supervisor-provided downloaded dataset instead of live fetches. |
-| `config/schema.py` | Working. Ontology + 6 of 15 predicates with query templates (rest in `DEFERRED_PREDICATES`) + vocabs + plausibility bounds. |
-| `extraction/state.py` | **Working, verified**: CatalogState (per-paper hybrid index + assertion accumulation with confidence-beats), typed dataclasses. |
-| `extraction/rag_engine.py` | **Working, verified end-to-end** against the real paper via both Groq and self-hosted vLLM: all 6 predicates populate, multi-value splitting works. |
-| `extraction/generate.py` | Working. Backend-agnostic (any OpenAI-compatible endpoint via env vars). |
-| `kg/` (store, graph, merger, queries) | Stubs. Design planned (see D-013..D-016 and `ideas/open-vocab-reconciliation.md`). |
-| `tests/` | Empty stubs. |
+| `harvesting/html_harvester.py` | **Working, verified** against arXiv 2307.01094. Tables not extracted (D-008). |
+| `harvesting/paper_list.py`, `chain.py` | Stubs. Paper source may be a supervisor-provided dataset. |
+| `config/schema.py` | Working. Ontology + 6/15 predicates + vocabs + plausibility bounds. NB: this is the *old RAG ontology*, distinct from the bundle JSON schema and from `kg/schema.sql`. |
+| `extraction/state.py` | **Working, verified**: per-paper CatalogState + typed dataclasses. |
+| `extraction/rag_engine.py` | **Working, verified end-to-end** (Groq + self-hosted vLLM); all 6 predicates populate. |
+| `extraction/generate.py` | Working. Backend-agnostic (any OpenAI-compatible endpoint). |
+| `kg/` | Stubs — now being filled by the **importer** design, not the old merger plan (D-024, D-026). |
+| `tests/` | Empty stubs → M1 adds `test_import_counts.py`, `test_integration_fixtures.py`. |
 
 ## Infrastructure
 
-- **LLM**: self-hosted vLLM on UCL DIAS cluster (`ssh dias`), GPU partition = 1 node,
-  3× A100 80GB PCIe, 128 CPU, 515GB RAM. **Empirically verified 2026-07-15** (submitted a
-  3-GPU probe job): SLURM grants all 3 (no per-job cap — QOS `normal` unrestricted), but
-  **effective per-model limit is 2 cards (~158GB)** because (a) TP=3 fails head-divisibility
-  for most models (Llama-70B = 64 heads, 64/3 ∉ ℤ) and (b) topology — **no NVLink, all
-  PCIe**; GPU0↔GPU1 are same-NUMA (`NODE`, the fast pair to tensor-parallel), GPU2 is
-  cross-NUMA (`SYS`, slowest link). So: big model TP=2 on GPU0+1, and — since all 3 are
-  allocatable in one job — a 2nd small model TP=1 on GPU2 concurrently (heterogeneous
-  big-reasoner + cheap-extractor split, confirmed available). The MuLE "only 2 GPUs" was
-  this TP/topology limit, NOT a scheduler cap.
-  Serving `NousResearch/Meta-Llama-3.1-8B-Instruct` via Apptainer image
-  `~/hepcoveragekg_setup/images/vllm-openai-v0.8.5.sif`. Submission script: `hpc/serve_vllm.sh`
-  (requires `VLLM_API_KEY` env var). Jobs live 24h max, then need resubmission.
-- **Access**: SSH tunnel `ssh -f -N -L 8000:<node>:8000 dias` — node changes per
-  resubmission (`squeue -u $USER -h -o "%N"`); `.env` always points at `http://localhost:8000/v1`.
-- **Fallback**: Groq config kept commented in `.env` — switching backends is env-vars-only (D-012).
-- **Embeddings**: BAAI/bge-small-en-v1.5, local CPU, loaded via `Settings.embed_model`.
-- **Env**: Python 3.11.8 (pyenv), venv at repo root, deps in `requirements.txt`.
-
-## Known model quirks (measured, not guessed)
-
-- llama-3.1-8b sometimes ignores "one JSON object" on choose-all-that-apply questions and
-  emits one object per candidate term — `rag_engine._extract_json_objects` handles both shapes.
-- Self-reported confidence is uncalibrated (~everything 1.00). Plausibility/vocab checks do
-  the real filtering; don't lean on confidence downstream without revisiting.
+- **LLM**: self-hosted vLLM on UCL DIAS cluster (`ssh dias`), 3× A100 80GB PCIe. Effective
+  per-model limit **2 cards (~158GB)** (TP=3 fails head-divisibility; PCIe, no NVLink; GPU0+1
+  same-NUMA fast pair, GPU2 cross-NUMA). Big model TP=2 on GPU0+1 + a 2nd small model TP=1 on
+  GPU2 concurrently. Serving `NousResearch/Meta-Llama-3.1-8B-Instruct` via Apptainer
+  `vllm-openai-v0.8.5.sif`; script `hpc/serve_vllm.sh` (needs `VLLM_API_KEY`); 24h job cap.
+- **Access**: SSH tunnel `ssh -f -N -L 8000:<node>:8000 dias` (node changes per resubmission);
+  `.env` points at `http://localhost:8000/v1`. Groq fallback commented in `.env` (D-012).
+- **Embeddings**: BAAI/bge-small-en-v1.5, local CPU — **now also the aliases-layer embedding
+  tier** (D-025), so the extraction stack feeds the importer's canonicalization.
+- **Env**: Python 3.11.8 (pyenv), venv at repo root, deps in `requirements.txt` (+ `jsonschema`).
 
 ## Next steps (rough order)
 
-1. Populate `paper_list.py` + implement `chain.py` (blocked on paper-source decision).
-2. Resolve final-state representation (`ideas/final-state-representation.md`) — most
-   important pre-scale fix — and `result_type` vocabulary (`ideas/result-type-vocabulary.md`, needs supervisor).
-3. Build `kg/store.py` + `kg/graph.py`, then `kg/merger.py` per the reconciliation design.
-4. Implement consistency-check + leftovers passes (D-018, D-019).
-5. Tests.
+1. **Build milestone 1** per `ideas/bundle-importer-design.md` — steps 1→8 to the count+fixture
+   gate. Steps 1–2 done; **resume at step 3** (`ingest/reader.py`: gunzip + parse + jsonschema
+   shape gate).
+2. Then aliases Tier 1 (`aliases/normalize.py`), deterministic export, trace-query polish.
+3. Send Gabriel the 7 onboarding questions (signatures + corpus access unblock the most).
+4. Milestones 2–4 (trace; accepted-view + a real physics query; re-import after review).
+5. Later arms: gap finder + held-out validation (payoff), critic panel (quality) — these lean on
+   the repositioned RAG pipeline.
 
 ## Pending questions
 
-- Final-state composite node vs object fan-out → `ideas/final-state-representation.md`
-- `result_type` vocabulary → `ideas/result-type-vocabulary.md` (supervisor input needed)
-- Hybrid `vocab_policy` per predicate: designed, leaning yes, **not explicitly signed off** → `ideas/open-vocab-reconciliation.md`
-- Repo may be merged into a supervisor-created repository in the coming weeks — vault is
-  self-contained in `vault/` to move atomically.
+- **RAG-pipeline repositioning** — importer is the M1–4 backbone; how much the RAG stack features
+  vs. becomes payoff/baseline infrastructure is not formally decided (D-021 note).
+- The 7 Gabriel questions (`reports/2026-07-23-hepkg-repo-onboarding.md`): signatures plan,
+  qualifier normalization ownership, disguised-edge relinking, category vocabulary, six-way
+  "no accepted result", corpus access, retrieval alignment.
+- Promoted qualifier columns — deferred; add via generated columns when a query needs them.
+- Repo may merge into a supervisor repository — vault stays self-contained in `vault/`.
 
 ## Dissertation shape (emerging, planning-stage)
 
-Three acts, each separately evaluable: **(1) baseline pipeline** (harvest→extract→KG, mostly
-built) → **(2) quality**: critic panel + reconciliation, measured against baseline
+Three acts, each separately evaluable: **(1) baseline pipeline** — now the **bundle importer**
+(harvest→extract still exists but repositioned) → **(2) quality**: critic panel + reconciliation
 (`ideas/multi-agent-extension.md`) → **(3) payoff**: deterministic gap enumeration + reasoning
-layer producing ranked, literature-checked gap hypotheses (`ideas/gap-hypothesis-system.md`).
-Baseline must be built and measured before the agentic arms. Also open: Pydantic guided-decoding
-ablation at the LLM boundary (`ideas/pydantic-validation.md`). Critical path stays the baseline:
-kg layer + paper list + final-state fix.
+layer producing ranked, literature-checked gap hypotheses (`ideas/gap-hypothesis-system.md`,
+`ideas/held-out-gap-validation.md`). Critical path stays the baseline: import the bundles,
+reproduce the counts, then the aliases layer (load-bearing for correct coverage axes) and the
+gap finder.

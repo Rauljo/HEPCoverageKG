@@ -87,3 +87,160 @@
 
 ## D-020 (2026-07-10) — Vault created; single source of truth for project facts
 **Decision**: This vault (`vault/`: overview, decisions, ideas, literature, logs, reports, inbox + root CLAUDE.md conventions) replaces `PROGRESS.md` (absorbed, deleted) and supersedes the assistant's private project memory (which now keeps only non-repo user preferences + a pointer here). Vault is self-contained in one folder to move atomically if this repo merges into the supervisor's. Vault commits are separate, prefixed `vault:`. Supervisor-facing reports generated on demand into `reports/`, not continuously maintained.
+
+## D-021 (2026-07-23) — Milestone 1 = faithful bundle importer; facts are given
+**Decision**: Build the importer that loads Gabriel's 60 pilot bundles into one queryable KG,
+preserving status/evidence/history. Correctness of the facts is **not my job** — output is the
+graph. Acceptance = reproduce the count target (14,188 / 11,309 / 2,555 / 324 by status) AND
+pass the `examples/integration/` fixtures (the 7 pass conditions). Full design in
+`ideas/bundle-importer-design.md`.
+**Context**: The onboarding report (`reports/2026-07-23-hepkg-repo-onboarding.md`) reframed the
+KG-construction thread — the bundles carry pre-extracted facts; I import, not re-extract.
+**Consequences**: the existing `harvesting/`+`extraction/` RAG stack is repositioned, not the
+KG backbone anymore (see D-021 open note in the design doc; not formally re-scoped yet).
+
+## D-022 (2026-07-23) — SQLite is the system of record; the graph is a projection
+**Decision**: The durable, validated store is **SQLite** (one file, stdlib). Any graph engine —
+NetworkX now, **Neo4j Community Edition (local)** later — is a *projection built from* SQLite,
+never the foundation. Move to Neo4j only when query ergonomics / visualization / a live service
+demand it (not scale — the full corpus is ~100k nodes, trivial for either).
+**Context**: M1 is graded on transactional idempotency, conflict, accepted view, trace — all
+relational bookkeeping SQLite enforces declaratively (PK/UNIQUE/CHECK/FK/txn). The graph model
+is fixed by the schema, so deferring the engine carries no model risk; migration is an additive
+projector. Extends D-003's "SQLite + NetworkX now, Neo4j later".
+**Rejected**: Neo4j-first (adds ops + weaker bookkeeping guarantees for the part M1 is graded
+on; closes the cheap-optionality door); Postgres-first (its wins — concurrency, multi-user,
+scale — are problems a single-writer ~250k-row solo project doesn't have; portability/repro
+favor one SQLite file; `pgvector` kept as a later option for the aliases layer if wanted).
+
+## D-023 (2026-07-23) — Validation: jsonschema gate + semantic layer; Pydantic deferred
+**Decision**: Two validation responsibilities, run before any DB write: (1) **`jsonschema`**
+against Gabriel's shipped v0.2 schema = the authoritative *shape* gate (honors "read enums from
+the schema, not hardcoded"); (2) a small **hand-written semantic layer** = the *meaning* rules
+the schema can't express (accepted⇒evidence, exactly-one-object-shape, in-bundle ref
+resolution). **Pydantic is NOT a third validator** — deferred for M1 (work with validated
+dicts); if the later query/domain layer wants typed access, **generate** models from Gabriel's
+schema (no hand-maintained second copy → no drift).
+**Context**: `invalid_accepted_without_evidence` proves the semantic layer is needed (the schema
+allows accepted-without-evidence). One new dependency total: `jsonschema`.
+**Rejected**: hand-porting Gabriel's Pydantic models as source of truth (drift on schema bumps);
+Pydantic as the gate (belt-and-suspenders + drift). Revisits `ideas/pydantic-validation.md`.
+
+## D-024 (2026-07-23) — Table layout, identity model, idempotency/conflict
+**Decision**: Store schema per `ideas/bundle-importer-design.md`. Load-bearing choices:
+(a) **paper = `arxiv_id`** (durable, one row) vs **bundle = `bundle_id`** (content-derived,
+one per version) — records point at the bundle, bundle points at the paper, so version history
+is preserved; (b) **entity split** — one merged bundle-agnostic `entity` node + faithful
+per-paper `entity_occurrence` rows (merge, never abort; 334 shared entities diverge legitimately);
+`entity_divergence` is a **view**, not a stored table; (c) **qualifiers stored lossless as JSON,
+NO promoted columns in M1** (reverses the earlier role/level plan — values are messy free-text;
+promote later via generated columns after normalization); (d) **exactly-one-object-shape** as a
+DB `CHECK`; (e) **completeness_finding isolated**, never a scientific edge; (f) **accepted_view**
+= a filter (`status='expert_accepted'`), never a destructive rebuild; (g) **idempotency** keyed
+by `bundle_id`+content-hash, **conflict** = same bundle_id + changed content → abort; a new paper
+version = new bundle_id (allowed).
+**Context**: Every column verified 1:1 against the v0.2 `$defs` and every invariant against all
+60 bundles (no hallucinated fields; only `conversion_qa` was missing, now added).
+
+## D-025 (2026-07-23) — Aliases layer: dedicated reusable package, non-destructive, tiered
+**Decision**: Entity de-duplication (`b_jet`/`bjet`/`b-jet`; `pp_13tev` split 5 ways) lives in a
+**dedicated `aliases/` package**, run as a **separate pass over the finished DB** (never inside
+import — import stays deterministic/offline). Non-destructive: it writes a `same_as` link table;
+originals are never deleted; the canonical node is a derived cluster. Tiers: (0) block by kind →
+(1) deterministic slug-normalize [M1 only] → (2) n-grams + **exact number/version guard** →
+(2.5) embeddings (`bge-small`, candidate-generator only) → (3) LLM adjudication + human confirm
+for genuine synonyms. This is **D-016's mechanism applied to Gabriel's bundle entity_ids**, and
+it is **reusable project-wide** (coverage axes, query resolution, gap finder) → build it
+first-class, versioned/auditable (coverage claims depend on the alias map).
+**Context**: 487 IDs collapse to 223 concepts on spelling alone; the collision-energy axis is
+split 5 ways — canonicalization is load-bearing for the gap map, not cleanup.
+**Rejected**: merging inside import (breaks determinism); auto-merge on embedding/n-gram
+similarity (over-merges b-jet/c-jet, sherpa 2.2.1/2.2.2 — similarity ≠ identity, worse in HEP).
+See [[open-vocab-reconciliation]].
+
+## D-026 (2026-07-23) — Module layout & build order
+**Decision**: `kg/` = store+query+export+projection (fills existing stubs: store.py, schema.sql,
+queries.py, export.py, graph.py); **`ingest/`** = the importer (reader/validate/canonical/
+importer), mapping 1:1 to pipeline stages, depending on `kg/store`; **`aliases/`** = dedicated
+package (D-025); `cli.py` + two test files. Build bottom-up, each step independently checkable;
+milestone-1 gate is step 8 (60-bundle count + fixtures). Order in `ideas/bundle-importer-design.md`.
+**Context**: Fits the existing package layout; keeps the three "schema" meanings distinct
+(`config/schema.py` old ontology ≠ bundle JSON schema ≠ `kg/schema.sql`).
+**Confirmed**: package name `ingest/`; `aliases/` as its own package (both user calls).
+
+## D-027 (2026-07-24) — `bundle_id` is identity-only; conflict detection moves to the assertion level
+**Decision**: **Supersedes the bundle-level conflict rule in D-024.** Verified in
+`hepkg_acquisition/pipeline.py` that
+`bundle_id = content_id("bundle", {schema, paper, source_hash, normalization})` — it does **not**
+include assertions, statuses, or anything else, and reproduces exactly on 7/7 real bundles and
+all 4 fixtures. So `bundle_id` is *stable across re-extractions of the same paper*. Conflict
+detection is therefore **per assertion**:
+- `assertion_id` not seen → **insert** (this is how corrections land — they carry a new id);
+- seen, only `status` differs → **update the status** (+ a row in `assertion_status_history`);
+- seen, any other field differs → **CONFLICT, abort the whole import**.
+The whole-bundle fingerprint (`bundle_content_hash`) is kept but demoted: it is only the fast
+"byte-identical → no-op" path, and cannot decide conflicts.
+**Why exactly this rule**: `assertion_id = content_id("assertion", {paper, family, subject,
+predicate, object, value, signature, qualifiers, evidence})` — the claim-defining fields are baked
+into the id, so they *cannot* change without producing a different id. And
+`review.py::apply_decisions` only ever sets `status` on an existing assertion; corrections are
+appended as **new** assertions with a new id + `revision_of`. Hence `status` is the only field
+that legitimately moves → `MUTABLE_ASSERTION_FIELDS = {"status"}`.
+**Evidence**: `accepted` vs `corrected` fixture (assertion c898) differs only in status → allowed;
+`accepted` vs `conflicting` (c898) differs in `notes` → abort. All three fixtures share one
+`bundle_id` yet produce three different whole-bundle fingerprints — demonstrating that the bundle
+level cannot distinguish a legitimate re-import from corruption.
+**Also corrected**: the earlier claim that the fixtures "reuse a bundle_id as an artificial test
+handle" was **wrong** — they legitimately share it (same paper/source/schema/normalization).
+**Consequence**: a `bundle_id` authenticity check is available (`bundle_id_matches_content`) and
+is **warning-level, never a hard reject** — a mismatch may just mean the supervisor changed his id
+algorithm, which must not break our importer. 0/60 pilot bundles fail it.
+
+## D-028 (2026-07-24) — status transitions are logged, not overwritten
+**Decision**: Add `assertion_status_history` (`assertion_id`, `old_status`, `new_status`,
+`bundle_id`, `observed_at`), append-only, recording **only observed changes** — not initial
+inserts. The status-only branch of D-027 writes one row, then updates `assertion.status`.
+**Context**: overwriting `status` in place loses the prior value. `expert_decision` records that a
+decision *happened* but not the status it moved *from*, and machine-driven transitions leave no
+trace at all. **Milestone 4 requires *showing* promotions land**, which is impossible without a
+before/after.
+**Scope caveat (do not over-claim this table)**: we only ever see per-bundle snapshots, so it
+records what changed **between our imports**, never the supervisor's internal lifecycle
+(`proposed → machine_verified → quarantined` all happen inside his pipeline before we see it).
+**Rejected**: logging initial statuses too (14,188 redundant rows on first import; any past state
+is reconstructable by walking changes backwards from the current status).
+**Note**: not required by the 7 pass conditions — a deliberate judgement call, taken because it is
+~6 lines now and a lost-history problem later.
+
+## D-029 (2026-07-24) — entity merge is order-independent (recompute + consensus attributes)
+**Decision**: The single canonical `entity` row is **recomputed from the full set of occurrences**
+every time a new one lands, never first-write-wins. Rules (all pure functions of the occurrence
+*set*): `aliases` = sorted union; `kind`/`label` = most frequent, ties lexicographic;
+`attributes`/`external_ids` = **consensus-only** (keep a key iff every occurrence that states it
+agrees; drop contested keys). Contested detail stays per-paper in `entity_occurrence`.
+**Why order-independent matters**: first-write-wins would make the merged row depend on import
+order, breaking the step-8 order-independence check *and* the contract's "export deterministically"
+requirement. **Verified**: forward vs reversed import of all 60 bundles → byte-identical `entity`
+table (5,114 rows).
+**Why consensus-only over deterministic-pick**: never presents a contested value as settled;
+nothing lost (occurrences keep everything); the aliases layer (D-025) does the real
+value-reconciliation later. **Measured**: of 347 shared entities only **5** end up
+fully-contested (empty merged attributes despite occurrences having them); 201 keep ≥1 consensus
+attribute. So the merge is gentle and the reconciliation backlog is tiny.
+**Rejected**: first-write-wins (order-dependent); deterministic most-frequent pick (can present a
+contested attribute as authoritative); omitting attributes entirely (loses the free consensus ones).
+
+## D-030 (2026-07-24) — content-derived metadata ids get a (bundle_id, id) composite key
+**Decision**: `qa_finding`, `completeness_finding`, and `artifact` are keyed by
+**(bundle_id, <id>)**, not the id alone.
+**Context**: surfaced by importing all 60 into one DB — `qa_finding.finding_id` is content-derived,
+so a finding about a *shared* entity recurs across papers with the **same id** (e.g. "object `met`
+is outside the vocabulary" fires in every paper with a MET object → **18 colliding ids** in the
+pilot). This is the same phenomenon as shared `entity_id`s (347) — content-derived ids legitimately
+recur across bundles. One row per bundle preserves which papers each finding fired on.
+**Not affected** (verified 0 cross-bundle collisions): `assertion_id`, `evidence_id`,
+`activity_id`, `decision_id` — each is either claim-derived (includes the paper) or bundle-scoped by
+construction, so a single-column PK is safe.
+**Method note**: this is the *fifth* time checking one level deeper changed something — the earlier
+within-bundle uniqueness check passed, but cross-bundle uniqueness for metadata did not; caught by
+running the full 60 rather than trusting the per-bundle check.

@@ -95,6 +95,43 @@ the relevant ones can be lifted directly into messages.
 - The **paper list is** (`pilot/pilot60.json` + the bundle filenames are the arXiv IDs), but
   the **source HTML corpus lives on Gabriel's machine** — needed to run or prototype extraction.
 
+### 2.7 QA coverage is very uneven across families — so the quality signal is NOT comparable
+*(added later the same day, from the schema/QA audit during the importer design)*
+- The dominant check, **`predicate_typing`, fires 2,432 times — more than all other checks
+  combined** (3,372 QA findings total), and lands almost entirely on four families:
+  `channels_regions` (721), `observables_results` (685), `objects` (512), `physics_scope` (204).
+- **`samples_backgrounds` (2,502 assertions) and `systematics_statistics` (1,512) are
+  essentially unchecked** — the only samples-specific rule, `sample_dependency`, fires **11
+  times in total**. So **~4,000 assertions carry almost no automated scrutiny.**
+- **Consequence — a measurement trap I walked into twice.** Flag rates by family look like a
+  quality ranking but are not: `samples_backgrounds` has the *second-lowest* flagged rate
+  (8.2% quarantined+rejected) while `observables_results` has the highest (34.7%). That
+  ordering mostly tracks **how hard anyone looked**, not how wrong the output is.
+- **Therefore: never use quarantine/rejection rate as a cross-family quality measure**, and
+  don't claim `samples_backgrounds` is better *or* worse — its quality is simply **unknown**.
+  The uncertainty is the finding. Correctness is not measured anywhere in this data; settling it
+  needs sampled human judgement (→ Sunny, §5).
+- Bearing on my own work: a coverage gap in a lightly-checked family carries different
+  confidence than one in a heavily-checked family — this feeds the six-way "no accepted result"
+  distinction directly.
+
+### 2.8 Extraction retries: format fragility, not (necessarily) a data problem
+- The activity log records failed first attempts (`prompt_id` ending `:failed_attempt`).
+  **137 across the 60 papers**, wildly uneven: `samples_backgrounds` **50/60 (83%)**,
+  `systematics_statistics` 29/60, `objects` 21/60, `channels_regions` 15/60,
+  `observables_results` 12/60, `publication_context` and `physics_scope` 5/60 each.
+- **No data was lost**: all 50 papers with a failed `samples_backgrounds` attempt still ended up
+  with `samples_backgrounds` assertions. The retries worked.
+- **Likely cause (hypothesis, unverified):** output size. Papers that failed-then-retried average
+  *more* assertions in that family (42.7) than papers that never failed (36.9) — consistent with
+  long structured outputs truncating or malforming. I have not inspected the failure messages.
+- **Why it still matters**: it's a quantified robustness/cost signal (one of seven prompts needs a
+  retry five times in six), and it's **the same underlying weakness as the empty signatures
+  (§2.1)** — Sonnet struggling with long/strict structured output. Two independent pieces of
+  evidence for one root cause strengthens the **guided/constrained-decoding** proposal.
+- **Do not read it as a correctness signal.** First-try failure measures whether the JSON parsed,
+  nothing more.
+
 ---
 
 ## 3. Questions for Gabriel
@@ -121,6 +158,14 @@ the relevant ones can be lifted directly into messages.
 7. **If the repo-merge is happening**: is the intent that my retrieval aligns to your section
    routing? (My read is yes for ~96% of papers; the only candidate for embedding/hybrid
    retrieval is the ~38 letter-style fallback papers.)
+8. **Uneven QA coverage** (§2.7): `predicate_typing` alone is 2,432 of 3,372 findings and barely
+   touches `samples_backgrounds`/`systematics_statistics`, leaving ~4,000 assertions with almost
+   no automated checking. Is that deliberate prioritisation, or just where the rules got written
+   first? Asking because it means flag rates can't be compared across families — which affects
+   how I report confidence on coverage gaps.
+9. **Extraction retries** (§2.8): `samples_backgrounds` needs a retry in 50/60 papers (all
+   recovered). Is that a known/expected cost, and would constrained decoding be worth trying
+   there as well as for signatures?
 
 ---
 
@@ -151,6 +196,33 @@ the relevant ones can be lifted directly into messages.
 - **Let's fix the verdict → status → re-import seam early**: the exact format of the decisions
   that eventually flow into my graph (milestone 4) is our one real interface — cheaper to agree
   on now than to retrofit.
+
+### Added after the QA audit (§2.7) — where the deterministic checker isn't even trying
+
+- **Here is a quantified map of the checker's blind spots.** Your remit is "rung 6 — what the
+  deterministic checker can't do"; §2.7 says *where it doesn't try at all*:
+  `samples_backgrounds` (2,502 assertions) and `systematics_statistics` (1,512) have essentially
+  **no automated checking** (~4,000 assertions), while `channels_regions`/`observables_results`/
+  `objects`/`physics_scope` absorb nearly all of it. Those two families are the clearest case for
+  agents adding value nothing else provides.
+- **Two candidate populations — worth choosing deliberately, not by convenience:**
+  - *the contested/flagged set* (964 contested, concentrated in the heavily-checked families) —
+    known-hard, already surfaced, and there's an existing signal to benchmark against
+    ("can my agent match or beat the checker, and resolve disagreements?");
+  - *the unchecked families* — unknown quality, no baseline, your agent is the only scrutiny.
+    Higher marginal value, nothing to compare against.
+- **Methodological warning, and I think the most useful thing here: don't evaluate agents against
+  the pipeline's own flags.** Quarantine/rejection reflects *where checks happen to exist*, not
+  where errors are (§2.7). Tuning to agree with those flags optimises for reproducing the existing
+  checker — the exact thing you're meant to go beyond. Ground truth has to be the human experts.
+- **A small, well-defined study that would help all three of us**: sample N assertions from a
+  heavily-checked family and N from a barely-checked one, judge correctness by hand, compare error
+  rates. That answers the question none of the current data can — **is `samples_backgrounds`
+  actually worse, or just less examined?**
+- **Careful with the retry statistic** (§2.8): `samples_backgrounds` fails first-try in 50/60
+  papers, but every one recovered — it's format fragility, **not** a correctness signal. Relevant
+  to you only in that any *re-extraction* your agents do will hit the same fragility, and
+  constrained decoding is the lever.
 
 ---
 
