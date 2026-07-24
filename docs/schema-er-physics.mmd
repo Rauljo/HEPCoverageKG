@@ -1,0 +1,52 @@
+erDiagram
+    %% HEPCoverageKG -- the SCIENTIFIC graph only (the "physics" subset).
+    %% Nodes = entities; edges = assertions (subject -> object) with a lifecycle
+    %% status and backing evidence. This is the subgraph projected to NetworkX/Neo4j;
+    %% provenance/QA/review tables (bundle_import, activity, qa_finding,
+    %% completeness_finding, expert_decision, source_*) are omitted.
+
+    paper {
+        TEXT arxiv_id PK
+        TEXT title
+        TEXT category
+        TEXT experiments
+    }
+    entity {
+        TEXT entity_id PK
+        TEXT kind
+        TEXT label
+        TEXT aliases
+        TEXT attributes
+    }
+    entity_occurrence {
+        TEXT entity_id FK
+        TEXT paper_id
+        TEXT label
+        TEXT attributes
+    }
+    assertion {
+        TEXT assertion_id PK
+        TEXT subject_id FK
+        TEXT predicate
+        TEXT object_id FK
+        TEXT object_value
+        TEXT signature
+        TEXT status
+        TEXT qualifiers
+    }
+    evidence {
+        TEXT evidence_id PK
+        TEXT quote
+        TEXT section_title
+    }
+    assertion_evidence {
+        TEXT assertion_id PK
+        TEXT evidence_id PK
+    }
+
+    entity ||--o{ entity_occurrence  : "merged from (per paper)"
+    entity ||--o{ assertion          : "subject"
+    entity ||--o{ assertion          : "object"
+    paper  ||--o{ assertion          : "asserted by"
+    assertion ||--o{ assertion_evidence : "backed by"
+    evidence  ||--o{ assertion_evidence : "cites"

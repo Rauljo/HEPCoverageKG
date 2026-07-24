@@ -1,0 +1,1291 @@
+{
+    "$defs": {
+        "Activity": {
+            "additionalProperties": false,
+            "properties": {
+                "activity_id": {
+                    "title": "Activity Id",
+                    "type": "string"
+                },
+                "input_hashes": {
+                    "items": {
+                        "type": "string"
+                    },
+                    "title": "Input Hashes",
+                    "type": "array"
+                },
+                "kind": {
+                    "enum": [
+                        "ingestion",
+                        "mapping",
+                        "extraction",
+                        "qa",
+                        "adjudication",
+                        "expert_review",
+                        "compilation"
+                    ],
+                    "title": "Kind",
+                    "type": "string"
+                },
+                "metadata": {
+                    "additionalProperties": true,
+                    "title": "Metadata",
+                    "type": "object"
+                },
+                "model": {
+                    "anyOf": [
+                        {
+                            "type": "string"
+                        },
+                        {
+                            "type": "null"
+                        }
+                    ],
+                    "default": null,
+                    "title": "Model"
+                },
+                "output_hashes": {
+                    "items": {
+                        "type": "string"
+                    },
+                    "title": "Output Hashes",
+                    "type": "array"
+                },
+                "prompt_id": {
+                    "anyOf": [
+                        {
+                            "type": "string"
+                        },
+                        {
+                            "type": "null"
+                        }
+                    ],
+                    "default": null,
+                    "title": "Prompt Id"
+                },
+                "provider": {
+                    "anyOf": [
+                        {
+                            "type": "string"
+                        },
+                        {
+                            "type": "null"
+                        }
+                    ],
+                    "default": null,
+                    "title": "Provider"
+                },
+                "software_version": {
+                    "title": "Software Version",
+                    "type": "string"
+                }
+            },
+            "required": [
+                "activity_id",
+                "kind",
+                "software_version"
+            ],
+            "title": "Activity",
+            "type": "object"
+        },
+        "Assertion": {
+            "additionalProperties": false,
+            "properties": {
+                "activity_id": {
+                    "anyOf": [
+                        {
+                            "type": "string"
+                        },
+                        {
+                            "type": "null"
+                        }
+                    ],
+                    "default": null,
+                    "title": "Activity Id"
+                },
+                "assertion_id": {
+                    "title": "Assertion Id",
+                    "type": "string"
+                },
+                "evidence_ids": {
+                    "items": {
+                        "type": "string"
+                    },
+                    "title": "Evidence Ids",
+                    "type": "array"
+                },
+                "extraction_method": {
+                    "default": "llm",
+                    "title": "Extraction Method",
+                    "type": "string"
+                },
+                "family": {
+                    "$ref": "#/$defs/PredicateFamily"
+                },
+                "notes": {
+                    "anyOf": [
+                        {
+                            "type": "string"
+                        },
+                        {
+                            "type": "null"
+                        }
+                    ],
+                    "default": null,
+                    "title": "Notes"
+                },
+                "object_id": {
+                    "anyOf": [
+                        {
+                            "type": "string"
+                        },
+                        {
+                            "type": "null"
+                        }
+                    ],
+                    "default": null,
+                    "title": "Object Id"
+                },
+                "object_value": {
+                    "anyOf": [
+                        {
+                            "type": "string"
+                        },
+                        {
+                            "type": "integer"
+                        },
+                        {
+                            "type": "number"
+                        },
+                        {
+                            "type": "boolean"
+                        },
+                        {
+                            "additionalProperties": true,
+                            "type": "object"
+                        },
+                        {
+                            "items": {},
+                            "type": "array"
+                        },
+                        {
+                            "type": "null"
+                        }
+                    ],
+                    "default": null,
+                    "title": "Object Value"
+                },
+                "predicate": {
+                    "$ref": "#/$defs/Predicate"
+                },
+                "qualifiers": {
+                    "additionalProperties": true,
+                    "title": "Qualifiers",
+                    "type": "object"
+                },
+                "revision_of": {
+                    "anyOf": [
+                        {
+                            "type": "string"
+                        },
+                        {
+                            "type": "null"
+                        }
+                    ],
+                    "default": null,
+                    "title": "Revision Of"
+                },
+                "signature": {
+                    "anyOf": [
+                        {
+                            "$ref": "#/$defs/SignatureNode"
+                        },
+                        {
+                            "type": "null"
+                        }
+                    ],
+                    "default": null
+                },
+                "status": {
+                    "$ref": "#/$defs/AssertionStatus",
+                    "default": "proposed"
+                },
+                "subject_id": {
+                    "title": "Subject Id",
+                    "type": "string"
+                },
+                "support": {
+                    "$ref": "#/$defs/SupportLevel",
+                    "default": "explicit"
+                }
+            },
+            "required": [
+                "assertion_id",
+                "family",
+                "subject_id",
+                "predicate"
+            ],
+            "title": "Assertion",
+            "type": "object"
+        },
+        "AssertionStatus": {
+            "enum": [
+                "proposed",
+                "machine_verified",
+                "expert_accepted",
+                "quarantined",
+                "rejected",
+                "superseded"
+            ],
+            "title": "AssertionStatus",
+            "type": "string"
+        },
+        "BlockKind": {
+            "enum": [
+                "title",
+                "abstract",
+                "heading",
+                "paragraph",
+                "list_item",
+                "table",
+                "equation",
+                "caption",
+                "bibliography"
+            ],
+            "title": "BlockKind",
+            "type": "string"
+        },
+        "CompletenessFinding": {
+            "additionalProperties": false,
+            "properties": {
+                "expectation_evidence_ids": {
+                    "items": {
+                        "type": "string"
+                    },
+                    "title": "Expectation Evidence Ids",
+                    "type": "array"
+                },
+                "finding_id": {
+                    "title": "Finding Id",
+                    "type": "string"
+                },
+                "note": {
+                    "default": "",
+                    "title": "Note",
+                    "type": "string"
+                },
+                "rule_id": {
+                    "title": "Rule Id",
+                    "type": "string"
+                },
+                "rule_version": {
+                    "title": "Rule Version",
+                    "type": "string"
+                },
+                "trigger_evidence_ids": {
+                    "items": {
+                        "type": "string"
+                    },
+                    "title": "Trigger Evidence Ids",
+                    "type": "array"
+                },
+                "trigger_fired": {
+                    "title": "Trigger Fired",
+                    "type": "boolean"
+                },
+                "verdict": {
+                    "enum": [
+                        "pass",
+                        "warn",
+                        "fail",
+                        "not_applicable"
+                    ],
+                    "title": "Verdict",
+                    "type": "string"
+                }
+            },
+            "required": [
+                "finding_id",
+                "rule_id",
+                "trigger_fired",
+                "verdict",
+                "rule_version"
+            ],
+            "title": "CompletenessFinding",
+            "type": "object"
+        },
+        "Entity": {
+            "additionalProperties": false,
+            "properties": {
+                "aliases": {
+                    "items": {
+                        "type": "string"
+                    },
+                    "title": "Aliases",
+                    "type": "array"
+                },
+                "attributes": {
+                    "additionalProperties": true,
+                    "title": "Attributes",
+                    "type": "object"
+                },
+                "entity_id": {
+                    "title": "Entity Id",
+                    "type": "string"
+                },
+                "external_ids": {
+                    "additionalProperties": {
+                        "type": "string"
+                    },
+                    "title": "External Ids",
+                    "type": "object"
+                },
+                "kind": {
+                    "$ref": "#/$defs/EntityKind"
+                },
+                "label": {
+                    "title": "Label",
+                    "type": "string"
+                }
+            },
+            "required": [
+                "entity_id",
+                "kind",
+                "label"
+            ],
+            "title": "Entity",
+            "type": "object"
+        },
+        "EntityKind": {
+            "enum": [
+                "paper",
+                "result",
+                "dataset",
+                "collision_system",
+                "physics_process",
+                "bsm_model",
+                "model_parameter",
+                "benchmark",
+                "detector_object",
+                "object_definition",
+                "channel",
+                "event_region",
+                "selection_requirement",
+                "sample",
+                "generator",
+                "background",
+                "background_method",
+                "systematic_uncertainty",
+                "statistical_method",
+                "observable",
+                "result_quantity",
+                "external_artifact"
+            ],
+            "title": "EntityKind",
+            "type": "string"
+        },
+        "EvidenceLocator": {
+            "additionalProperties": false,
+            "properties": {
+                "block_id": {
+                    "title": "Block Id",
+                    "type": "string"
+                },
+                "char_end": {
+                    "minimum": 0,
+                    "title": "Char End",
+                    "type": "integer"
+                },
+                "char_start": {
+                    "minimum": 0,
+                    "title": "Char Start",
+                    "type": "integer"
+                },
+                "dom_id": {
+                    "anyOf": [
+                        {
+                            "type": "string"
+                        },
+                        {
+                            "type": "null"
+                        }
+                    ],
+                    "default": null,
+                    "title": "Dom Id"
+                },
+                "evidence_id": {
+                    "title": "Evidence Id",
+                    "type": "string"
+                },
+                "normalization_version": {
+                    "default": "latexml-blocks-v1",
+                    "title": "Normalization Version",
+                    "type": "string"
+                },
+                "quote": {
+                    "title": "Quote",
+                    "type": "string"
+                },
+                "quote_hash": {
+                    "title": "Quote Hash",
+                    "type": "string"
+                },
+                "section_title": {
+                    "title": "Section Title",
+                    "type": "string"
+                },
+                "source_hash": {
+                    "title": "Source Hash",
+                    "type": "string"
+                }
+            },
+            "required": [
+                "evidence_id",
+                "source_hash",
+                "block_id",
+                "section_title",
+                "quote",
+                "quote_hash",
+                "char_start",
+                "char_end"
+            ],
+            "title": "EvidenceLocator",
+            "type": "object"
+        },
+        "ExpertDecision": {
+            "additionalProperties": false,
+            "properties": {
+                "action": {
+                    "$ref": "#/$defs/ReviewAction"
+                },
+                "assertion_id": {
+                    "title": "Assertion Id",
+                    "type": "string"
+                },
+                "corrected_assertion_id": {
+                    "anyOf": [
+                        {
+                            "type": "string"
+                        },
+                        {
+                            "type": "null"
+                        }
+                    ],
+                    "default": null,
+                    "title": "Corrected Assertion Id"
+                },
+                "decided_at": {
+                    "title": "Decided At",
+                    "type": "string"
+                },
+                "decision_id": {
+                    "title": "Decision Id",
+                    "type": "string"
+                },
+                "rationale": {
+                    "title": "Rationale",
+                    "type": "string"
+                },
+                "reviewer": {
+                    "title": "Reviewer",
+                    "type": "string"
+                }
+            },
+            "required": [
+                "decision_id",
+                "reviewer",
+                "assertion_id",
+                "action",
+                "rationale",
+                "decided_at"
+            ],
+            "title": "ExpertDecision",
+            "type": "object"
+        },
+        "ExternalArtifact": {
+            "additionalProperties": false,
+            "properties": {
+                "artifact_id": {
+                    "title": "Artifact Id",
+                    "type": "string"
+                },
+                "kind": {
+                    "enum": [
+                        "inspire",
+                        "hepdata",
+                        "rivet",
+                        "pyhf",
+                        "doi",
+                        "other"
+                    ],
+                    "title": "Kind",
+                    "type": "string"
+                },
+                "label": {
+                    "default": "",
+                    "title": "Label",
+                    "type": "string"
+                },
+                "metadata": {
+                    "additionalProperties": true,
+                    "title": "Metadata",
+                    "type": "object"
+                },
+                "source": {
+                    "title": "Source",
+                    "type": "string"
+                },
+                "url": {
+                    "title": "Url",
+                    "type": "string"
+                }
+            },
+            "required": [
+                "artifact_id",
+                "kind",
+                "url",
+                "source"
+            ],
+            "title": "ExternalArtifact",
+            "type": "object"
+        },
+        "PaperCategory": {
+            "enum": [
+                "search",
+                "measurement",
+                "detector",
+                "performance",
+                "other",
+                "unclassified"
+            ],
+            "title": "PaperCategory",
+            "type": "string"
+        },
+        "PaperIdentity": {
+            "additionalProperties": false,
+            "properties": {
+                "arxiv_id": {
+                    "title": "Arxiv Id",
+                    "type": "string"
+                },
+                "category": {
+                    "$ref": "#/$defs/PaperCategory",
+                    "default": "unclassified"
+                },
+                "cds_id": {
+                    "anyOf": [
+                        {
+                            "type": "string"
+                        },
+                        {
+                            "type": "null"
+                        }
+                    ],
+                    "default": null,
+                    "title": "Cds Id"
+                },
+                "doi": {
+                    "anyOf": [
+                        {
+                            "type": "string"
+                        },
+                        {
+                            "type": "null"
+                        }
+                    ],
+                    "default": null,
+                    "title": "Doi"
+                },
+                "experiments": {
+                    "items": {
+                        "enum": [
+                            "ATLAS",
+                            "CMS"
+                        ],
+                        "type": "string"
+                    },
+                    "title": "Experiments",
+                    "type": "array"
+                },
+                "inspire_id": {
+                    "anyOf": [
+                        {
+                            "type": "string"
+                        },
+                        {
+                            "type": "null"
+                        }
+                    ],
+                    "default": null,
+                    "title": "Inspire Id"
+                },
+                "title": {
+                    "title": "Title",
+                    "type": "string"
+                }
+            },
+            "required": [
+                "arxiv_id",
+                "experiments",
+                "title"
+            ],
+            "title": "PaperIdentity",
+            "type": "object"
+        },
+        "PaperMap": {
+            "additionalProperties": false,
+            "properties": {
+                "category": {
+                    "$ref": "#/$defs/PaperCategory"
+                },
+                "expected_channels": {
+                    "items": {
+                        "type": "string"
+                    },
+                    "title": "Expected Channels",
+                    "type": "array"
+                },
+                "expected_met": {
+                    "default": "",
+                    "title": "Expected Met",
+                    "type": "string"
+                },
+                "expected_objects": {
+                    "items": {
+                        "additionalProperties": {
+                            "type": "string"
+                        },
+                        "type": "object"
+                    },
+                    "title": "Expected Objects",
+                    "type": "array"
+                },
+                "routing_coverage": {
+                    "additionalProperties": true,
+                    "title": "Routing Coverage",
+                    "type": "object"
+                },
+                "section_roles": {
+                    "additionalProperties": {
+                        "items": {
+                            "type": "string"
+                        },
+                        "type": "array"
+                    },
+                    "title": "Section Roles",
+                    "type": "object"
+                }
+            },
+            "required": [
+                "category"
+            ],
+            "title": "PaperMap",
+            "type": "object"
+        },
+        "Predicate": {
+            "enum": [
+                "paper_reports_result",
+                "result_uses_dataset",
+                "result_has_collision_system",
+                "result_targets_process",
+                "result_has_final_state",
+                "result_motivated_by_model",
+                "result_targets_model",
+                "result_uses_benchmark",
+                "result_interprets_model",
+                "result_constrains_model",
+                "result_mentions_model",
+                "model_has_parameter",
+                "model_has_benchmark",
+                "result_defines_object",
+                "object_has_selection",
+                "result_has_channel",
+                "result_defines_region",
+                "channel_has_region",
+                "region_requires_object",
+                "region_vetoes_object",
+                "region_has_selection",
+                "result_uses_sample",
+                "sample_uses_generator",
+                "result_estimates_background",
+                "background_uses_method",
+                "result_has_systematic",
+                "result_uses_statistical_method",
+                "result_measures_observable",
+                "result_reports_quantity",
+                "result_excludes_benchmark",
+                "paper_has_artifact"
+            ],
+            "title": "Predicate",
+            "type": "string"
+        },
+        "PredicateFamily": {
+            "enum": [
+                "publication_context",
+                "physics_scope",
+                "objects",
+                "channels_regions",
+                "samples_backgrounds",
+                "systematics_statistics",
+                "observables_results",
+                "external_links"
+            ],
+            "title": "PredicateFamily",
+            "type": "string"
+        },
+        "QAFinding": {
+            "additionalProperties": false,
+            "properties": {
+                "assertion_ids": {
+                    "items": {
+                        "type": "string"
+                    },
+                    "title": "Assertion Ids",
+                    "type": "array"
+                },
+                "check": {
+                    "title": "Check",
+                    "type": "string"
+                },
+                "evidence_ids": {
+                    "items": {
+                        "type": "string"
+                    },
+                    "title": "Evidence Ids",
+                    "type": "array"
+                },
+                "finding_id": {
+                    "title": "Finding Id",
+                    "type": "string"
+                },
+                "message": {
+                    "title": "Message",
+                    "type": "string"
+                },
+                "severity": {
+                    "$ref": "#/$defs/QASeverity"
+                },
+                "verdict": {
+                    "$ref": "#/$defs/QAVerdict"
+                }
+            },
+            "required": [
+                "finding_id",
+                "check",
+                "verdict",
+                "severity",
+                "message"
+            ],
+            "title": "QAFinding",
+            "type": "object"
+        },
+        "QASeverity": {
+            "enum": [
+                "info",
+                "warning",
+                "error"
+            ],
+            "title": "QASeverity",
+            "type": "string"
+        },
+        "QAVerdict": {
+            "enum": [
+                "pass",
+                "warn",
+                "fail"
+            ],
+            "title": "QAVerdict",
+            "type": "string"
+        },
+        "ReconstructionLevel": {
+            "enum": [
+                "reconstructed",
+                "particle",
+                "parton",
+                "none"
+            ],
+            "title": "ReconstructionLevel",
+            "type": "string"
+        },
+        "ReviewAction": {
+            "enum": [
+                "accept",
+                "reject",
+                "correct"
+            ],
+            "title": "ReviewAction",
+            "type": "string"
+        },
+        "SignatureNode": {
+            "additionalProperties": false,
+            "properties": {
+                "charge": {
+                    "anyOf": [
+                        {
+                            "type": "string"
+                        },
+                        {
+                            "type": "null"
+                        }
+                    ],
+                    "default": null,
+                    "title": "Charge"
+                },
+                "children": {
+                    "items": {
+                        "$ref": "#/$defs/SignatureNode"
+                    },
+                    "title": "Children",
+                    "type": "array"
+                },
+                "comparator": {
+                    "anyOf": [
+                        {
+                            "enum": [
+                                "==",
+                                ">=",
+                                ">",
+                                "<=",
+                                "<",
+                                "range"
+                            ],
+                            "type": "string"
+                        },
+                        {
+                            "type": "null"
+                        }
+                    ],
+                    "default": null,
+                    "title": "Comparator"
+                },
+                "decay_mode": {
+                    "anyOf": [
+                        {
+                            "type": "string"
+                        },
+                        {
+                            "type": "null"
+                        }
+                    ],
+                    "default": null,
+                    "title": "Decay Mode"
+                },
+                "flavour": {
+                    "anyOf": [
+                        {
+                            "type": "string"
+                        },
+                        {
+                            "type": "null"
+                        }
+                    ],
+                    "default": null,
+                    "title": "Flavour"
+                },
+                "level": {
+                    "$ref": "#/$defs/ReconstructionLevel",
+                    "default": "reconstructed"
+                },
+                "object_ref": {
+                    "anyOf": [
+                        {
+                            "type": "string"
+                        },
+                        {
+                            "type": "null"
+                        }
+                    ],
+                    "default": null,
+                    "title": "Object Ref"
+                },
+                "operator": {
+                    "$ref": "#/$defs/SignatureOperator"
+                },
+                "range_max": {
+                    "anyOf": [
+                        {
+                            "minimum": 0,
+                            "type": "integer"
+                        },
+                        {
+                            "type": "null"
+                        }
+                    ],
+                    "default": null,
+                    "title": "Range Max"
+                },
+                "topology": {
+                    "anyOf": [
+                        {
+                            "enum": [
+                                "resolved",
+                                "boosted",
+                                "merged",
+                                "unspecified"
+                            ],
+                            "type": "string"
+                        },
+                        {
+                            "type": "null"
+                        }
+                    ],
+                    "default": null,
+                    "title": "Topology"
+                },
+                "value": {
+                    "anyOf": [
+                        {
+                            "minimum": 0,
+                            "type": "integer"
+                        },
+                        {
+                            "type": "null"
+                        }
+                    ],
+                    "default": null,
+                    "title": "Value"
+                }
+            },
+            "required": [
+                "operator"
+            ],
+            "title": "SignatureNode",
+            "type": "object"
+        },
+        "SignatureOperator": {
+            "enum": [
+                "all_of",
+                "any_of",
+                "not",
+                "if_then",
+                "object_count"
+            ],
+            "title": "SignatureOperator",
+            "type": "string"
+        },
+        "SourceBlock": {
+            "additionalProperties": false,
+            "properties": {
+                "attributes": {
+                    "additionalProperties": true,
+                    "title": "Attributes",
+                    "type": "object"
+                },
+                "block_id": {
+                    "title": "Block Id",
+                    "type": "string"
+                },
+                "dom_id": {
+                    "anyOf": [
+                        {
+                            "type": "string"
+                        },
+                        {
+                            "type": "null"
+                        }
+                    ],
+                    "default": null,
+                    "title": "Dom Id"
+                },
+                "kind": {
+                    "$ref": "#/$defs/BlockKind"
+                },
+                "order": {
+                    "minimum": 0,
+                    "title": "Order",
+                    "type": "integer"
+                },
+                "section_id": {
+                    "anyOf": [
+                        {
+                            "type": "string"
+                        },
+                        {
+                            "type": "null"
+                        }
+                    ],
+                    "default": null,
+                    "title": "Section Id"
+                },
+                "section_title": {
+                    "default": "",
+                    "title": "Section Title",
+                    "type": "string"
+                },
+                "table_rows": {
+                    "items": {
+                        "items": {
+                            "type": "string"
+                        },
+                        "type": "array"
+                    },
+                    "title": "Table Rows",
+                    "type": "array"
+                },
+                "text": {
+                    "title": "Text",
+                    "type": "string"
+                },
+                "text_hash": {
+                    "title": "Text Hash",
+                    "type": "string"
+                }
+            },
+            "required": [
+                "block_id",
+                "kind",
+                "order",
+                "text",
+                "text_hash"
+            ],
+            "title": "SourceBlock",
+            "type": "object"
+        },
+        "SourceSnapshot": {
+            "additionalProperties": false,
+            "properties": {
+                "blocks": {
+                    "items": {
+                        "$ref": "#/$defs/SourceBlock"
+                    },
+                    "title": "Blocks",
+                    "type": "array"
+                },
+                "conversion_qa": {
+                    "anyOf": [
+                        {
+                            "additionalProperties": true,
+                            "type": "object"
+                        },
+                        {
+                            "type": "null"
+                        }
+                    ],
+                    "default": null,
+                    "title": "Conversion Qa"
+                },
+                "experiments": {
+                    "items": {
+                        "enum": [
+                            "ATLAS",
+                            "CMS"
+                        ],
+                        "type": "string"
+                    },
+                    "title": "Experiments",
+                    "type": "array"
+                },
+                "normalization_version": {
+                    "default": "latexml-blocks-v1",
+                    "title": "Normalization Version",
+                    "type": "string"
+                },
+                "paper_id": {
+                    "title": "Paper Id",
+                    "type": "string"
+                },
+                "problems": {
+                    "items": {
+                        "type": "string"
+                    },
+                    "title": "Problems",
+                    "type": "array"
+                },
+                "source_hash": {
+                    "title": "Source Hash",
+                    "type": "string"
+                },
+                "source_path": {
+                    "title": "Source Path",
+                    "type": "string"
+                },
+                "title": {
+                    "title": "Title",
+                    "type": "string"
+                }
+            },
+            "required": [
+                "paper_id",
+                "experiments",
+                "source_path",
+                "source_hash",
+                "title",
+                "blocks"
+            ],
+            "title": "SourceSnapshot",
+            "type": "object"
+        },
+        "SupportLevel": {
+            "enum": [
+                "explicit",
+                "implicit",
+                "unclear"
+            ],
+            "title": "SupportLevel",
+            "type": "string"
+        },
+        "UsageRecord": {
+            "additionalProperties": false,
+            "properties": {
+                "cache_creation_tokens": {
+                    "default": 0,
+                    "minimum": 0,
+                    "title": "Cache Creation Tokens",
+                    "type": "integer"
+                },
+                "cache_read_tokens": {
+                    "default": 0,
+                    "minimum": 0,
+                    "title": "Cache Read Tokens",
+                    "type": "integer"
+                },
+                "estimated_cost_usd": {
+                    "anyOf": [
+                        {
+                            "minimum": 0,
+                            "type": "number"
+                        },
+                        {
+                            "type": "null"
+                        }
+                    ],
+                    "default": null,
+                    "title": "Estimated Cost Usd"
+                },
+                "input_tokens": {
+                    "default": 0,
+                    "minimum": 0,
+                    "title": "Input Tokens",
+                    "type": "integer"
+                },
+                "model": {
+                    "title": "Model",
+                    "type": "string"
+                },
+                "output_tokens": {
+                    "default": 0,
+                    "minimum": 0,
+                    "title": "Output Tokens",
+                    "type": "integer"
+                },
+                "provider": {
+                    "title": "Provider",
+                    "type": "string"
+                }
+            },
+            "required": [
+                "provider",
+                "model"
+            ],
+            "title": "UsageRecord",
+            "type": "object"
+        }
+    },
+    "additionalProperties": false,
+    "properties": {
+        "activities": {
+            "items": {
+                "$ref": "#/$defs/Activity"
+            },
+            "title": "Activities",
+            "type": "array"
+        },
+        "artifacts": {
+            "items": {
+                "$ref": "#/$defs/ExternalArtifact"
+            },
+            "title": "Artifacts",
+            "type": "array"
+        },
+        "assertions": {
+            "items": {
+                "$ref": "#/$defs/Assertion"
+            },
+            "title": "Assertions",
+            "type": "array"
+        },
+        "bundle_id": {
+            "title": "Bundle Id",
+            "type": "string"
+        },
+        "completeness_findings": {
+            "items": {
+                "$ref": "#/$defs/CompletenessFinding"
+            },
+            "title": "Completeness Findings",
+            "type": "array"
+        },
+        "entities": {
+            "items": {
+                "$ref": "#/$defs/Entity"
+            },
+            "title": "Entities",
+            "type": "array"
+        },
+        "evidence": {
+            "items": {
+                "$ref": "#/$defs/EvidenceLocator"
+            },
+            "title": "Evidence",
+            "type": "array"
+        },
+        "expert_decisions": {
+            "items": {
+                "$ref": "#/$defs/ExpertDecision"
+            },
+            "title": "Expert Decisions",
+            "type": "array"
+        },
+        "paper": {
+            "$ref": "#/$defs/PaperIdentity"
+        },
+        "paper_map": {
+            "anyOf": [
+                {
+                    "$ref": "#/$defs/PaperMap"
+                },
+                {
+                    "type": "null"
+                }
+            ],
+            "default": null
+        },
+        "qa_findings": {
+            "items": {
+                "$ref": "#/$defs/QAFinding"
+            },
+            "title": "Qa Findings",
+            "type": "array"
+        },
+        "schema_version": {
+            "const": "hepkg-acquisition-v0.2",
+            "default": "hepkg-acquisition-v0.2",
+            "title": "Schema Version",
+            "type": "string"
+        },
+        "source": {
+            "$ref": "#/$defs/SourceSnapshot"
+        },
+        "usage": {
+            "items": {
+                "$ref": "#/$defs/UsageRecord"
+            },
+            "title": "Usage",
+            "type": "array"
+        },
+        "warnings": {
+            "items": {
+                "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+        }
+    },
+    "required": [
+        "bundle_id",
+        "paper",
+        "source"
+    ],
+    "title": "PaperBundle",
+    "type": "object"
+}

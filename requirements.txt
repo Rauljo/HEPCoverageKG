@@ -9,6 +9,11 @@ openai==1.60.0
 
 # ── Knowledge Graph Store ─────────────────────────────────────────────────────
 networkx==3.6.1
+# SQLite itself is stdlib (hepcoveragekg/kg/store.py + schema.sql)
+
+# ── Bundle import (milestone 1) ───────────────────────────────────────────────
+# Validates bundles against the supervisor's shipped hepkg-acquisition-v0.2 schema
+jsonschema==4.26.0
 
 # ── Harvesting (fixed HTML page fetch/parse) ──────────────────────────────────
 requests==2.34.2
@@ -20,3 +25,6 @@ pandas==3.0.3
 pydantic==2.13.4
 tenacity==9.1.4
 tabulate==0.9.0
+
+# ── Testing ───────────────────────────────────────────────────────────────────
+pytest==9.1.1

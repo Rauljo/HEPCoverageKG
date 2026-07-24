@@ -1,0 +1,124 @@
+erDiagram
+    %% HEPCoverageKG bundle-import store (milestone 1) -- all 15 tables.
+    %% Generated from hepcoveragekg/kg/schema.sql. Solid crow's-foot lines are
+    %% enforced SQLite foreign keys; the two soft pointers (paper.latest_bundle_id,
+    %% paper.source_hash) carry no FK and are omitted here.
+
+    paper {
+        TEXT arxiv_id PK
+        TEXT title
+        TEXT category
+        TEXT experiments
+    }
+    source_snapshot {
+        TEXT source_hash PK
+        TEXT paper_id FK
+        TEXT normalization_version
+    }
+    source_block {
+        TEXT source_hash PK
+        TEXT block_id PK
+        TEXT kind
+        TEXT text
+    }
+    bundle_import {
+        TEXT bundle_id PK
+        TEXT paper_arxiv_id FK
+        TEXT source_hash FK
+        TEXT bundle_content_hash
+    }
+    entity {
+        TEXT entity_id PK
+        TEXT kind
+        TEXT label
+        TEXT aliases
+        TEXT attributes
+    }
+    entity_occurrence {
+        TEXT bundle_id PK
+        TEXT entity_id PK
+        TEXT paper_id
+        TEXT label
+    }
+    activity {
+        TEXT activity_id PK
+        TEXT bundle_id FK
+        TEXT kind
+        TEXT model
+    }
+    assertion {
+        TEXT assertion_id PK
+        TEXT bundle_id FK
+        TEXT subject_id FK
+        TEXT object_id FK
+        TEXT activity_id FK
+        TEXT predicate
+        TEXT status
+        TEXT object_value
+        TEXT signature
+        TEXT qualifiers
+        TEXT identity_hash
+    }
+    evidence {
+        TEXT evidence_id PK
+        TEXT bundle_id FK
+        TEXT source_hash FK
+        TEXT block_id FK
+        TEXT quote
+    }
+    assertion_evidence {
+        TEXT assertion_id PK
+        TEXT evidence_id PK
+    }
+    artifact {
+        TEXT bundle_id PK
+        TEXT artifact_id PK
+        TEXT url
+    }
+    qa_finding {
+        TEXT bundle_id PK
+        TEXT finding_id PK
+        TEXT check_name
+        TEXT verdict
+    }
+    completeness_finding {
+        TEXT bundle_id PK
+        TEXT finding_id PK
+        TEXT rule_id
+    }
+    expert_decision {
+        TEXT decision_id PK
+        TEXT bundle_id FK
+        TEXT assertion_id FK
+        TEXT corrected_assertion_id FK
+        TEXT action
+    }
+    assertion_status_history {
+        TEXT assertion_id FK
+        TEXT bundle_id FK
+        TEXT old_status
+        TEXT new_status
+    }
+
+    paper            ||--o{ source_snapshot          : "has snapshot"
+    paper            ||--o{ bundle_import            : "imported as"
+    source_snapshot  ||--o{ source_block             : "split into"
+    source_snapshot  ||--o{ bundle_import            : "extracted into"
+    bundle_import    ||--o{ entity_occurrence        : "declares"
+    entity           ||--o{ entity_occurrence        : "merged from"
+    bundle_import    ||--o{ activity                 : "records"
+    bundle_import    ||--o{ assertion                : "carries"
+    entity           ||--o{ assertion                : "subject"
+    entity           ||--o{ assertion                : "object"
+    activity         ||--o{ assertion                : "produced"
+    bundle_import    ||--o{ evidence                 : "carries"
+    source_block     ||--o{ evidence                 : "quoted in"
+    assertion        ||--o{ assertion_evidence       : "backed by"
+    evidence         ||--o{ assertion_evidence       : "cites"
+    bundle_import    ||--o{ artifact                 : "links"
+    bundle_import    ||--o{ qa_finding               : "flags"
+    bundle_import    ||--o{ completeness_finding     : "notes"
+    bundle_import    ||--o{ expert_decision          : "reviewed in"
+    assertion        ||--o{ expert_decision          : "decided on"
+    assertion        ||--o{ assertion_status_history : "transitions"
+    bundle_import    ||--o{ assertion_status_history : "observed in"
