@@ -1,6 +1,6 @@
 # Ideas — index
 
-**Status counts: 4 seed · 8 discussed · 3 adopted · 0 rejected**
+**Status counts: 4 seed · 9 discussed · 3 adopted · 0 rejected**
 
 *Statuses: seed (one-liner, never discussed) · discussed (has a doc) · adopted (graduated to a D-nnn decision; doc is its pre-history) · rejected (kept forever, with rationale).*
 *Convention: whenever any idea doc is touched, refresh the counts line above.*
@@ -16,7 +16,8 @@
 | HEPData harvesting | seed | Future expansion, not current scope (D-008 clarification 2026-07-10) — would be the structured numeric-results source if ever needed |
 | arXiv table extraction | seed | Only if structured numerics are needed and HEPData isn't built (D-008) |
 | Multi-agent extension | discussed | [multi-agent-extension.md](multi-agent-extension.md) — reframed as an evaluated research question (agentic verification vs single-pass baseline); absorbs the former extraction-provenance seed; blocked on baseline |
-| Gap-hypothesis system | discussed | [gap-hypothesis-system.md](gap-hypothesis-system.md) — reasoning layer over enumerated coverage gaps; the headline-results generator; takes priority over critics 2–3 if time forces a choice |
+| Gap-hypothesis system | discussed | [gap-hypothesis-system.md](gap-hypothesis-system.md) — reasoning layer over enumerated coverage gaps; the headline-results generator; takes priority over critics 2–3 if time forces a choice. **Expanded 2026-07-24: beyond final-state — subject/literature-pull gaps, a theory-side graph (theory-predicted-vs-measured), and a scoped-theory fallback** |
+| Researcher feedback loop + self-correction | discussed | [researcher-feedback-loop.md](researcher-feedback-loop.md) — expose per-paper summaries → authors correct → cluster corrections → human-applied fixes (never LLM self-editing prompts). Team meeting 2026-07-24 |
 | Pydantic for validation | discussed | [pydantic-validation.md](pydantic-validation.md) — NO to retrofitting the supervisor-contract dataclasses; YES to vLLM guided decoding at the LLM boundary as a measured ablation. **Importer (D-023): jsonschema is the gate, Pydantic deferred — generate from schema later if the query layer wants typed access** |
 | Grounding & evaluation | discussed | [grounding-and-evaluation.md](grounding-and-evaluation.md) — ground-truth sources (Rivet/SimpleAnalysis/pyhf), grounding-as-blocker, eval methodology; from the AgentRivet read; partially revisits D-008 framing |
 | Held-out gap validation | discussed | [held-out-gap-validation.md](held-out-gap-validation.md) — build KG on a corpus subset, check which enumerated gaps the held-out papers fill; intrinsic (cheap, no-LLM) complement to the gap-hypothesis external literature check; matrix-completion eval framing |

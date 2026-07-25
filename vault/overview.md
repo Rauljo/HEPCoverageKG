@@ -88,9 +88,16 @@ Patterns ported from DeepCollector (referenced, not forked). Supervisor provided
 
 ## Next steps (rough order)
 
-1. **Build milestone 1** per `ideas/bundle-importer-design.md` — steps 1→8 to the count+fixture
-   gate. Steps 1–2 done; **resume at step 3** (`ingest/reader.py`: gunzip + parse + jsonschema
-   shape gate).
+**★ Deliverables for next Tuesday (agreed in the 2026-07-24 team meeting):**
+1. **Build the knowledge graph** — the Neo4j graph-DB projection from the SQLite store (D-022).
+2. **Get queries working** on the graph — depth TBD (simple filters → multi-hop physics signatures).
+3. **Aliases layer working** — `aliases/normalize.py` Tier 1, producing the **first draft of the
+   alias list** (recovers the b_jet/bjet/b-jet-style splits). = milestone 2 + D-025 + D-022 together.
+
+Then:
+
+1. ✅ **Milestone 1 DONE** — importer complete (`ideas/bundle-importer-design.md`), 108 tests,
+   target reproduced. DB populated at `data/processed/hepkg.db`.
 2. Then aliases Tier 1 (`aliases/normalize.py`), deterministic export, trace-query polish.
 3. Send Gabriel the 7 onboarding questions (signatures + corpus access unblock the most).
 4. Milestones 2–4 (trace; accepted-view + a real physics query; re-import after review).
