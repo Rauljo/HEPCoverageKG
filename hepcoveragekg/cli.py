@@ -97,6 +97,32 @@ def _print_status(conn) -> dict[str, int]:
     return counts
 
 
+def _cmd_aliases(args) -> int:
+    from hepcoveragekg.aliases import run as aliases_run, store as aliases_store, report as aliases_report
+
+    conn = aliases_store.connect(args.db)
+    if args.action == "build":
+        added = aliases_run.build(conn)
+        total = conn.execute("SELECT COUNT(*) FROM same_as").fetchone()[0]
+        print("aliases build — proposals written (nothing resolves until confirmed):")
+        for method, n in added.items():
+            print(f"  {method}: +{n}")
+        print(f"  same_as rows now: {total}")
+        return 0
+    if args.action == "report":
+        info = aliases_report.write_report(conn, args.out)
+        print(f"draft alias list: {info['clusters']} clusters / {info['ids']} ids")
+        print(f"  {info['markdown']}")
+        print(f"  {info['csv']}")
+        return 0
+    if args.action == "confirm":  # promote proposed -> auto (run only after review)
+        n = aliases_store.confirm(conn, method=args.method)
+        mapped = aliases_store.materialize_canonical(conn)
+        print(f"confirmed {n} proposals; {mapped} entities now resolve to a canonical id")
+        return 0
+    return 1
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="hepcoveragekg", description="HEP coverage KG importer")
     parser.add_argument(
@@ -110,6 +136,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_verify = sub.add_parser("verify-counts", help="check the milestone-1 count target")
     p_verify.set_defaults(func=_cmd_verify_counts)
+
+    p_aliases = sub.add_parser("aliases", help="build / report / confirm the aliases layer")
+    p_aliases.add_argument("action", choices=["build", "report", "confirm"])
+    p_aliases.add_argument("--out", default="data/processed", help="report output directory")
+    p_aliases.add_argument("--method", default=None, help="confirm: restrict to one tier/method")
+    p_aliases.set_defaults(func=_cmd_aliases)
 
     return parser
 
