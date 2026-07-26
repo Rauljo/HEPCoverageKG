@@ -86,6 +86,18 @@ Themes: **Extraction & retrieval** · **Graph & canonicalization** · **Agents &
       [[gap-hypothesis-system]] / [[held-out-gap-validation]] / [[grounding-and-evaluation]] /
       [[researcher-feedback-loop]]; flag any that challenge a current decision. Triage before
       writing anything into the vault.
+    - **Weight agent systems as first-class** (Raul, 2026-07-26): the payoff arm's agentic
+      contribution lives at Stage-B tool-using verification (gap-hypothesis constraint 2) and the
+      multi-agent theory×experiment vision — so the from-scratch run must surface *tool-using /
+      self-verifying / multi-agent* systems, not just static link-prediction/embedding methods.
+      Core reads to date (agent systems in **bold**): Swanson 1986 · GAPMAP (2510.25055) ·
+      ResearchLink (Borrego 2025) · fact-discovery-from-KGE (Bhagaskoro 2024) · KG-CoI (2411.02382) ·
+      **GeneAgent (2405.16205 — self-verification agent over domain DBs = the Stage-B verifier)** ·
+      AGATHA (2002.05635, temporal holdout) · open-world KG eval (2209.08858) · nPUGraph (2306.07512,
+      PU learning for absence) · **SciAgents (Ghafarollahi 2024 — multi-agent graph reasoning =
+      theory-side vision)**. Support: GeneAgent's cousins BioKGBench (2407.00466, agent KG-checking),
+      SKiM-GPT, Dyport, Daowd 2022, LinkExplorer. Note: nearly all prior art is biomedical LBD; the
+      open niche is gaps-as-*coverage-grid* (final-state×experiment×energy) + theory-vs-measurement.
 - [ ] **Gap finder** — deterministic enumerate → LLM reason (quality) → InspireHEP verify;
       never invents gaps. [[gap-hypothesis-system]].
 - [ ] **Beyond final-state gaps** — subject/literature-pull; theory-side graph
