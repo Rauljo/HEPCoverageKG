@@ -88,6 +88,9 @@ Patterns ported from DeepCollector (referenced, not forked). Supervisor provided
 
 ## Next steps (rough order)
 
+*The live, themed to-do list is now [`backlog.md`](backlog.md) (Extraction / Graph / Agents +
+the four milestones). Idea *designs* are in [`ideas/index.md`](ideas/index.md), also themed.*
+
 **★ Deliverables for next Tuesday (agreed in the 2026-07-24 team meeting):**
 1. **Build the knowledge graph** — the Neo4j graph-DB projection from the SQLite store (D-022).
 2. **Get queries working** on the graph — depth TBD (simple filters → multi-hop physics signatures).

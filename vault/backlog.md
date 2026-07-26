@@ -41,6 +41,17 @@ Themes: **Extraction & retrieval** · **Graph & canonicalization** · **Agents &
 - [ ] **Aliases layer — Tiers 2–3.** Tier 1 (normalize) done + draft list produced. Next: n-grams
       + exact number/version guard (proposed); embeddings (bge-small, candidate-gen only); LLM
       adjudication grounded in evidence + human confirm. [[open-vocab-reconciliation]] (D-025).
+    - Tier-1 refinement done 2026-07-26: strip the `.` version dot too (`pythia8.210`=`pythia8-210`).
+    - **Tier-2 rule TODO**: the `p`-as-decimal convention in energies — `2p76tev`=2.76 TeV,
+      `5p02tev`=5.02 TeV — a `p` between digits means a decimal; not handled by Tier 1.
+- [ ] **Canonical standardization** (distinct from clustering — Raul, 2026-07-26). The canonical is
+      currently "most-papers existing id", so canonicals are inconsistently spelled *across* clusters
+      (`pythia-8.186` vs `pythia8.210` vs `pythia-8-212`). Add a per-kind step that synthesizes a
+      *consistent* canonical form — best derived from the clean **label** ("Pythia 8.186"), since the
+      normalized slug has lost separator positions (`pythia8210` is ambiguous). Non-destructive
+      (originals kept; this sets the display/resolution id). **Bonus**: standardized canonicals
+      unlock a generator→version **hierarchy** (all `pythia8.*` = one "Pythia 8" family) for
+      coarser coverage queries — a *link*, not a merge (versions stay distinct).
 - [ ] **★ Raul: READ the draft alias list** (`data/processed/draft-aliases.md` — 245 clusters /
       559 ids) → then `aliases confirm` (materialize `entity_canonical`) and decide if Tier 1 is
       auto-trustworthy going forward.
