@@ -32,8 +32,8 @@
 
 | Idea | Status | Doc / note |
 |---|---|---|
-| Gap-hypothesis system | discussed | [gap-hypothesis-system.md](gap-hypothesis-system.md) — enumerate → reason → verify; the headline generator. Expanded 2026-07-24: beyond final-state (literature-pull, theory-side graph, scoped fallback) |
-| Held-out gap validation | discussed | [held-out-gap-validation.md](held-out-gap-validation.md) — train/test split for gaps; matrix-completion eval; intrinsic complement to the external literature check |
-| Multi-agent extension | discussed | [multi-agent-extension.md](multi-agent-extension.md) — agentic verification vs single-pass baseline; the critic panel is mostly **Sunny's** thread; blocked on baseline |
+| Gap-hypothesis system | discussed | [gap-hypothesis-system.md](gap-hypothesis-system.md) — enumerate → reason → verify; the headline generator. Expanded 2026-07-24: beyond final-state (literature-pull, theory-side graph, scoped fallback); 2026-07-27: author-declared gaps (future-work mining) + the Swanson/Popper framing of the whole arm |
+| Held-out gap validation | discussed | [held-out-gap-validation.md](held-out-gap-validation.md) — train/test split for gaps; matrix-completion eval; intrinsic complement to the external literature check. 2026-07-27: the gap-*matching* problem (reuses aliases Tiers 2–3) + temporal holdout from declared-future-work labels |
+| Multi-agent extension | discussed | [multi-agent-extension.md](multi-agent-extension.md) — agentic verification vs single-pass baseline; the critic panel is mostly **Sunny's** thread; blocked on baseline. 2026-07-27: "mixture of LLMs" is an *ensemble*, not an agency, argument |
 | Researcher feedback loop + self-correction | discussed | [researcher-feedback-loop.md](researcher-feedback-loop.md) — expose per-paper summaries → authors correct → cluster → human-applied fixes (never LLM self-editing). Team meeting 2026-07-24 |
 | Observability / artefact tracing | seed | Keep intermediate artefacts so an error's *cause* is recoverable (AgentRivet/Langfuse) — provenance, not scoring |

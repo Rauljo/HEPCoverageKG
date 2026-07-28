@@ -123,6 +123,28 @@ TP=1 server.
   dependencies (critic waits on extractor), so run many paper-trajectories at once to keep
   vLLM batched — else a 70B sits at single-digit % utilization waiting between calls.
 
+## "Mixture of LLMs" is NOT an agent argument (2026-07-27, from the GAPMAP read)
+
+GAPMAP concludes that *"using a mixture of LLMs instead of relying only on the top performing ones can
+provide a robust gap recommender system."* Tempting to cite as justification for the agentic arm.
+**It isn't one** — keep the vocabulary discipline above:
+
+- That is an **ensemble/diversity** result (variance reduction across *independent* models), not an
+  **agency** result (model-directed control flow, tool use, self-verification).
+- Several personas over **one checkpoint** is a *prompt ensemble*: errors stay correlated because the
+  weights are shared, so the diversity that makes ensembling work is largely absent. Note this cuts
+  against the "one model, many roles" default in the compute section — that default is right for
+  *cost*, but it means our critic panel should not be sold as an ensemble.
+- **What to cite it for**: "an ensemble outperforms the single best model at gap identification"
+  (supports a *panel* of critics over a single critic, and supports the n=3/multi-run variance work
+  in [[grounding-and-evaluation]]).
+- **Where the agent justification actually comes from**: tool use and self-verification against
+  external sources — GeneAgent (2405.16205), and our own Stage-B literature check
+  ([[gap-hypothesis-system]] constraint 2), which is the point where the "agent" label is earned.
+- If we *do* want a genuine ensemble claim, it needs **distinct checkpoints** (the 8B/32B/70B ladder
+  below is already the vehicle) — cheap to test, and a clean ablation: same-model personas vs
+  different-model panel.
+
 ## Open
 
 - Which 1–2 components to build; evaluation gold-set design; when the baseline counts as done.

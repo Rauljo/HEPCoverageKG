@@ -38,9 +38,29 @@ Themes: **Extraction & retrieval** · **Graph & canonicalization** · **Agents &
 
 ## Graph & canonicalization
 
+- [ ] **★★ FROM GABRIEL'S PR #1 (2026-07-27)** — full analysis in
+      `reports/2026-07-27-hepkg-pr1-analysis.md`. No schema break (bundles still v0.2; `canonical`/
+      `facets` are export-only). Three actions:
+    1. **Correct importer entity identity → (bundle_id, entity_id)**, never bare entity_id (the
+       contract now says cross-paper id-equality is *accidental collision*, not entity resolution;
+       `hepkg:object:muon` spans 42 papers). Revisits **D-024/D-029** — `entity_occurrence` already
+       has the right grain; demote the merged `entity` node from identity to convenience.
+    2. **Reposition the aliases layer as the `resolves_to` residual layer**: consume Gabriel's
+       `canonicalize_entity` / `facet_tags` (objects→`BJet`, generators→family+version) as a strong
+       prior; own the null tail + cross-paper node resolution. Our Tier-1 dot/spelling work is now
+       partly redundant *for detector-objects/generators*, still needed elsewhere.
+    3. **Consume the derived data**: port `vocabulary.py` (`objects-v2`/`generators-v1`/`facets-v1`)
+       over imported entities, so we get `canonical` + `facets` + the per-paper `analysis_facets.jsonl`
+       card (a ready coverage backbone). Alt: import from the compiled export.
+    - Ask Gabriel: is the vocab frozen, and will future bundles carry `canonical`/`facets` *in the
+      bundle* (schema bump → update our gate) or stay export-only? Also add the `column` qualifier to
+      the final-state compile.
 - [ ] **Aliases layer — Tiers 2–3.** Tier 1 (normalize) done + draft list produced. Next: n-grams
       + exact number/version guard (proposed); embeddings (bge-small, candidate-gen only); LLM
       adjudication grounded in evidence + human confirm. [[open-vocab-reconciliation]] (D-025).
+      *(LLM tier note: DIAS GPUs are Raul's alone — spinning up vLLM is just "ssh in + run", no
+      queue/contention to worry about.)*
+    - Tier 1.5 DONE 2026-07-26: deterministic US/UK spelling + data-driven plural (`aliases/spelling.py`).
     - Tier-1 refinement done 2026-07-26: strip the `.` version dot too (`pythia8.210`=`pythia8-210`).
     - **Tier-2 rule TODO**: the `p`-as-decimal convention in energies — `2p76tev`=2.76 TeV,
       `5p02tev`=5.02 TeV — a `p` between digits means a decimal; not handled by Tier 1.
@@ -52,9 +72,19 @@ Themes: **Extraction & retrieval** · **Graph & canonicalization** · **Agents &
       (originals kept; this sets the display/resolution id). **Bonus**: standardized canonicals
       unlock a generator→version **hierarchy** (all `pythia8.*` = one "Pythia 8" family) for
       coarser coverage queries — a *link*, not a merge (versions stay distinct).
-- [ ] **★ Raul: READ the draft alias list** (`data/processed/draft-aliases.md` — 245 clusters /
-      559 ids) → then `aliases confirm` (materialize `entity_canonical`) and decide if Tier 1 is
-      auto-trustworthy going forward.
+- [ ] **★ MAÑANA: review the NEW Tier-1.5 spelling/plural bridges** (19 of them, `method='spelling'`,
+      status `proposed`) in the regenerated `data/processed/draft-aliases.md` (255 clusters / 597 ids)
+      → then `aliases confirm` to promote them. Tier 1 (328 normalize edges) is already `auto`.
+- [ ] **Literature: scientific-concept deduplication / entity resolution** (for the aliases layer,
+      Raul 2026-07-26). Search proper (Elicit-style, house-style `literature.md` entries). Likely
+      landmark strands: record linkage / entity resolution (Fellegi–Sunter, blocking, `dedupe`);
+      entity *linking/normalization* (BLINK; **SapBERT** self-aligned biomedical concept linking;
+      UMLS/MetaMap normalization); ontology/entity **alignment & matching** (OAEI, Silk/LIMES,
+      Wikidata/DBpedia alignment). Goal: a principled, ideally cheaper, method for Tiers 2–3 —
+      esp. how others tell true synonyms from dangerous look-alikes (our w/z, s/t, version trap).
+      **Two consumers, one search** (2026-07-27): the aliases layer *and* the held-out gap-matcher
+      ("is this fill the same gap?") — see [[held-out-gap-validation]]. SapBERT-style cross-encoders
+      are the strand GAPMAP used (RoBERTa) for its implicit-gap validation.
 - [ ] **Compile final-state signatures from the `count`/`subchannel` qualifiers** — the signature
       field is empty, but the ingredients aren't. Blocks the M3 physics query. [[final-state-representation]].
 - [ ] **Neo4j projection** from SQLite (D-022) — for traversal + visualization.
@@ -90,6 +120,8 @@ Themes: **Extraction & retrieval** · **Graph & canonicalization** · **Agents &
       contribution lives at Stage-B tool-using verification (gap-hypothesis constraint 2) and the
       multi-agent theory×experiment vision — so the from-scratch run must surface *tool-using /
       self-verifying / multi-agent* systems, not just static link-prediction/embedding methods.
+      **Reading progress**: ✅ Swanson 1986 (LQ theory paper) and ✅ GAPMAP read 2026-07-27 — both
+      `literature.md` entries rewritten from the papers. Next in order: ResearchLink (Borrego 2025).
       Core reads to date (agent systems in **bold**): Swanson 1986 · GAPMAP (2510.25055) ·
       ResearchLink (Borrego 2025) · fact-discovery-from-KGE (Bhagaskoro 2024) · KG-CoI (2411.02382) ·
       **GeneAgent (2405.16205 — self-verification agent over domain DBs = the Stage-B verifier)** ·
@@ -102,8 +134,21 @@ Themes: **Extraction & retrieval** · **Graph & canonicalization** · **Agents &
       never invents gaps. [[gap-hypothesis-system]].
 - [ ] **Beyond final-state gaps** — subject/literature-pull; theory-side graph
       (theory-predicted-vs-measured); scoped-theory fallback. (In [[gap-hypothesis-system]].)
+- [ ] **Mine "Future Work" / "Outlook" sections for author-declared gaps** (Raul 2026-07-27, from
+      GAPMAP). A new *prior*/ranking signal over structurally-enumerated cells — never the enumerator
+      (constraint 1). Log un-enumerated declared gaps separately: they indicate a **missing coverage
+      axis**, leftovers-log style. Cheap — a new prompt over the existing section routing. Big
+      by-product: declared-then-later-filled = a **timestamped labelled gap set** (see below).
+      [[gap-hypothesis-system]] § Author-declared gaps.
 - [ ] **Held-out validation** — train/test split for gaps; matrix-completion framing;
       learning curve. [[held-out-gap-validation]].
+    - **Gap-matching ("is this fill the same gap?")** — exact string match under-counts fills and the
+      bias flatters the finder. **Reuse aliases Tiers 2–3**: BGE blocking → pairwise adjudication
+      (cross-encoder à la RoBERTa/SapBERT *vs* LLM prompt, report agreement) → human gate on
+      disagreements. Precision-first here (a false fill *erases* a real gap); consider exact-match on
+      experiment/√s, fuzzy only on the final-state label. Shares the dedup literature search above.
+    - **Temporal holdout** (AGATHA-style) using declared-future-work→later-fill pairs as labels;
+      run *alongside* the random split, not instead.
 - [ ] **Researcher feedback loop** — per-paper summaries → authors correct → cluster → human-applied
       fixes (never LLM self-editing). [[researcher-feedback-loop]].
 - [ ] **Single-vs-multi-value conflicts.** Two same-predicate assertions can conflict (two
@@ -124,4 +169,6 @@ Themes: **Extraction & retrieval** · **Graph & canonicalization** · **Agents &
       final-state-from-qualifiers compile + status filter.
 - [ ] **M4 — Re-import after review** — the apply-updates reconciler (status promotions + correction
       chains + `assertion_status_history` writes); guard + table exist, reconciler deferred (step 6).
-      Needs a reviewed bundle (pilot has 0 expert_decisions) — ask Gabriel, or test on `corrected_bundle`.
+      **PR #1 update**: real review decisions now exist (2001.06899 accepted; 2006.05880 = 287
+      decisions staged in `runs/.../decisions.json`) — once a *reviewed* bundle is compiled, M4 has a
+      real target beyond the `corrected_bundle` fixture.

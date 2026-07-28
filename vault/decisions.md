@@ -244,3 +244,7 @@ construction, so a single-column PK is safe.
 **Method note**: this is the *fifth* time checking one level deeper changed something — the earlier
 within-bundle uniqueness check passed, but cross-bundle uniqueness for metadata did not; caught by
 running the full 60 rather than trusting the per-bundle check.
+
+## D-031 (2026-07-27) — Neo4j Graph Projection Architecture
+**Decision**: The graph projection is materialized using offline CSV export and `neo4j-admin import` rather than live Cypher inserts. Nodes are split into `:Paper`, `:Occurrence`, and `:Canonical` to preserve the faithful per-paper entity context. Edges map `:Paper -[:HAS_OCCURRENCE]-> :Occurrence -[:RESOLVES_TO]-> :Canonical`. Assertions strictly connect `:Occurrence` nodes (or synthetic `:LiteralValue` nodes for scalar properties like signature or numeric values).
+**Context**: Matches the project requirement (D-026/Phase 2) to maintain SQLite as the offline system of record. Generating CSVs is reproducible, fast, and testable without a live Neo4j service. `neo4j-admin import` with `--multiline-fields=true` allows rapid full-database hydration on demand.

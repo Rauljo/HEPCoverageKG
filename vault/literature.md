@@ -71,8 +71,8 @@ Agent systems marked **[AGENT]**.*
 ## Reading order
 
 **Tier 1 — core (read in order):**
-1. Swanson 1986 — LBD origin
-2. GAPMAP (2510.25055) — literal "gap mapping" with LLMs
+1. ✅ Swanson 1986 — LBD origin (**the *Library Quarterly* theory paper**, not the fish-oil one — read 2026-07-27)
+2. ✅ GAPMAP (2510.25055) — literal "gap mapping" with LLMs (read 2026-07-27)
 3. ResearchLink (Borrego 2025) — hypothesis gen as link prediction over a sci KG
 4. Fact discovery from KGE (Bhagaskoro 2024) — enumerate complement + rank
 5. KG-CoI (2411.02382) — KG-grounded LLM hypothesis gen + hallucination check
@@ -91,15 +91,136 @@ Zamini 2022 & Peng 2023 (general KG/KGC surveys, overlap the Bian survey above);
 
 ---
 
-## [1] Swanson 1986 — "Fish Oil, Raynaud's Syndrome, and Undiscovered Public Knowledge" (Perspectives in Biology and Medicine, DOI 10.1353/pbm.1986.0087)
-**What**: The founding paper of literature-based discovery (LBD). Swanson showed two disjoint literatures — fish oil's effects on blood viscosity/platelets, and those same effects in Raynaud's — implied an untested connection (fish oil may treat Raynaud's), later clinically confirmed. Coined "undiscovered public knowledge."
-**Why it matters here**: The conceptual root and canonical citation for the whole payoff arm — a "gap" as knowledge *latent in but never stated by* the corpus. Grounds the claim that empty cells can be *implied* by what's present. Every downstream system here (AGATHA, SKiM-GPT, Daowd) is a descendant. **Boundary to draw**: Swanson's ABC is co-occurrence-implied *links*; this project's gap is a structurally-absent *cell in a typed coverage grid* — cite for lineage, then state the difference. [gap-hypothesis-system](ideas/gap-hypothesis-system.md).
-**Where discussed**: 2026-07-26 (gap-finding literature search).
+## [1] Swanson 1986 — "Undiscovered Public Knowledge" (*The Library Quarterly* 56(2):103–118, DOI 10.1086/601720, JSTOR 4307965) — **READ IN FULL 2026-07-27**
 
-## [2] GAPMAP (Salem et al. 2025, arXiv 2510.25055)
+**Careful — there are TWO Swanson 1986 papers, cite the right one:**
+- **"Undiscovered Public Knowledge"**, *Library Quarterly* 56(2):103–118 — **the theory paper**
+  (Popper, World 3, the logic of UPK, three examples). **This is the one read.** Cite for the *concept*.
+- **"Fish Oil, Raynaud's Syndrome, and Undiscovered Public Knowledge"**, *Perspectives in Biology and
+  Medicine* 30(1):7–18, DOI 10.1353/pbm.1986.0087 — **the case study** for a biomedical audience.
+  It is ref. [21] of the LQ paper, listed there as "in press". Cite for the *worked discovery*.
+- Local copy of the LQ scan: `data/raw/papers/swanson-1986-undiscovered-public-knowledge.pdf` (gitignored).
+
+**What (the argument, in its own order)**
+1. **Thesis (p. 103)**: knowledge can be *public yet undiscovered* if independently created fragments
+   are logically related but never retrieved, brought together, and interpreted. Puzzle-piece image:
+   independently designed pieces can assemble into "an unseen, unknown, and unintended pattern."
+2. **Popperian setup (pp. 104–106)**: against positivism — theories are conjectures, never verified,
+   only tested; they "remain forever conjectural." Crucially, *positivism is an unsuitable model of
+   science, but attacking positivism is not attacking science* (a distinction Swanson insists on).
+   If theories can't be verified, what makes one better? Three criteria: **testable > untestable;
+   tested-and-passed > tested-and-failed; withstood more criticism > less.** Perception is
+   expectation-laden (Popper's *searchlight*, not *bucket*); a mistake is "a clash between expectation
+   and reality"; the humanities suffer because clear confrontation with reality is harder to evoke.
+   Money line for the write-up: *"the sine qua non of science is not objectivity or even 'truth' …
+   but a systematically self-critical attitude."*
+3. **World 3 (pp. 106–107)**: World 1 = physical; World 2 = subjective/mental; World 3 = objective
+   knowledge (problems, theories, products of mind). World 3 is man-made yet exceeds its makers'
+   intentions — **prime numbers existed, awaiting discovery, once the number system was invented**.
+   Therefore World 3 "must contain ever increasing quantities of undiscovered knowledge," and only a
+   small portion is known to anyone.
+4. **Three examples (pp. 108–113)** — the heart:
+   - **Ex. 1, Black swans: a hidden refutation.** "All swans are white" can be refuted but never
+     verified. Shift from World 1 (find a black swan) to World 3 (find a *report* of one). A reliable
+     published report can exist, incidental to some other article and missed by indexers, while the
+     hypothesis it refutes stands. **A refutation can itself be undiscovered public knowledge.**
+   - **Ex. 2, A missing link in the logic of discovery.** The **ABC syllogism**: (i) A causes B,
+     (ii) B causes C, published independently by authors unaware of each other ⇒ (iii) A causes C
+     exists objectively as an *undiscovered* hypothesis; i and ii are *indirect tests* of it. Live
+     instance: A = dietary fish oil, B = reduced platelet aggregability / blood viscosity, C =
+     improvement in Raynaud's patients. **The operational disjointness criterion he actually used:
+     the two literatures share no common authors and no mutual citations** (nn. 3–5).
+   - **Ex. 3, Hidden cumulative strength of individually weak tests.** Many independent weak tests can
+     jointly constitute a strong one; via Popper's severity measure p(e,h) − p(e), the *joint*
+     probability of many kinds of evidence is smaller than each separately. Case: tobacco–lung cancer,
+     where fragmentary case-control/mortality/animal evidence existed but no article assembled it —
+     so *the degree to which the hypothesis had withstood tests was itself undiscovered*.
+5. **The essential uncertainty of information retrieval (pp. 113–115)** — the strongest section for
+   this project. Documents are reachable only via "points of access"/searchable attributes, which
+   cannot encode relevance to problems not yet formulated when the document was written. Any request
+   for *all* information on a theory presumes a universal hypothesis: *"all pieces of recorded
+   information relevant to a given theory can be described and found by constructing some specific
+   function of searchable attributes"* — **the "search function"**. That hypothesis can never be
+   verified (verification needs direct inspection of everything published, a task that never
+   terminates because the corpus grows meanwhile) but **can be refuted by a single relevant document
+   lacking the attributes**. Hence *"an information search is essentially incomplete, or, if it were
+   complete, we could never know it."* The **universal-thesaurus infinite regress**: a thesaurus
+   encoding all relationships in advance would have to contain a complete representation of World 3,
+   and you would need a second thesaurus to search the first, *ad infinitum*. Signature formulation:
+   **"A search function is a conjecture or a theory about the contents of World 3, whereas a
+   scientific theory is a conjecture about World 1."** Falsifiable, not verifiable — like any theory.
+6. **Interactive searching (p. 116)**: because search functions are criticizable they are improvable;
+   the output of one search is the base for constructing a better one. Multistage interactive search
+   > one-shot (and, he notes, online services were then used mostly one-shot).
+7. **Close (pp. 116–117)**: the "central problem of IR" = finding everything bearing on the testing and
+   criticism of a theory; its specific form depends on which puzzle pieces are already retrieved —
+   "the logic of undiscovered public knowledge". UPK is open-ended yet has "a certain order, form, and
+   structure that may be worth systematic study." **World 3 as an endless frontier**, alongside World 1.
+8. **Author's own hedge (n. 8)**: he does *not* claim literature-based discovery is unprecedented or
+   unusual; and cleanly separating lab-based from literature-based knowledge is itself problematic,
+   since all scientific argument leans on literature-grounded background knowledge.
+
+**Why it matters here** — four transfers, in order of value:
+1. **It is the canonical citation for our hardest caveat.** [[gap-hypothesis-system]] constraint 2
+   ("a gap = not measured *in the ingested papers*") and the asymmetric-reliability caveat in
+   [[held-out-gap-validation]] ("finding a fill is reliable; finding nothing is not") are *special
+   cases of Swanson's essential incompleteness of IR*. Swanson turns our biggest vulnerability from
+   an apology into a stated epistemological position with a 40-year-old canonical citation.
+2. **It supplies the Popperian frame for the whole payoff arm.** Our gap enumeration IS a search
+   function = a conjecture about World 3: falsifiable, never verifiable. So the correct posture is
+   **refutation-based**: an enumerated gap is a conjecture that the Stage-B literature check and the
+   held-out split *attempt to refute*; surviving refutation is the claim, never "verified absence."
+   This makes held-out validation ([[held-out-gap-validation]]) a *severity-of-test* argument, and
+   Ex. 3 gives the vocabulary for aggregating many individually weak plausibility signals into one
+   strong one — directly usable for gap ranking.
+3. **Boundary to draw — two different absences (the positioning sentence).** *Swanson's gap is
+   epistemic: the knowledge exists in the literature but no one assembled it. This project's headline
+   gap is ontic: the measurement was never made — the cell is empty because nobody ran the analysis.*
+   Cite for lineage, then state that difference. **But the project contains both**: Stage-B's
+   literature check is exactly Swanson-shaped (assemble scattered evidence to decide whether a cell is
+   *really* empty), so UPK is our verification stage even though it is not our discovery target.
+   Swanson's *disjointness test* (no shared authors, no mutual citations) is a cheap, concrete measure
+   we could compute on the HEP citation/author graph to score whether two sub-literatures are
+   genuinely non-interacting.
+4. **It is an argument against building the alias thesaurus up front.** The universal-thesaurus
+   infinite regress (p. 115) is a principled reason our `aliases/` layer is *bottom-up and empirical*
+   (cluster what the corpus actually contains, human-gated) rather than a pre-authored controlled
+   vocabulary — a nice unexpected citation for [[open-vocab-reconciliation]] / the Tier 2–3 design.
+
+**Where discussed**: 2026-07-26 (gap-finding literature search — triage); **2026-07-27 (read in full,
+notes + discussion; entry rewritten from the paper itself).**
+
+## [2] GAPMAP (Salem et al. 2025, arXiv 2510.25055) — **READ 2026-07-27**
 **What**: Uses LLMs to identify research knowledge gaps in biomedical literature, distinguishing *explicit* gaps (declared "we don't know X") from *implicit* (context-inferred); introduces TABI (Toulmin-Abductive Bucketed Inference), a structured reasoning scheme; ~1,500 docs, open- and closed-weight models.
+**From the read (2026-07-27)**:
+- Frames gaps as **"known unknowns"** and justifies the whole enterprise as *prioritising new studies
+  and directing funding toward consequential open problems* — **lift this as the motivation paragraph
+  of the dissertation intro**; it is the cleanest published statement of why gap-finding is worth doing.
+- Offers a **taxonomy of gap types**, with *explicit vs implicit* cut **within** each category —
+  the two-axis structure worth borrowing for our own gap typology.
+- Claims to be the **first work on implicit gap identification**; prior art was explicitly-declared
+  gaps only. Related work traces: hedging/uncertainty **cue-word matching** → supervised ML →
+  BERT-family classifiers (good scores, but scalability + generalisability still open).
+- Extracted gaps come **with their supporting evidence** — same evidence-attached discipline as our
+  assertions; makes the output auditable rather than an assertion of absence.
+- **RoBERTa** used to validate implicit-gap extraction.
+- **Two findings that transfer straight to our prompting/model choices**: performance rose sharply
+  with **larger LLMs**, and **3-shot ≫ zero-shot** for *implicit* gap extraction specifically
+  (consistent with routing Stage-B to the big model, [[gap-hypothesis-system]]).
+- Conclusion they draw: *"using a mixture of LLMs instead of relying only on the top performing ones
+  can provide a robust gap recommender system."*
 **Why it matters here**: Closest-*named* prior art to the gap finder. But its gaps are *text-declared/inferred*, not *structurally-absent grid cells* — reading it sharpens the contribution boundary (their gap = what authors say is missing; ours = what the coverage graph shows is missing). TABI's structure-reasoning-then-bucket pattern is a candidate template for Stage-B reasoning over enumerated candidates; its human-in-the-loop verification finding echoes constraint 1. [gap-hypothesis-system](ideas/gap-hypothesis-system.md).
-**Where discussed**: 2026-07-26 (gap-finding literature search).
+**Two ideas it triggered (Raul, 2026-07-27)** — both filed:
+1. **Mine "Future Work" / "Outlook" sections as a gap source** → new section in [[gap-hypothesis-system]]
+   ("Author-declared gaps"). This is GAPMAP's *explicit* channel applied to our corpus.
+2. **LLM/encoder equivalence check for held-out gap matching** → [[held-out-gap-validation]]; reuse
+   the aliases Tier 2–3 machinery rather than building a second matcher.
+**Caveat on the "mixture of LLMs" line (do not over-claim)**: that is an **ensemble/diversity** result,
+not an **agency** result. Prompt-variants of one checkpoint give correlated errors, so it does *not* by
+itself justify the multi-agent arm — keep [[multi-agent-extension]]'s vocabulary discipline (workflow
+vs agency). Cite GAPMAP for "an ensemble beats the single best model at gap identification"; the agent
+justification must come from **tool use / self-verification** (GeneAgent), not from this.
+**Where discussed**: 2026-07-26 (triage); **2026-07-27 (read + discussion)**.
 
 ## [3] ResearchLink (Borrego et al. 2025, Knowledge-Based Systems, DOI 10.1016/j.knosys.2025.113280)
 **What**: Domain-independent hypothesis generation framed as **link prediction over a scientific KG**, combining path features + KG embeddings + text embeddings + bibliometric signals; evaluated on CSKG-600, a new expert-labeled hypothesis dataset; beats TransH/TransD/RotatE (78.7% P@20).

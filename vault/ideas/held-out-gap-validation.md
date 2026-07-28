@@ -89,8 +89,53 @@ only as an efficiency ablation ("recover Y% of coverage for Z% of compute"). (B)
 pull is the only feasible mode — that is (B)'s **scaling-path** framing, its main reason to
 appear in the write-up.
 
+## The matching problem — "is this fill the same gap?" (Raul, 2026-07-27)
+
+The whole evaluation turns on one comparison: **the predicted gap vs the thing the held-out papers
+actually measured — same cell or not?** Exact-string matching will under-count fills for exactly the
+reasons the aliases layer exists (b_jet/b-jet/bjet, `collision_system`/`cs`, differently-phrased but
+equivalent final states), and every missed match is scored as a *surviving gap* — i.e. **the metric
+is biased optimistic in precisely the direction that flatters the finder**. Must be handled.
+
+**Reuse the aliases Tier 2–3 machinery — do not build a second matcher.** Same shape, and being one
+mechanism used in three places (reconciliation, aliases, gap matching) is itself a design argument:
+
+1. **Blocking / candidate generation** — cheap embedding retrieval (BGE) over the enumerated cells to
+   find plausible matches. Bi-encoder, high recall, no judgement.
+2. **Adjudication** — a *pairwise equivalence* judgement on each candidate pair. Two options to
+   compare: a cross-encoder (RoBERTa/SapBERT-style, the strand GAPMAP used for implicit-gap
+   validation) vs an LLM prompt. Report agreement between them.
+3. **Human gate** on the disagreements, as everywhere else.
+
+**Precision matters more than recall here**, and it is the opposite of the aliases layer's bias:
+wrongly declaring a fill *erases* a real gap from the results. Keep the w/z, s/t, version-number
+look-alike traps in mind — plus the physics-specific ones (same final state at a *different* energy is
+NOT a fill; a fiducial/inclusive variant may or may not be). Consider requiring exact match on the
+structural axes (experiment, √s) and only allowing fuzzy matching on the final-state label.
+
+**Related backlog item**: the scientific-concept-deduplication literature search (backlog, Graph &
+canonicalization) now serves two consumers — aliases Tiers 2–3 *and* this matcher. One search, two uses.
+
+## Free labelled data: declared future work → later fills (2026-07-27)
+
+From the "author-declared gaps" section of [[gap-hypothesis-system]]: a gap **declared** in paper P at
+time *t* and **filled** by paper Q at *t′ > t* is a timestamped, human-authored positive example of a
+real gap. That gives us, from the corpus alone:
+
+- a **gold set** of "sensible, genuinely undone" gaps — the thing this project otherwise lacks and
+  that ResearchLink built by hand (CSKG-600);
+- a **temporal-holdout** protocol in AGATHA's style: split by *date*, not at random — enumerate on
+  papers before *t*, score against what got measured after. Stronger and more publishable than the
+  random split, because it mimics the real use ("what should be measured next?").
+- Run it **alongside** the random split, not instead: random splits still feed the n=3 variance check.
+
 ## Relations
 
 - Complements gap-hypothesis-system.md constraint 2 (intrinsic vs external literature check).
 - Belongs to the evaluation methodology in grounding-and-evaluation.md.
 - (B) is a possible efficiency variant, deprioritized.
+- **Swanson 1986** ([literature.md](../literature.md) entry [1]) is the citation for why this evaluation
+  is *refutation*, not verification: a gap is a conjecture, held-out is a severity-of-test, and
+  "no fill found" can never be verified — it inherits the essential incompleteness of retrieval.
+  It is the principled statement of the asymmetric-reliability caveat above.
+- Matching machinery shared with [[open-vocab-reconciliation]] (aliases Tiers 2–3).

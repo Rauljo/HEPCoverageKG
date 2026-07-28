@@ -74,6 +74,57 @@ than final state** — expansions discussed, in rough order of ambition:
 (Contur = measurement-side; a theory-predicted-vs-measured map is the complementary direction).
 Sequencing unchanged: all of this is act three, after the experimental graph exists.
 
+## Author-declared gaps — mine the "Future Work" sections (Raul, 2026-07-27, from GAPMAP)
+
+**The idea**: papers state their own gaps. Harvest the *Future Work / Outlook / Conclusions* sections
+of the ingested corpus and extract what the authors themselves say is missing ("this analysis does not
+cover X", "an extension to Y is left to future work"). This is GAPMAP's **explicit-gap** channel
+applied to our corpus — cheap, and a channel we currently do not use at all.
+
+**Where it fits — as a *prior*, never as the enumerator.** It does not violate constraint 1, provided
+the roles stay separate:
+
+- **Ranking signal (primary use).** The structural enumerator still produces the candidate set; a cell
+  that *k* independent papers named as future work carries a strong prior that it is (a) physically
+  sensible and (b) genuinely undone. That is precisely the empty-AND-sensible-vs-boring-empty
+  discrimination Stage B exists to make, obtained without an LLM judging physics.
+- **Independent gap source, logged separately.** Declared gaps that the enumerator did *not* produce
+  are signal about the *coverage axes themselves* — a declared gap outside our grid means the grid is
+  missing a dimension. Same pattern as the leftovers log (D-019): log-only, cluster later.
+- **A labelled evaluation set (the strong by-product).** A gap declared in paper P at time *t* and
+  later filled by paper Q at *t′ > t* is a **timestamped positive example of a real gap** —
+  see [[held-out-gap-validation]]. This is the closest thing we have to ResearchLink's CSKG-600
+  (an expert-labelled hypothesis set), for free, from the corpus.
+
+**Caveats to state**: (i) author-declared gaps are *text-level and rhetorical* — "future work" is
+often boilerplate, sometimes already-in-progress work, sometimes a hedge; expect low precision, so use
+it as a prior, not a filter. (ii) Wrong direction for the headline claim: it finds gaps *someone
+already noticed and said out loud*, whereas the dissertation payoff is cells **nobody** flagged. Same
+tension as held-out validation — declare it, don't hide it. (iii) Cheap to build: it is a new prompt
+over an existing section-routing step, not a new subsystem (the acquisition pipeline already parses
+named sections — future-work text is routable the same way).
+
+## Swanson framing (2026-07-27) — the epistemology of the whole arm
+
+From the full read of Swanson 1986 ([literature.md](../literature.md) entry [1]):
+
+- **Our gap enumeration is a "search function": a conjecture about World 3 — falsifiable, never
+  verifiable.** So the defensible posture is **refutation-based**: an enumerated gap is a conjecture
+  that the Stage-B literature check tries to *refute*; what we claim is "survived a severe test",
+  never "verified absent". This is a direct, citable answer to constraint 2 rather than an apology.
+- **Two different absences.** Swanson's UPK gap is *epistemic* (the knowledge exists in the literature,
+  unassembled); our headline gap is *ontic* (the measurement was never made). Cite for lineage, then
+  state the difference — that sentence is the positioning of act three.
+- **But Stage B is Swanson-shaped**: assembling scattered evidence to decide whether a cell is really
+  empty is exactly UPK. So the project contains both notions, at different stages — a clean structure
+  for the chapter.
+- **Ex. 3 (weak tests, jointly strong)** gives the vocabulary for gap *ranking*: many individually
+  weak plausibility signals (adjacent coverage, declared future work, theory motivation, citation
+  disjointness) aggregated into one strong one.
+- **Swanson's disjointness test** — two literatures with *no common authors and no mutual citations* —
+  is a concrete, cheap measure we could compute on the HEP author/citation graph to score whether two
+  sub-literatures genuinely fail to talk to each other.
+
 ## Relations
 
 - Builds on `kg/queries.py` (deterministic enumeration is the substrate) and the physics
