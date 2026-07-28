@@ -178,3 +178,34 @@ def test_transaction_rolls_back_on_error():
             _insert_assertion(conn, object_id="e2", object_value=None, signature=None)
             _insert_assertion(conn, object_id=None, object_value=None, signature=None)  # bad
     assert conn.execute("SELECT COUNT(*) FROM assertion").fetchone()[0] == 0
+
+
+def test_schema_degrades_gracefully_on_pre_3_37_sqlite(monkeypatch):
+    """The HPC cluster ships SQLite 3.36, where STRICT is a syntax error.
+
+    Regression guard for a hand-edited schema.sql living on the cluster and
+    drifting from this one -- the divergence is now handled at runtime.
+    """
+    import re
+
+    keyword = re.compile(r"\)\s*STRICT\s*;")
+    assert keyword.search(store._SCHEMA_PATH.read_text(encoding="utf-8"))
+
+    monkeypatch.setattr(store.sqlite3, "sqlite_version_info", (3, 36, 0))
+    degraded = store._schema_sql()
+    # the keyword is gone; prose mentioning "STRICT" in comments is untouched
+    assert not keyword.search(degraded)
+    # everything else must survive the rewrite
+    assert "FOREIGN KEY (bundle_id, subject_id)" in degraded
+    assert degraded.count("CREATE TABLE") == store._SCHEMA_PATH.read_text(
+        encoding="utf-8"
+    ).count("CREATE TABLE")
+
+    # and it must actually execute on a real connection
+    conn = sqlite3.connect(":memory:")
+    conn.executescript(degraded)
+    tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    assert {"paper", "entity", "entity_occurrence", "assertion"} <= tables
+
+    monkeypatch.setattr(store.sqlite3, "sqlite_version_info", (3, 37, 0))
+    assert keyword.search(store._schema_sql())

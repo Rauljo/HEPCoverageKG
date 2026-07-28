@@ -10,6 +10,7 @@
 # =============================================================================
 from __future__ import annotations
 
+import re
 import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
@@ -36,9 +37,34 @@ def connect(db_path: Union[str, Path] = DEFAULT_DB_PATH) -> sqlite3.Connection:
     return conn
 
 
+# STRICT tables landed in SQLite 3.37.0 (2021-11). The HPC cluster ships 3.36,
+# where the keyword is a syntax error -- and it is a parse error even for
+# CREATE TABLE IF NOT EXISTS on a table that already exists, so it cannot be
+# ignored. Rather than keep a hand-edited copy of schema.sql on the cluster
+# (which silently drifts from this one), degrade at runtime.
+_STRICT_MIN_VERSION = (3, 37, 0)
+
+
+def supports_strict() -> bool:
+    return sqlite3.sqlite_version_info >= _STRICT_MIN_VERSION
+
+
+def _schema_sql() -> str:
+    """The schema, with STRICT dropped when the local SQLite is too old.
+
+    Losing STRICT loses per-column type enforcement, nothing else: every CHECK
+    constraint, foreign key and index still applies. The importer's own
+    validation gates do not rely on it.
+    """
+    sql = _SCHEMA_PATH.read_text(encoding="utf-8")
+    if supports_strict():
+        return sql
+    return re.sub(r"\)\s*STRICT\s*;", ");", sql)
+
+
 def init_schema(conn: sqlite3.Connection) -> None:
     """Create tables/views/indexes if absent. Safe to call on an existing DB."""
-    conn.executescript(_SCHEMA_PATH.read_text(encoding="utf-8"))
+    conn.executescript(_schema_sql())
 
 
 @contextmanager
