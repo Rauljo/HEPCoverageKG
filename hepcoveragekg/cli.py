@@ -123,6 +123,25 @@ def _cmd_aliases(args) -> int:
     return 1
 
 
+def _cmd_graph(args) -> int:
+    from hepcoveragekg.kg import export
+    import subprocess
+    
+    if args.action == "export":
+        conn = store.connect(args.db)
+        out_dir = Path(args.out)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        export.export_csvs(conn, out_dir)
+        print(f"Graph CSVs exported to {out_dir}")
+        return 0
+    elif args.action == "import":
+        script = Path(__file__).resolve().parent / "kg" / "import_neo4j.sh"
+        print(f"Running Neo4j import script: {script}")
+        result = subprocess.run([str(script), args.out])
+        return result.returncode
+    return 1
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="hepcoveragekg", description="HEP coverage KG importer")
     parser.add_argument(
@@ -142,6 +161,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_aliases.add_argument("--out", default="data/processed", help="report output directory")
     p_aliases.add_argument("--method", default=None, help="confirm: restrict to one tier/method")
     p_aliases.set_defaults(func=_cmd_aliases)
+
+    p_graph = sub.add_parser("graph", help="Neo4j graph projection operations")
+    p_graph.add_argument("action", choices=["export", "import"])
+    p_graph.add_argument("out", help="output directory for CSV files (export) or input directory (import)")
+    p_graph.set_defaults(func=_cmd_graph)
 
     return parser
 
