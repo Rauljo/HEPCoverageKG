@@ -38,5 +38,8 @@ fi
 
 echo "Using LLM endpoint: ${LLM_BASE_URL} (model ${LLM_MODEL_NAME})"
 
-# Run the python script
-python3 scratch_test.py
+# Tiers 2/2.5/3 only. Tiers 1+1.5 are deterministic and offline -- run those
+# locally with `hepcoveragekg aliases build`, no cluster needed.
+# --deep-out is explicit: never let the output path depend on the working directory.
+python3 -m hepcoveragekg.cli aliases deep \
+    --deep-out "data/processed/aliases_proposed_${SLURM_JOB_ID:-manual}.json"

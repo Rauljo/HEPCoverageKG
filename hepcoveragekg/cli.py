@@ -101,13 +101,21 @@ def _cmd_aliases(args) -> int:
     from hepcoveragekg.aliases import run as aliases_run, store as aliases_store, report as aliases_report
 
     conn = aliases_store.connect(args.db)
-    if args.action == "build":
+    if args.action == "build":  # Tiers 1 + 1.5 only: deterministic, offline, no model
         added = aliases_run.build(conn)
         total = conn.execute("SELECT COUNT(*) FROM same_as").fetchone()[0]
         print("aliases build — proposals written (nothing resolves until confirmed):")
         for method, n in added.items():
             print(f"  {method}: +{n}")
         print(f"  same_as rows now: {total}")
+        return 0
+    if args.action == "deep":  # Tiers 2/2.5/3: needs an embedding model + LLM endpoint
+        out = Path(args.deep_out or aliases_run.DEFAULT_DEEP_OUT)
+        print(f"aliases deep — Tiers 2/2.5/3 (embeddings + guards + LLM) -> {out}")
+        stats = aliases_run.propose_deep_semantics(conn, out)
+        for key, n in stats.items():
+            print(f"  {key}: {n}")
+        print("  review the JSON by hand; nothing is written to same_as yet")
         return 0
     if args.action == "report":
         info = aliases_report.write_report(conn, args.out)
@@ -156,9 +164,18 @@ def build_parser() -> argparse.ArgumentParser:
     p_verify = sub.add_parser("verify-counts", help="check the milestone-1 count target")
     p_verify.set_defaults(func=_cmd_verify_counts)
 
-    p_aliases = sub.add_parser("aliases", help="build / report / confirm the aliases layer")
-    p_aliases.add_argument("action", choices=["build", "report", "confirm"])
+    p_aliases = sub.add_parser("aliases", help="build / deep / report / confirm the aliases layer")
+    p_aliases.add_argument(
+        "action",
+        choices=["build", "deep", "report", "confirm"],
+        help="build: Tiers 1+1.5, offline. deep: Tiers 2/2.5/3, needs a model + LLM endpoint.",
+    )
     p_aliases.add_argument("--out", default="data/processed", help="report output directory")
+    p_aliases.add_argument(
+        "--deep-out",
+        default=None,
+        help="deep: JSON path for adjudicated proposals (default: data/processed/aliases_proposed.json)",
+    )
     p_aliases.add_argument("--method", default=None, help="confirm: restrict to one tier/method")
     p_aliases.set_defaults(func=_cmd_aliases)
 
