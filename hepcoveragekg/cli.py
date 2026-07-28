@@ -112,9 +112,13 @@ def _cmd_aliases(args) -> int:
     if args.action == "deep":  # Tiers 2/2.5/3: needs an embedding model + LLM endpoint
         out = Path(args.deep_out or aliases_run.DEFAULT_DEEP_OUT)
         print(f"aliases deep — Tiers 2/2.5/3 (embeddings + guards + LLM) -> {out}")
-        stats = aliases_run.propose_deep_semantics(conn, out)
+        stats = aliases_run.propose_deep_semantics(conn, out, concurrency=args.concurrency)
         for key, n in stats.items():
             print(f"  {key}: {n}")
+        if stats.get("errors"):
+            rate = stats["errors"] / max(stats["written"], 1)
+            print(f"  WARNING: {rate:.1%} of calls failed — these pairs have NO verdict.")
+            print("  Do not read the negatives as rejections until they are re-run.")
         print("  review the JSON by hand; nothing is written to same_as yet")
         return 0
     if args.action == "report":
@@ -175,6 +179,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--deep-out",
         default=None,
         help="deep: JSON path for adjudicated proposals (default: data/processed/aliases_proposed.json)",
+    )
+    p_aliases.add_argument(
+        "--concurrency",
+        type=int,
+        default=None,
+        help="deep: in-flight LLM requests (env LLM_CONCURRENCY, default 8; raise for a dedicated server)",
     )
     p_aliases.add_argument("--method", default=None, help="confirm: restrict to one tier/method")
     p_aliases.set_defaults(func=_cmd_aliases)

@@ -41,5 +41,8 @@ echo "Using LLM endpoint: ${LLM_BASE_URL} (model ${LLM_MODEL_NAME})"
 # Tiers 2/2.5/3 only. Tiers 1+1.5 are deterministic and offline -- run those
 # locally with `hepcoveragekg aliases build`, no cluster needed.
 # --deep-out is explicit: never let the output path depend on the working directory.
+# Concurrency 100 is safe here because the vLLM server is ours alone; the default
+# is 8, which is what a shared rate-limited API can take.
 python3 -m hepcoveragekg.cli aliases deep \
-    --deep-out "data/processed/aliases_proposed_${SLURM_JOB_ID:-manual}.json"
+    --deep-out "data/processed/aliases_proposed_${SLURM_JOB_ID:-manual}.json" \
+    --concurrency 100

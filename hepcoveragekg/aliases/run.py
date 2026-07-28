@@ -22,6 +22,7 @@ import asyncio
 import collections
 import json
 import logging
+import os
 from pathlib import Path
 
 from hepcoveragekg.aliases import guards, normalize, spelling, store
@@ -35,6 +36,13 @@ logger = logging.getLogger(__name__)
 
 # The CLI's default. Never applied implicitly inside the library.
 DEFAULT_DEEP_OUT = Path("data/processed/aliases_proposed.json")
+
+# In-flight LLM requests. Low by default so pointing LLM_BASE_URL at a shared,
+# rate-limited API is safe out of the box; DIAS overrides it upward.
+DEFAULT_CONCURRENCY = 8
+
+# A run with more failures than this is reported as suspect rather than trusted.
+ERROR_RATE_WARN = 0.02
 
 
 def build(conn) -> dict[str, int]:
@@ -55,16 +63,24 @@ def build(conn) -> dict[str, int]:
     return results
 
 
-def propose_deep_semantics(conn, out_path: Path | str) -> dict[str, int]:
+def propose_deep_semantics(
+    conn, out_path: Path | str, concurrency: int | None = None
+) -> dict[str, int]:
     """Tiers 2 (candidates), 2.5 (guards) and 3 (LLM adjudication) over entity labels.
 
     Requires an embedding model and a reachable LLM endpoint. Results are written
     to `out_path` as JSON for human review -- deliberately NOT into same_as yet.
+
+    `concurrency` caps in-flight LLM requests (env LLM_CONCURRENCY, default 8).
+    The default is deliberately low: it is safe against a shared, rate-limited
+    API. Raise it for a dedicated vLLM server you own.
     """
     # Deferred so that importing this module (and therefore build(), and the test
     # suite) never loads sentence-transformers or an HTTP client.
     from hepcoveragekg.aliases import adjudicate, semantics
 
+    if concurrency is None:
+        concurrency = int(os.environ.get("LLM_CONCURRENCY", DEFAULT_CONCURRENCY))
     out_path = Path(out_path)
     logger.info("Starting Deep Semantic Pipeline (Tiers 2-3)...")
 
@@ -105,12 +121,14 @@ def propose_deep_semantics(conn, out_path: Path | str) -> dict[str, int]:
     final_proposals = []
     approved_edges = []
     rejected_edges = []
+    error_types: collections.Counter = collections.Counter()
 
-    logger.info(f"Invoking LLM on {len(surviving_candidates)} pairs...")
+    logger.info(f"Invoking LLM on {len(surviving_candidates)} pairs (concurrency {concurrency})...")
 
     async def process_candidates():
-        # Limit concurrent requests so we don't overwhelm vLLM or hit socket limits
-        sem = asyncio.Semaphore(100)
+        # Cap in-flight requests. 100 suits a dedicated vLLM; a shared, rate-limited
+        # API needs far less, hence the parameter.
+        sem = asyncio.Semaphore(concurrency)
 
         async def fetch(a, b, kind):
             async with sem:
@@ -127,12 +145,18 @@ def propose_deep_semantics(conn, out_path: Path | str) -> dict[str, int]:
             "term_a": a,
             "term_b": b,
             "kind": kind,
+            "status": res["status"],
             "is_match": res["is_match"],
             "confidence": res["confidence"],
             "explanation": res["explanation"],
+            "error_type": res["error_type"],
         }
 
-        if res["is_match"]:
+        # Route on status: a failed call is NOT a negative verdict, and must not
+        # reach approved_edges or rejected_edges.
+        if res["status"] != "ok":
+            error_types[res["error_type"]] += 1
+        elif res["is_match"]:
             approved_edges.append((a, b))
         else:
             rejected_edges.append((a, b))
@@ -157,10 +181,26 @@ def propose_deep_semantics(conn, out_path: Path | str) -> dict[str, int]:
         json.dump(final_proposals, f, indent=2)
 
     logger.info(f"Wrote {len(final_proposals)} adjudicated proposals to {out_path}")
-    return {
+
+    n_errors = sum(error_types.values())
+    if n_errors:
+        rate = n_errors / len(final_proposals) if final_proposals else 0.0
+        breakdown = ", ".join(f"{k}={v}" for k, v in error_types.most_common())
+        message = f"{n_errors} of {len(final_proposals)} calls failed ({rate:.1%}): {breakdown}"
+        if rate > ERROR_RATE_WARN:
+            # Loud: the verdicts are incomplete, so any downstream count over the
+            # negatives (e.g. a contradiction analysis) is measuring partly noise.
+            logger.error(f"HIGH ERROR RATE -- {message}. Treat these results as incomplete.")
+        else:
+            logger.warning(message)
+
+    stats = {
         "candidates": len(all_candidates),
         "after_guards": len(surviving_candidates),
         "matched": len(approved_edges),
         "rejected": len(rejected_edges),
+        "errors": n_errors,
         "written": len(final_proposals),
     }
+    stats.update({f"error_{k}": v for k, v in error_types.items()})
+    return stats
