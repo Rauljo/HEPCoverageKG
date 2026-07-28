@@ -67,7 +67,7 @@ CREATE TABLE IF NOT EXISTS bundle_import (
 -- ---------------------------------------------------------- entities (merged node + per-paper occurrences)
 
 CREATE TABLE IF NOT EXISTS entity (
-    entity_id     TEXT PRIMARY KEY,   -- no bundle_id: this is the merged, bundle-agnostic node
+    entity_id     TEXT PRIMARY KEY,   -- convenience rollup ONLY, not identity — see entity_occurrence
     kind          TEXT NOT NULL,
     label         TEXT NOT NULL,
     aliases       TEXT CHECK (aliases IS NULL OR json_valid(aliases)),
@@ -108,10 +108,10 @@ CREATE TABLE IF NOT EXISTS assertion (
     assertion_id       TEXT PRIMARY KEY,
     bundle_id          TEXT NOT NULL REFERENCES bundle_import(bundle_id),  -- [inj]
     paper_id           TEXT,   -- [inj] soft, denormalized for convenience
-    subject_id         TEXT NOT NULL REFERENCES entity(entity_id),
+    subject_id         TEXT NOT NULL,
     predicate          TEXT NOT NULL,
     family             TEXT NOT NULL,
-    object_id          TEXT REFERENCES entity(entity_id),
+    object_id          TEXT,
     object_value       TEXT CHECK (object_value IS NULL OR json_valid(object_value)),
     signature          TEXT CHECK (signature IS NULL OR json_valid(signature)),
     status             TEXT NOT NULL,
@@ -126,7 +126,9 @@ CREATE TABLE IF NOT EXISTS assertion (
     -- stored one changed something other than status -> conflict (D-027).
     identity_hash      TEXT,
     -- exactly one object shape must be present
-    CHECK ( (object_id IS NOT NULL) + (object_value IS NOT NULL) + (signature IS NOT NULL) = 1 )
+    CHECK ( (object_id IS NOT NULL) + (object_value IS NOT NULL) + (signature IS NOT NULL) = 1 ),
+    FOREIGN KEY (bundle_id, subject_id) REFERENCES entity_occurrence(bundle_id, entity_id),
+    FOREIGN KEY (bundle_id, object_id)  REFERENCES entity_occurrence(bundle_id, entity_id)
 ) STRICT;
 
 -- ---------------------------------------------------------- evidence + many-to-many junction

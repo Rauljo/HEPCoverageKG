@@ -53,7 +53,9 @@ def _seed_minimal(conn: sqlite3.Connection) -> None:
         " VALUES ('b1', 'p1', 'sh1', 'h', 'hepkg-acquisition-v0.2', '2026-07-23T00:00:00Z')"
     )
     conn.execute("INSERT INTO entity (entity_id, kind, label) VALUES ('e1', 'paper', 'subject')")
+    conn.execute("INSERT INTO entity_occurrence (bundle_id, entity_id, paper_id, kind, label) VALUES ('b1', 'e1', 'p1', 'paper', 'subject')")
     conn.execute("INSERT INTO entity (entity_id, kind, label) VALUES ('e2', 'result', 'object')")
+    conn.execute("INSERT INTO entity_occurrence (bundle_id, entity_id, paper_id, kind, label) VALUES ('b1', 'e2', 'p1', 'result', 'object')")
 
 
 def _insert_assertion(conn, object_id, object_value, signature) -> None:

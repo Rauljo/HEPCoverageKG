@@ -260,3 +260,51 @@ def test_completeness_findings_are_isolated_from_the_graph():
     # no foreign key anywhere points INTO completeness_finding
     fks = conn.execute("SELECT sql FROM sqlite_master WHERE type='table'").fetchall()
     assert not any("REFERENCES completeness_finding" in (row["sql"] or "") for row in fks)
+
+
+def test_same_entity_id_different_bundle_resolves_correctly():
+    """Two bundles using the same entity_id for different things do not conflate assertions."""
+    conn = _db()
+    bundle1 = {
+        "schema_version": "hepkg-acquisition-v0.2",
+        "bundle_id": "bundle_1",
+        "paper": {"arxiv_id": "1", "title": "t", "experiments": []},
+        "source": {"source_hash": "sh1", "paper_id": "1", "title": "t", "source_path": "/x", "experiments": [], "blocks": []},
+        "entities": [{"entity_id": "e_shared", "kind": "object_definition", "label": "label1"}],
+        "evidence": [],
+        "assertions": [{"assertion_id": "a1", "bundle_id": "bundle_1", "subject_id": "e_shared",
+                        "predicate": "p", "family": "f", "object_id": None,
+                        "object_value": "value1", "signature": None, "status": "machine_verified",
+                        "evidence_ids": [], "qualifiers": {}}],
+        "activities": [], "artifacts": [], "qa_findings": [],
+        "completeness_findings": [], "expert_decisions": [],
+    }
+    bundle2 = {
+        "schema_version": "hepkg-acquisition-v0.2",
+        "bundle_id": "bundle_2",
+        "paper": {"arxiv_id": "2", "title": "t", "experiments": []},
+        "source": {"source_hash": "sh2", "paper_id": "2", "title": "t", "source_path": "/x", "experiments": [], "blocks": []},
+        "entities": [{"entity_id": "e_shared", "kind": "detector_object", "label": "label2"}],
+        "evidence": [],
+        "assertions": [{"assertion_id": "a2", "bundle_id": "bundle_2", "subject_id": "e_shared",
+                        "predicate": "p", "family": "f", "object_id": None,
+                        "object_value": "value2", "signature": None, "status": "machine_verified",
+                        "evidence_ids": [], "qualifiers": {}}],
+        "activities": [], "artifacts": [], "qa_findings": [],
+        "completeness_findings": [], "expert_decisions": [],
+    }
+    
+    importer.import_bundle(conn, bundle1)
+    importer.import_bundle(conn, bundle2)
+    
+    # Assertions should correctly point to their respective entity occurrences
+    rows = conn.execute(
+        '''SELECT a.assertion_id, eo.kind, eo.label 
+           FROM assertion a 
+           JOIN entity_occurrence eo ON a.bundle_id = eo.bundle_id AND a.subject_id = eo.entity_id'''
+    ).fetchall()
+    
+    assert len(rows) == 2
+    by_assertion = {r["assertion_id"]: (r["kind"], r["label"]) for r in rows}
+    assert by_assertion["a1"] == ("object_definition", "label1")
+    assert by_assertion["a2"] == ("detector_object", "label2")
