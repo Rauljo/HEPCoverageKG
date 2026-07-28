@@ -248,3 +248,100 @@ running the full 60 rather than trusting the per-bundle check.
 ## D-031 (2026-07-27) — Neo4j Graph Projection Architecture
 **Decision**: The graph projection is materialized using offline CSV export and `neo4j-admin import` rather than live Cypher inserts. Nodes are split into `:Paper`, `:Occurrence`, and `:Canonical` to preserve the faithful per-paper entity context. Edges map `:Paper -[:HAS_OCCURRENCE]-> :Occurrence -[:RESOLVES_TO]-> :Canonical`. Assertions strictly connect `:Occurrence` nodes (or synthetic `:LiteralValue` nodes for scalar properties like signature or numeric values).
 **Context**: Matches the project requirement (D-026/Phase 2) to maintain SQLite as the offline system of record. Generating CSVs is reproducible, fast, and testable without a live Neo4j service. `neo4j-admin import` with `--multiline-fields=true` allows rapid full-database hydration on demand.
+
+## D-032 (2026-07-28) — entity node identity is (bundle_id, entity_id); the merged `entity` table is a rollup, not identity
+**Decision**: `assertion.subject_id` / `object_id` now carry **composite** foreign keys into
+`entity_occurrence(bundle_id, entity_id)`. The bare-`entity_id` `entity` table stays, demoted to a
+convenience rollup (fast per-id lookup, the catalogue the aliases layer reads) — it is no longer a
+foreign-key target and no longer claims to be identity.
+**Context**: revisits D-024/D-029. Gabriel's contract states that entity-id equality across bundles
+is **not** entity resolution — measured there as **347 shared ids, 752 with conflicting kind/label
+under the same id**. Our importer merged on bare id, so two papers reusing an id string for
+different things silently became one node. `entity_occurrence` already had the right grain.
+**Cost**: near zero — assertion rows already carried `bundle_id`, so no write-path change was
+needed. Composite FKs with a NULL column are unenforced under SQLite's default MATCH SIMPLE, which
+is exactly right for `object_value` / `signature` assertions.
+**Consequence**: cross-paper "same thing" is now *only* ever an explicit claim — which is precisely
+what the `aliases/` layer emits. The architecture Gabriel's contract calls `resolves_to` is the one
+we already had.
+
+## D-033 (2026-07-28) — Tiers 1/1.5 and Tiers 2/3 are separate commands, and the deep pass takes an explicit output path
+**Decision**: `build()` runs Tiers 1+1.5 only (deterministic, offline, 0.09s, no model, no network).
+Tiers 2/2.5/3 live behind `aliases deep`, with `--deep-out` **required** at the library boundary and
+`--dry-run` to report candidate counts without contacting an LLM.
+**Context**: `build()` had come to call the deep pass unconditionally, so the cheap tier needed a GPU
+and a live endpoint, and the test suite loaded an embedding model and hit the network. The deep pass
+also wrote to a path hardcoded relative to the working directory — running `pytest` from the repo
+root destroyed a real 68MB result file (recovered from the cluster). Output paths in library code
+must never depend on the caller's CWD.
+**Also**: the SLURM script stamps the output with `$SLURM_JOB_ID`, so two runs cannot overwrite each
+other either — the class of bug is closed, not just the instance.
+
+## D-034 (2026-07-28) — a failed LLM call is an `error`, never a `False`
+**Decision**: adjudication results carry `status` ("ok"/"error") and `error_type`; on failure
+`is_match` is **None**, never `False`. `propose_deep_semantics` routes on `status`, so errors reach
+neither `matched` nor `rejected`, and a run above 2% failures is logged at ERROR and flagged by the CLI.
+Auth/permission/not-found **raise** rather than return — they would fail identically on every pair.
+**Context**: the previous code returned `is_match=False` on any exception, making a rate-limit or a
+dropped connection indistinguishable from a genuine negative verdict — and the negatives are exactly
+what the contradiction analysis reads.
+**Measured after the fact**: the 126,335-pair run contained **75 errors (0.059%)** — 74 timeouts and
+one parse failure. So the contamination was negligible *on a dedicated vLLM*, and the earlier
+"742 contradictions" finding stands. The fix still matters: on a shared, rate-limited API 429s are
+routine, and that is now a supported deployment (concurrency, timeout and retries are configurable,
+default concurrency 8 rather than the hardcoded 100 that suits a private server).
+
+## D-035 (2026-07-28) — Tier 2 encoder is BAAI/bge-base-en-v1.5; Jaccard is kept over Levenshtein
+**Decision**: replace SciBERT with **bge-base-en-v1.5**, semantic threshold **0.85**. Keep the
+Jaccard character-trigram lexical pass. Both configurable (`ALIASES_EMBED_MODEL`,
+`ALIASES_SEM_THRESHOLD`, `ALIASES_LEX_THRESHOLD`).
+**Context (measured on HEP probe pairs, scoring only what the embedding is responsible for — guards
+already veto number-bearing pairs)**:
+
+| model | worst synonym | best look-alike | margin |
+|---|---|---|---|
+| allenai/scibert (previous) | 0.877 | 0.975 | −0.098 |
+| all-MiniLM-L6-v2 | 0.748 | 0.873 | −0.125 |
+| **BAAI/bge-base-en-v1.5** | 0.892 | 0.861 | **+0.031** |
+| BAAI/bge-large-en-v1.5 | 0.850 | 0.882 | −0.032 |
+| intfloat/e5-base-v2 | 0.932 | 0.929 | +0.003 |
+
+SciBERT is a masked-LM checkpoint with **no trained similarity head** — sentence-transformers wraps
+it as Transformer+Pooling, crushing scores into a narrow band (unrelated text floors at 0.67, so
+`signal region` vs `control region` scored 0.855 against a 0.85 threshold). **bge-large is worse
+than bge-base** despite 3× the size. The threshold sits deliberately *below* the measured 0.876
+boundary: this stage blocks rather than decides, an extra candidate costs one LLM call, a missed
+synonym is unrecoverable.
+**Jaccard over Levenshtein**: every dangerous HEP look-alike is a single-character swap (b/c jet,
+s/t channel, W/Z, 13/14 TeV) — and so is every true spelling variant (colour/color). Edit distance
+therefore scores both classes alike and rates the dangerous ones *higher* than Jaccard does (W/Z
+polarization: Jaccard 0.882, Levenshtein 0.944). Trigram Jaccard penalises a changed character much
+harder on short strings, which is the behaviour this corpus needs.
+**Effect**: candidates fell **126,335 → 14,656** (9,570 after guards) at the same threshold.
+**Known gap, unsolved**: abbreviations. `MET` vs `missing transverse momentum` scores 0.496
+semantically and 0.091 lexically — invisible to *both* signals. Needs a dictionary, not a threshold.
+
+## D-036 (2026-07-28) — guard vetoes require two independent views of "the numbers differ"
+**Decision**: the number guard vetoes only when the **set of number tokens** *and* the **digit
+signature** both differ. Units are matched by regex (digit-adjacent or standalone), with `ab`
+recognised only when it follows a digit.
+**Context**: writing the first tests for `guards.py` exposed three real defects — glued units
+defeated the unit guard entirely (`13TeV` vs `13GeV` **passed**); `"ab initio"` was read as
+attobarns; and comparing number-token *sets* vetoed `Pythia 8.212` vs `Pythia8 212` as different
+versions. The first fix for the third bug (compare concatenated digit signatures) passed all 29 unit
+tests and was **wrong** — real data showed `"3L channel (exactly 3 light leptons)"` has signature
+`"33"` while `"(3ℓF)"` has `"3"`, turning **86 LLM-confirmed synonyms** into false vetoes. Neither
+view is correct alone.
+**Principle behind it**: a veto is **final** — the pair never reaches the LLM — whereas a pass costs
+one call and the LLM can still reject it. So guards veto only on unambiguous evidence.
+**Verified**: over **1,075,821** same-kind label pairs from the pilot, 0 newly blocked, 52 no longer
+vetoed on spurious numeric grounds.
+
+## D-037 (2026-07-28) — STRICT tables degrade at runtime instead of forking the schema
+**Decision**: `kg.store.read_schema()` strips `STRICT` when `sqlite3.sqlite_version_info < (3,37,0)`.
+It is the shared reader for *all* DDL in the project (import store and aliases store both use it).
+**Context**: the cluster ships SQLite **3.36.0** (an earlier note recording 3.7.17 was wrong);
+STRICT arrived in 3.37 and is a parse error even for `CREATE TABLE IF NOT EXISTS` on an existing
+table. The workaround had been a hand-edited `schema.sql` living on the cluster — a fork that
+silently drifts from the real one every time the schema changes. Only per-column type enforcement is
+lost; every CHECK, foreign key and index still applies.
