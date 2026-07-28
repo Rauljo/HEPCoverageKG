@@ -8,3 +8,5 @@ data/processed/*
 !data/processed/.gitkeep
 *.db
 .DS_Store
+
+# Sync check: laptop -> GitHub -> DIAS (2026-07-28T22:48Z)
