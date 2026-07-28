@@ -30,7 +30,8 @@ RESOLVING_STATUSES = ("confirmed", "auto")  # which same_as edges actually resol
 def connect(db_path: Union[str, Path] = kg_store.DEFAULT_DB_PATH) -> sqlite3.Connection:
     conn = kg_store.connect(db_path)
     kg_store.init_schema(conn)  # import store (idempotent) — aliases tables FK into entity
-    conn.executescript(_SCHEMA_PATH.read_text(encoding="utf-8"))
+    # read_schema, not read_text: strips STRICT on the cluster's SQLite 3.36
+    conn.executescript(kg_store.read_schema(_SCHEMA_PATH))
     return conn
 
 

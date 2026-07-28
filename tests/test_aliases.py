@@ -166,3 +166,22 @@ def test_confirm_then_materialize_resolves():
     canon = {r["entity_id"]: r["canonical_id"] for r in conn.execute(
         "SELECT entity_id, canonical_id FROM entity_canonical")}
     assert set(canon.values()) == {"hepkg:object:b-jet"}
+
+
+def test_aliases_schema_also_degrades_on_old_sqlite(monkeypatch):
+    """The aliases DDL is executed separately from the import store's, so it
+    needs the same STRICT degradation -- otherwise `aliases build` fails on the
+    cluster even though the importer works."""
+    import re as _re
+    from hepcoveragekg.aliases.store import _SCHEMA_PATH
+
+    keyword = _re.compile(r"\)\s*STRICT\s*;")
+    assert keyword.search(_SCHEMA_PATH.read_text(encoding="utf-8"))
+
+    monkeypatch.setattr(kg_store.sqlite3, "sqlite_version_info", (3, 36, 0))
+    assert not keyword.search(kg_store.read_schema(_SCHEMA_PATH))
+
+    # a full connect() must work end to end under the old version
+    conn = store.connect(":memory:")
+    tables = {r["name"] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    assert {"same_as", "entity_canonical", "entity", "assertion"} <= tables

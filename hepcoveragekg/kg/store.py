@@ -49,17 +49,24 @@ def supports_strict() -> bool:
     return sqlite3.sqlite_version_info >= _STRICT_MIN_VERSION
 
 
-def _schema_sql() -> str:
-    """The schema, with STRICT dropped when the local SQLite is too old.
+def read_schema(path: Union[str, Path]) -> str:
+    """Read a schema file, dropping STRICT when the local SQLite is too old.
+
+    Shared by every package that ships DDL (the import store here, the aliases
+    store) so the degradation happens in exactly one place.
 
     Losing STRICT loses per-column type enforcement, nothing else: every CHECK
     constraint, foreign key and index still applies. The importer's own
     validation gates do not rely on it.
     """
-    sql = _SCHEMA_PATH.read_text(encoding="utf-8")
+    sql = Path(path).read_text(encoding="utf-8")
     if supports_strict():
         return sql
     return re.sub(r"\)\s*STRICT\s*;", ");", sql)
+
+
+def _schema_sql() -> str:
+    return read_schema(_SCHEMA_PATH)
 
 
 def init_schema(conn: sqlite3.Connection) -> None:
