@@ -124,7 +124,10 @@ def _cmd_aliases(args) -> int:
             rate = stats["errors"] / max(stats["written"], 1)
             print(f"  WARNING: {rate:.1%} of calls failed — these pairs have NO verdict.")
             print("  Do not read the negatives as rejections until they are re-run.")
-        print("  review the JSON by hand; nothing is written to same_as yet")
+        if args.dry_run:
+            print(f"  would send {stats['after_guards']:,} pairs to the LLM; nothing written")
+        else:
+            print("  review the JSON by hand; nothing is written to same_as yet")
         return 0
     if args.action == "report":
         info = aliases_report.write_report(conn, args.out)
