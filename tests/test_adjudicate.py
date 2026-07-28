@@ -228,3 +228,37 @@ def test_deep_pass_writes_only_where_told(tmp_path, monkeypatch):
     aliases_run.propose_deep_semantics(conn, target, concurrency=1)
     assert target.exists()
     assert not (tmp_path / aliases_run.DEFAULT_DEEP_OUT.name).exists()
+
+
+def test_dry_run_makes_no_llm_calls_and_writes_nothing(tmp_path, monkeypatch):
+    """The pre-flight check: a threshold change can move the candidate count by
+    an order of magnitude, so it must be possible to see that number without
+    paying for it."""
+    from tests.test_aliases import _db_with
+    from hepcoveragekg.aliases import run as aliases_run
+    import hepcoveragekg.aliases.semantics as semantics
+
+    conn = _db_with([
+        ("hepkg:object:alpha", "detector_object", ["1"]),
+        ("hepkg:object:beta", "detector_object", ["1"]),
+        ("hepkg:generator:pythia8.212", "generator", ["1"]),
+        ("hepkg:generator:pythia8.230", "generator", ["1"]),
+    ])
+    monkeypatch.setattr(
+        semantics, "generate_candidates", lambda items, **kw: [(items[0], items[1])]
+    )
+
+    def explode(*a, **k):
+        raise AssertionError("dry run must not contact the LLM")
+
+    monkeypatch.setattr(adjudicate, "adjudicate_pair", explode)
+
+    out = tmp_path / "should_not_exist.json"
+    stats = aliases_run.propose_deep_semantics(conn, out, dry_run=True)
+
+    assert stats["dry_run"] == 1
+    assert stats["candidates"] == 2
+    # the generator pair carries differing versions -> vetoed before any call
+    assert stats["after_guards"] == 1
+    assert stats["vetoed"] == 1
+    assert not out.exists()

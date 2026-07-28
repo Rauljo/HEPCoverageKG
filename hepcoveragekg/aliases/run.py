@@ -64,7 +64,10 @@ def build(conn) -> dict[str, int]:
 
 
 def propose_deep_semantics(
-    conn, out_path: Path | str, concurrency: int | None = None
+    conn,
+    out_path: Path | str,
+    concurrency: int | None = None,
+    dry_run: bool = False,
 ) -> dict[str, int]:
     """Tiers 2 (candidates), 2.5 (guards) and 3 (LLM adjudication) over entity labels.
 
@@ -74,6 +77,11 @@ def propose_deep_semantics(
     `concurrency` caps in-flight LLM requests (env LLM_CONCURRENCY, default 8).
     The default is deliberately low: it is safe against a shared, rate-limited
     API. Raise it for a dedicated vLLM server you own.
+
+    `dry_run` stops after the guards and reports how many pairs WOULD be sent,
+    per kind. No LLM is contacted and nothing is written -- run this before
+    committing to a long job, since a threshold change can move the candidate
+    count by an order of magnitude.
     """
     # Deferred so that importing this module (and therefore build(), and the test
     # suite) never loads sentence-transformers or an HTTP client.
@@ -95,6 +103,7 @@ def propose_deep_semantics(
         label_to_ids[label].append(eid)
 
     all_candidates = []
+    per_kind: dict[str, dict[str, int]] = {}
 
     # Phase A: Generate Candidates
     for kind, labels in kind_to_labels.items():
@@ -103,6 +112,12 @@ def propose_deep_semantics(
         candidates = semantics.generate_candidates(list(labels))
         for a, b in candidates:
             all_candidates.append((a, b, kind))
+        per_kind[kind] = {
+            "labels": len(labels),
+            "pairs": len(labels) * (len(labels) - 1) // 2,
+            "candidates": len(candidates),
+            "after_guards": 0,
+        }
 
     logger.info(f"Phase A (Embeddings + Jaccard) proposed {len(all_candidates)} candidates.")
 
@@ -112,10 +127,31 @@ def propose_deep_semantics(
         passed, reason = guards.passes_semantic_guards(a, b)
         if passed:
             surviving_candidates.append((a, b, kind))
+            per_kind[kind]["after_guards"] += 1
         else:
             logger.debug(f"Vetoed '{a}' vs '{b}': {reason}")
 
     logger.info(f"Phase B (Semantic Guards) surviving candidates: {len(surviving_candidates)}")
+
+    if dry_run:
+        # Stop before spending anything. Report per kind, because the totals hide
+        # where the candidates actually come from.
+        logger.info("DRY RUN -- no LLM calls, nothing written")
+        header = f"{'kind':26s} {'labels':>7s} {'pairs':>10s} {'cands':>8s} {'post-guard':>11s}"
+        logger.info(header)
+        for kind, s in sorted(per_kind.items(), key=lambda kv: -kv[1]["candidates"]):
+            logger.info(
+                f"{kind:26s} {s['labels']:7d} {s['pairs']:10,d} "
+                f"{s['candidates']:8,d} {s['after_guards']:11,d}"
+            )
+        stats = {
+            "dry_run": 1,
+            "candidates": len(all_candidates),
+            "after_guards": len(surviving_candidates),
+            "vetoed": len(all_candidates) - len(surviving_candidates),
+        }
+        stats.update({f"kind_{k}": v["after_guards"] for k, v in per_kind.items()})
+        return stats
 
     # Phase C: LLM Adjudication
     final_proposals = []
