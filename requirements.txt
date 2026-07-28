@@ -2,6 +2,8 @@
 llama-index-core==0.14.22
 llama-index-retrievers-bm25==0.7.1
 llama-index-embeddings-huggingface==0.7.0
+# Also the aliases Tier-2 encoder (BAAI/bge-base-en-v1.5). Pre-cache the model on
+# a networked machine: DIAS compute nodes have no outbound access.
 sentence-transformers==5.6.0
 
 # ── LLM Generation (self-hosted vLLM on HPC, OpenAI-compatible client) ────────
@@ -25,6 +27,8 @@ pandas==3.0.3
 pydantic==2.13.4
 tenacity==9.1.4
 tabulate==0.9.0
+# Optional: only needed if Theory RAG is re-enabled in aliases/adjudicate.py
+# (currently off -- compute nodes have no outbound network).
 wikipedia==1.4.0
 
 # ── Testing ───────────────────────────────────────────────────────────────────

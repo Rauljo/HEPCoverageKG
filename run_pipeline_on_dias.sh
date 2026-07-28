@@ -38,6 +38,13 @@ fi
 
 echo "Using LLM endpoint: ${LLM_BASE_URL} (model ${LLM_MODEL_NAME})"
 
+# The Tier-2 encoder must already be in the HF cache: compute nodes cannot reach
+# the hub. Pre-fetch once on the LOGIN node with:
+#   python3 -c "from sentence_transformers import SentenceTransformer as S; S('BAAI/bge-base-en-v1.5')"
+export ALIASES_EMBED_MODEL="${ALIASES_EMBED_MODEL:-BAAI/bge-base-en-v1.5}"
+export HF_HUB_OFFLINE=1
+echo "Using embedding model: ${ALIASES_EMBED_MODEL} (offline mode)"
+
 # Tiers 2/2.5/3 only. Tiers 1+1.5 are deterministic and offline -- run those
 # locally with `hepcoveragekg aliases build`, no cluster needed.
 # --deep-out is explicit: never let the output path depend on the working directory.
