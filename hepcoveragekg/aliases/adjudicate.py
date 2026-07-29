@@ -93,28 +93,37 @@ def _classify(exc: Exception) -> str:
     return type(exc).__name__
 
 
-def _confidence(value: Any) -> str:
-    """Normalise the confidence to one of CONFIDENCE_LEVELS.
+_WORD_CONFIDENCE = {"certain": 1.0, "high": 0.9, "probable": 0.75, "likely": 0.75,
+                    "medium": 0.6, "unsure": 0.4, "low": 0.3, "guess": 0.2}
 
-    A discrete scale replaces the old 0-1 float, which carried no information:
-    on the 8B run every single one of 2,712 matches scored >= 0.9, so no
-    threshold could separate good from bad. Numeric replies are still accepted
-    and bucketed, since a model may ignore the enum.
+
+def _confidence(value: Any) -> float:
+    """The model's confidence, kept as a RAW float in [0, 1].
+
+    Not bucketed. The 8B produced a useless distribution -- all 2,712 matches
+    scored >= 0.9 -- but that is a fact about that model, and bucketing here
+    would destroy the evidence needed to check whether a better model
+    calibrates. evaluate.py measures calibration directly (accuracy per
+    confidence band); if a model turns out to be uninformative, we learn it from
+    the numbers rather than assuming it in the parser.
+
+    Word answers are mapped to a number so a model ignoring the format still
+    yields something comparable.
     """
-    if isinstance(value, str) and value.strip().lower() in CONFIDENCE_LEVELS:
-        return value.strip().lower()
+    if isinstance(value, str):
+        text = value.strip().lower()
+        if text in _WORD_CONFIDENCE:
+            return _WORD_CONFIDENCE[text]
     try:
         num = float(value)
     except (TypeError, ValueError):
-        return "unsure"
-    if num >= 0.9:
-        return "certain"
-    if num >= 0.7:
-        return "probable"
-    return "unsure"
+        return 0.0
+    if num > 1.0:  # some models answer on a 0-100 scale
+        num = num / 100.0
+    return max(0.0, min(1.0, num))
 
 
-def _ok(is_match: bool, confidence: str, explanation: str) -> dict[str, Any]:
+def _ok(is_match: bool, confidence: float, explanation: str) -> dict[str, Any]:
     return {
         "status": "ok",
         "is_match": is_match,
@@ -131,7 +140,7 @@ def _error(exc: Exception) -> dict[str, Any]:
     return {
         "status": "error",
         "is_match": None,
-        "confidence": "unsure",
+        "confidence": 0.0,
         "explanation": f"{_classify(exc)}: {exc}",
         "error_type": _classify(exc),
     }
@@ -160,8 +169,6 @@ def _get_theory_sync(term: str) -> str:
         return ""
 
 
-CONFIDENCE_LEVELS = ("certain", "probable", "unsure")
-
 # Deliberately GENERIC. No worked HEP examples: the failure cases (particle
 # swaps, lepton flavours, region ids, generator versions) are exactly what the
 # trial set measures, so putting them here would be training on the test set and
@@ -182,14 +189,18 @@ The test is substitutability, not topical similarity:
 
 Being closely related, belonging to the same family, serving the same purpose, or appearing in
 similar analyses does NOT make two entries the same. Near-identical wording does not make them the
-same either. When the evidence does not settle it, say so with confidence "unsure" rather than
-guessing "same"."""
+same either. When the evidence does not settle it, answer with a LOW confidence rather than
+guessing "same".
+
+Calibrate the confidence honestly: use it to express how sure you actually are, so that among the
+answers you give 0.9 to, about nine in ten should turn out correct. Reserve values above 0.9 for
+cases where the evidence is decisive."""
 
 _SCHEMA = """
 Answer ONLY with a JSON object:
 {
   "is_match": true or false,
-  "confidence": "certain" | "probable" | "unsure",
+  "confidence": <number between 0.0 and 1.0>,
   "explanation": "<one sentence: the specific thing that makes them the same or different>"
 }"""
 

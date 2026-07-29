@@ -57,7 +57,7 @@ class EntityContext:
             out.append(f"  attributes: {json.dumps(self.attributes, ensure_ascii=False)}")
         out.append(f"  appears in {self.papers} paper(s)")
         if self.quotes:
-            out.append("  quoted from the papers:")
+            out.append("  quotes from the papers:")
             out.extend(f'    - "{q}"' for q in self.quotes)
         return "\n".join(out)
 

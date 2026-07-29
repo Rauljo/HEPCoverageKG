@@ -93,20 +93,59 @@ def score(results: list[dict]) -> dict:
             "agreed": len(agree),
             "disagreed": len(ok) - len(agree),
             "agreement": (len(agree) / len(ok)) if ok else 0.0,
-            "by_confidence": dict(collections.Counter(r["got_confidence"] for r in ok)),
         }
+    out["_calibration"] = calibration(results)
     return out
+
+
+CONFIDENCE_BANDS = ((0.0, 0.5), (0.5, 0.7), (0.7, 0.9), (0.9, 0.99), (0.99, 1.01))
+
+
+def calibration(results: list[dict]) -> list[dict]:
+    """Is the model's stated confidence meaningful?
+
+    For each band, how often was it actually right. A calibrated model answering
+    0.9 is correct about 90% of the time; the 8B put every one of 2,712 matches
+    above 0.9, so its number carried no information at all. This is the check
+    that tells us whether confidence can be used as a filter -- measured, not
+    assumed.
+    """
+    ok = [r for r in results if r["got_status"] == "ok"]
+    bands: list[dict] = []
+    for lo, hi in CONFIDENCE_BANDS:
+        rows = [r for r in ok if lo <= float(r.get("got_confidence") or 0.0) < hi]
+        if not rows:
+            continue
+        right = sum(1 for r in rows
+                    if (r["expected"] == "same") == bool(r["got_is_match"]))
+        bands.append({
+            "band": f"{lo:.2f}-{hi:.2f}",
+            "n": len(rows),
+            "accuracy": right / len(rows),
+            "share": len(rows) / len(ok),
+        })
+    return bands
 
 
 def report(scorecard: dict) -> str:
     lines = [f"{'source':20s} {'pairs':>6s} {'answered':>9s} {'agreed':>7s} "
-             f"{'disagreed':>10s} {'rate':>7s}  confidence", "-" * 88]
+             f"{'disagreed':>10s} {'rate':>8s}", "-" * 64]
     for src, s in scorecard.items():
-        conf = " ".join(f"{k}={v}" for k, v in sorted(s["by_confidence"].items()))
+        if src.startswith("_"):
+            continue
         lines.append(f"{src:20s} {s['pairs']:6d} {s['answered']:9d} {s['agreed']:7d} "
-                     f"{s['disagreed']:10d} {s['agreement']:6.1%}  {conf}")
+                     f"{s['disagreed']:10d} {s['agreement']:7.1%}")
         if s["errors"]:
             lines.append(f"{'':20s} {s['errors']} calls FAILED (no verdict; excluded)")
+
+    bands = scorecard.get("_calibration") or []
+    if bands:
+        lines += ["", "confidence calibration -- is the number meaningful?",
+                  f"  {'band':12s} {'n':>6s} {'share':>7s} {'accuracy':>9s}", "  " + "-" * 38]
+        for b in bands:
+            lines.append(f"  {b['band']:12s} {b['n']:6d} {b['share']:6.1%} {b['accuracy']:9.1%}")
+        lines.append("  (calibrated = accuracy tracks the band; flat/all-in-one-band = useless)")
+
     lines += [
         "",
         "reading it:",

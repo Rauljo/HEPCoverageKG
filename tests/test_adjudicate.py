@@ -61,22 +61,22 @@ def test_positive_verdict():
     )))
     assert out["status"] == "ok"
     assert out["is_match"] is True
-    assert out["confidence"] == "certain"   # 0.9 bucketed onto the discrete scale
+    assert out["confidence"] == 0.9        # kept raw, not bucketed
     assert out["error_type"] is None
 
 
-def test_confidence_is_bucketed_onto_a_discrete_scale():
-    """The 0-1 float carried no information -- every one of 2,712 matches on the
-    8B run scored >= 0.9. A discrete scale is at least thresholdable."""
-    from hepcoveragekg.aliases.adjudicate import _confidence, CONFIDENCE_LEVELS
-    assert _confidence("certain") == "certain"
-    assert _confidence("PROBABLE") == "probable"
-    assert _confidence(0.95) == "certain"
-    assert _confidence(0.75) == "probable"
-    assert _confidence(0.10) == "unsure"
-    assert _confidence(None) == "unsure"
-    assert _confidence("nonsense") == "unsure"
-    assert all(_confidence(v) in CONFIDENCE_LEVELS for v in (0.0, 1.0, "certain", None))
+def test_confidence_is_kept_raw_for_calibration():
+    """The raw number must survive: whether a model's confidence is meaningful is
+    something evaluate.py measures, not something the parser decides."""
+    from hepcoveragekg.aliases.adjudicate import _confidence
+    assert _confidence(0.93) == 0.93          # not rounded or bucketed
+    assert _confidence(0.42) == 0.42
+    assert _confidence(95) == 0.95            # 0-100 scale accepted
+    assert _confidence("certain") == 1.0      # word answers still comparable
+    assert _confidence("low") == 0.3
+    assert _confidence(None) == 0.0
+    assert _confidence("nonsense") == 0.0
+    assert 0.0 <= _confidence(7.5) <= 1.0     # clamped
 
 
 def test_negative_verdict_is_a_real_false():
