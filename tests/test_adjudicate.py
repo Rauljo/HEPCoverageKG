@@ -276,3 +276,29 @@ def test_dry_run_makes_no_llm_calls_and_writes_nothing(tmp_path, monkeypatch):
     assert stats["after_guards"] == 1
     assert stats["vetoed"] == 1
     assert not out.exists()
+
+
+def test_verdict_accepted_under_alternative_keys():
+    """Qwen sometimes answers "same" or "is_same" rather than "is_match". Two of
+    2,200 calls on the first real run were discarded as parse errors for that
+    alone -- a correct verdict thrown away over a key name."""
+    from hepcoveragekg.aliases.adjudicate import _verdict
+    assert _verdict({"is_match": True}) is True
+    assert _verdict({"same": False}) is False
+    assert _verdict({"is_same": True}) is True
+    assert _verdict({"identical": False}) is False
+    # string forms a model might emit
+    assert _verdict({"is_match": "true"}) is True
+    assert _verdict({"same": "different"}) is False
+    # genuinely missing verdict is still an error
+    assert _verdict({"confidence": 0.9, "explanation": "hmm"}) is None
+    assert _verdict("not a dict") is None
+
+
+def test_alternative_key_reaches_the_ok_path():
+    out = _run(lambda kw: _reply(json.dumps(
+        {"same": False, "confidence": 0.85, "explanation": "different versions"}
+    )))
+    assert out["status"] == "ok"
+    assert out["is_match"] is False
+    assert out["confidence"] == 0.85

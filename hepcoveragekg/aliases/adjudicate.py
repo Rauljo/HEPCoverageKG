@@ -93,6 +93,30 @@ def _classify(exc: Exception) -> str:
     return type(exc).__name__
 
 
+# A model that answers the question correctly but names the key differently has
+# not failed. Qwen2.5-72B occasionally replies "same" or "is_same" instead of
+# "is_match" (2 of 2,200 on the first real run); rejecting those as parse errors
+# discards a perfectly good verdict.
+_VERDICT_KEYS = ("is_match", "same", "is_same", "match", "are_same", "identical")
+
+
+def _verdict(result: Any) -> Optional[bool]:
+    """The boolean answer under whichever key the model used, or None."""
+    if not isinstance(result, dict):
+        return None
+    for key in _VERDICT_KEYS:
+        if key in result:
+            value = result[key]
+            if isinstance(value, bool):
+                return value
+            if isinstance(value, str) and value.strip().lower() in ("true", "yes", "same"):
+                return True
+            if isinstance(value, str) and value.strip().lower() in ("false", "no", "different"):
+                return False
+            return bool(value)
+    return None
+
+
 _WORD_CONFIDENCE = {"certain": 1.0, "high": 0.9, "probable": 0.75, "likely": 0.75,
                     "medium": 0.6, "unsure": 0.4, "low": 0.3, "guess": 0.2}
 
@@ -262,11 +286,12 @@ async def adjudicate_pair(
             raise ValueError("Empty response from LLM")
 
         result = json.loads(content)
-        if "is_match" not in result:
-            raise ValueError(f"Response missing 'is_match': {content[:200]}")
+        verdict = _verdict(result)
+        if verdict is None:
+            raise ValueError(f"Response has no verdict key: {content[:200]}")
 
         return _ok(
-            bool(result["is_match"]),
+            verdict,
             _confidence(result.get("confidence")),
             str(result.get("explanation", "")),
         )
