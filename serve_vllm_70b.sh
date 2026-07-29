@@ -1,6 +1,6 @@
 #!/bin/bash
-#SBATCH -p LIGHTGPU
-#SBATCH --gres=gpu:a100:4
+#SBATCH -p GPU
+#SBATCH --gres=gpu:a100:2
 #SBATCH --job-name=vllm-qwen72b
 #SBATCH --output=/home/xucabrjs/hepcoveragekg_setup/logs/vllm72b_%j.out
 #SBATCH --time=24:00:00
@@ -10,10 +10,20 @@
 # =============================================================================
 # Serve Qwen2.5-72B-Instruct for aliases Tier 3 adjudication.
 #
-# fp16, not quantised: ~145GB of weights across 4x A100-80GB via tensor
-# parallelism, which leaves ample room for KV cache. The cluster has 6 idle
-# A100s on LIGHTGPU, so there is no reason to accept AWQ's quality loss.
-# 72B has 64 attention heads, so TP=2/4/8 all divide cleanly.
+# AWQ 4-bit across 2x A100-80GB, on the GPU partition. The two GPU nodes are
+# NOT interchangeable, which cost a failed job to discover:
+#   LIGHTGPU / compute-gpu-0-0 : 6x MIG slices of 20GB. MIG instances cannot do
+#       the peer-to-peer NCCL communication tensor parallelism needs, so the
+#       usable ceiling there is ONE 20GB slice -- fine for the old 8B, useless
+#       for a 72B. Requesting 4 "GPUs" there yields 4 MIG handles and vLLM dies
+#       with NVMLError_InvalidArgument.
+#   GPU / compute-gpu-0-1 : 3x real A100 80GB, no MIG. This is the one to use.
+#
+# Why AWQ rather than fp16: 72B fp16 is ~145GB of weights, and TP must divide
+# the 64 attention heads, so TP=3 is invalid -- leaving TP=2 on 160GB, which
+# fits the weights but leaves almost nothing for KV cache. AWQ is ~40GB, so TP=2
+# leaves ~120GB of cache and much higher throughput, for a 1-2% quality cost
+# that a binary same/different judgement will not notice.
 #
 # Why a bigger model at all: the 8B was measured to answer "are these related?"
 # rather than "are these the same?" -- it merged 8 distinct SMEFT Wilson
@@ -30,7 +40,7 @@ set -euo pipefail
 
 module load Python/3.9.6-GCCcore-11.2.0
 
-MODEL="${LLM_MODEL_NAME:-Qwen/Qwen2.5-72B-Instruct}"
+MODEL="${LLM_MODEL_NAME:-Qwen/Qwen2.5-72B-Instruct-AWQ}"
 PORT="${LLM_PORT:-8000}"
 
 echo "Node:  $(hostname)"
@@ -54,6 +64,6 @@ apptainer exec --nv \
     vllm serve "${MODEL}" \
     --host 0.0.0.0 --port "${PORT}" \
     --api-key "${LLM_API_KEY}" \
-    --tensor-parallel-size 4 \
+    --tensor-parallel-size 2 \
     --max-model-len 8192 \
     --gpu-memory-utilization 0.90
