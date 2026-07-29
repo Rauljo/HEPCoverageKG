@@ -61,8 +61,22 @@ def test_positive_verdict():
     )))
     assert out["status"] == "ok"
     assert out["is_match"] is True
-    assert out["confidence"] == 0.9
+    assert out["confidence"] == "certain"   # 0.9 bucketed onto the discrete scale
     assert out["error_type"] is None
+
+
+def test_confidence_is_bucketed_onto_a_discrete_scale():
+    """The 0-1 float carried no information -- every one of 2,712 matches on the
+    8B run scored >= 0.9. A discrete scale is at least thresholdable."""
+    from hepcoveragekg.aliases.adjudicate import _confidence, CONFIDENCE_LEVELS
+    assert _confidence("certain") == "certain"
+    assert _confidence("PROBABLE") == "probable"
+    assert _confidence(0.95) == "certain"
+    assert _confidence(0.75) == "probable"
+    assert _confidence(0.10) == "unsure"
+    assert _confidence(None) == "unsure"
+    assert _confidence("nonsense") == "unsure"
+    assert all(_confidence(v) in CONFIDENCE_LEVELS for v in (0.0, 1.0, "certain", None))
 
 
 def test_negative_verdict_is_a_real_false():

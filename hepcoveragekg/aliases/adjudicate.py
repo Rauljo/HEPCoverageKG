@@ -93,7 +93,28 @@ def _classify(exc: Exception) -> str:
     return type(exc).__name__
 
 
-def _ok(is_match: bool, confidence: float, explanation: str) -> dict[str, Any]:
+def _confidence(value: Any) -> str:
+    """Normalise the confidence to one of CONFIDENCE_LEVELS.
+
+    A discrete scale replaces the old 0-1 float, which carried no information:
+    on the 8B run every single one of 2,712 matches scored >= 0.9, so no
+    threshold could separate good from bad. Numeric replies are still accepted
+    and bucketed, since a model may ignore the enum.
+    """
+    if isinstance(value, str) and value.strip().lower() in CONFIDENCE_LEVELS:
+        return value.strip().lower()
+    try:
+        num = float(value)
+    except (TypeError, ValueError):
+        return "unsure"
+    if num >= 0.9:
+        return "certain"
+    if num >= 0.7:
+        return "probable"
+    return "unsure"
+
+
+def _ok(is_match: bool, confidence: str, explanation: str) -> dict[str, Any]:
     return {
         "status": "ok",
         "is_match": is_match,
@@ -110,7 +131,7 @@ def _error(exc: Exception) -> dict[str, Any]:
     return {
         "status": "error",
         "is_match": None,
-        "confidence": 0.0,
+        "confidence": "unsure",
         "explanation": f"{_classify(exc)}: {exc}",
         "error_type": _classify(exc),
     }
@@ -139,36 +160,63 @@ def _get_theory_sync(term: str) -> str:
         return ""
 
 
+CONFIDENCE_LEVELS = ("certain", "probable", "unsure")
+
+# Deliberately GENERIC. No worked HEP examples: the failure cases (particle
+# swaps, lepton flavours, region ids, generator versions) are exactly what the
+# trial set measures, so putting them here would be training on the test set and
+# we would learn nothing about whether the model understands identity. Add
+# examples later only if the numbers demand it, and use different ones.
+_TASK = """You are an expert particle physicist curating a knowledge graph of published analyses.
+
+You will see two entries extracted from different papers. Decide whether they denote THE SAME
+entity, so that the graph should hold ONE node for both.
+
+The test is substitutability, not topical similarity:
+  SAME       - the entries name one and the same thing, merely worded differently. A physicist
+               reading either would picture the identical object, and every statement true of one
+               is true of the other.
+  DIFFERENT  - anything a physicist would need to keep apart. If merging them would lose a
+               distinction that changes what was measured, how it was selected, or which thing
+               was used, they are DIFFERENT.
+
+Being closely related, belonging to the same family, serving the same purpose, or appearing in
+similar analyses does NOT make two entries the same. Near-identical wording does not make them the
+same either. When the evidence does not settle it, say so with confidence "unsure" rather than
+guessing "same"."""
+
+_SCHEMA = """
+Answer ONLY with a JSON object:
+{
+  "is_match": true or false,
+  "confidence": "certain" | "probable" | "unsure",
+  "explanation": "<one sentence: the specific thing that makes them the same or different>"
+}"""
+
+
 def _build_prompt(term_a: str, term_b: str, kind: str, theory_a: str, theory_b: str,
                   context_a: str, context_b: str) -> str:
-    prompt = f"""You are an expert physicist data-steward for a high energy physics knowledge graph.
-Your task is to determine if two terms refer to the exact same {kind}.
+    """Assemble the adjudication prompt.
 
-Term A: "{term_a}"
-Term B: "{term_b}"
-
-"""
-    if theory_a:
-        prompt += f'Physics Definition for A: "{theory_a}"\n'
-    if theory_b:
-        prompt += f'Physics Definition for B: "{theory_b}"\n'
+    context_a / context_b are rendered blocks from aliases.context (every wording
+    the papers used, aliases, attributes, evidence quotes). When absent, the
+    prompt degrades to the bare labels.
+    """
+    parts = [_TASK, "", f"Entity kind: {kind}", ""]
 
     if context_a or context_b:
-        prompt += "\nGraph Context (what these terms connect to in the literature):\n"
-        prompt += f"Context A: {context_a}\nContext B: {context_b}\n"
+        parts += [context_a or f'ENTITY A:\n  primary name: "{term_a}"', ""]
+        parts += [context_b or f'ENTITY B:\n  primary name: "{term_b}"', ""]
+    else:
+        parts += [f'ENTITY A: "{term_a}"', f'ENTITY B: "{term_b}"', ""]
 
-    prompt += """
-Are these two terms exact synonyms that should be merged into a single canonical entity?
-Note: Variations in version numbers, isotopologues, or precise particle energies signify distinct entities (e.g. 13 TeV and 14 TeV are different).
+    if theory_a:
+        parts += [f'Reference definition for A: "{theory_a}"']
+    if theory_b:
+        parts += [f'Reference definition for B: "{theory_b}"']
 
-Respond ONLY with a valid JSON object matching this schema:
-{
-  "is_match": true/false,
-  "confidence": <float between 0.0 and 1.0>,
-  "explanation": "<your short reasoning>"
-}
-"""
-    return prompt
+    parts += [_SCHEMA]
+    return "\n".join(parts)
 
 
 async def adjudicate_pair(
@@ -208,7 +256,7 @@ async def adjudicate_pair(
 
         return _ok(
             bool(result["is_match"]),
-            float(result.get("confidence", 0.0)),
+            _confidence(result.get("confidence")),
             str(result.get("explanation", "")),
         )
     except _FATAL_ERRORS:
