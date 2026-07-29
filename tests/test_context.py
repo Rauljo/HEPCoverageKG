@@ -6,13 +6,29 @@ from __future__ import annotations
 from hepcoveragekg.aliases import context
 
 
-def test_definitional_sections_outrank_prose():
-    assert context.section_rank("Object reconstruction") < context.section_rank("Results")
-    assert context.section_rank("Event selection") < context.section_rank("Introduction")
-    assert context.section_rank("Data and simulated samples") < context.section_rank("Abstract")
-    # unknown sections must not be dumped at the bottom
-    assert context.section_rank("Some bespoke heading") < context.section_rank("Introduction")
-    assert context.section_rank(None) == context.section_rank("")
+def test_section_priority_is_learned_per_kind(monkeypatch):
+    """A single global ordering was wrong: physics_process takes 30% of its
+    quotes from the Introduction and 2% from reconstruction, while
+    detector_object is the reverse. Priority is measured per kind."""
+    monkeypatch.setattr(context, "_SECTION_PRIORS", {
+        "detector_object": {"object reconstruction": 500, "introduction": 5},
+        "physics_process": {"object reconstruction": 5, "introduction": 400},
+    })
+    # same two sections, opposite verdicts depending on the kind
+    assert context.section_rank("Object reconstruction", "detector_object") < \
+           context.section_rank("Introduction", "detector_object")
+    assert context.section_rank("Introduction", "physics_process") < \
+           context.section_rank("Object reconstruction", "physics_process")
+
+
+def test_unseen_sections_rank_neutral_not_last(monkeypatch):
+    """An unusual heading is not evidence of being uninformative."""
+    monkeypatch.setattr(context, "_SECTION_PRIORS",
+                        {"detector_object": {"results": 100, "introduction": 50}})
+    unseen = context.section_rank("Three-body event selection", "detector_object")
+    assert unseen == 0
+    assert unseen > context.section_rank("Results", "detector_object")   # known-good still wins
+    assert context.section_rank(None, "detector_object") == 0
 
 
 def test_render_omits_empty_sections():

@@ -40,31 +40,62 @@ MAX_QUOTES = 10
 # Below this a span is almost always a table cell rather than a statement.
 MIN_QUOTE_CHARS = 40
 
-# Which section a quote came from decides how much it is worth. A sentence in
-# "Event selection" DEFINES the object; one in "Results" merely mentions it. For
-# the frequent objects that get truncated, this ordering is what determines
-# whether the surviving quotes are definitions or noise.
-_SECTION_RANK = (
-    (0, ("object reconstruction", "event reconstruction", "object selection",
-         "event selection", "reconstruction and selection", "categorization")),
-    (1, ("simulated", "simulation", "datasets", "data and", "samples")),
-    (2, ("background estimation", "analysis strategy", "fiducial")),
-    (3, ("systematic", "experimental uncertaint", "theoretical uncertaint")),
-    (4, ("results", "interpretation", "stxs", "summary")),
-    (5, ("introduction", "abstract", "conclusion")),
-)
-_UNRANKED = 4  # unknown sections sit mid-table, ahead of prose but behind definitions
+# Which section a quote came from decides how much it is worth -- but WHICH
+# section is best depends on the entity kind, so this is measured from the
+# corpus rather than hand-written.
+#
+# A fixed ranking was tried first and was wrong. It put "Object reconstruction"
+# top and "Introduction" bottom, which is right for detector objects and
+# backwards for theory: physics_process draws 30% of its quotes from the
+# Introduction and 2% from reconstruction/selection, and statistical_method and
+# model_parameter are described in Results. A single ordering encodes
+# detector-object thinking and misapplies it to the other 20 kinds.
+#
+# So: for each kind, prefer the sections that kind actually uses. Frequency is a
+# proxy for "this is where papers talk about this sort of thing", and it adapts
+# as the corpus grows instead of ageing into a wrong assumption.
+_SECTION_PRIORS: dict[str, dict[str, int]] = {}
 
 
-def section_rank(section: str | None) -> int:
-    """Lower is more definitional. Unknown sections land mid-table."""
+def load_section_priors(conn) -> dict[str, dict[str, int]]:
+    """Per-kind section frequencies, computed once from the corpus."""
+    global _SECTION_PRIORS
+    if _SECTION_PRIORS:
+        return _SECTION_PRIORS
+    rows = conn.execute(
+        """
+        SELECT e.kind AS kind, LOWER(TRIM(ev.section_title)) AS section, COUNT(*) AS n
+        FROM entity e
+        JOIN assertion a ON a.subject_id = e.entity_id OR a.object_id = e.entity_id
+        JOIN assertion_evidence ae ON ae.assertion_id = a.assertion_id
+        JOIN evidence ev ON ev.evidence_id = ae.evidence_id
+        WHERE ev.section_title IS NOT NULL AND TRIM(ev.section_title) <> ''
+        GROUP BY e.kind, LOWER(TRIM(ev.section_title))
+        """
+    ).fetchall()
+    priors: dict[str, dict[str, int]] = {}
+    for r in rows:
+        priors.setdefault(r["kind"], {})[r["section"]] = r["n"]
+    _SECTION_PRIORS = priors
+    return priors
+
+
+def reset_section_priors() -> None:
+    global _SECTION_PRIORS
+    _SECTION_PRIORS = {}
+
+
+def section_rank(section: str | None, kind: str = "") -> int:
+    """Sort key for a quote's section: lower sorts first.
+
+    Negated frequency for this kind, so the sections a kind actually uses come
+    first. Sections never seen for the kind rank 0 (neutral) rather than last --
+    an unusual heading is not evidence of being uninformative.
+    """
     text = (section or "").strip().lower()
     if not text:
-        return _UNRANKED
-    for rank, keywords in _SECTION_RANK:
-        if any(k in text for k in keywords):
-            return rank
-    return _UNRANKED
+        return 0
+    return -_SECTION_PRIORS.get(kind, {}).get(text, 0)
 
 
 @dataclass
@@ -140,17 +171,18 @@ def fetch(conn, entity_id: str) -> EntityContext:
         aliases=[a for a in aliases if a not in labels][:MAX_ALIASES],
         attributes=attributes,
         papers=len(papers),
-        quotes=quotes(conn, entity_id),
+        quotes=quotes(conn, entity_id, rows[0]["kind"]),
     )
 
 
-def quotes(conn, entity_id: str, limit: int = MAX_QUOTES) -> list[tuple[str, str]]:
+def quotes(conn, entity_id: str, kind: str = "", limit: int = MAX_QUOTES) -> list[tuple[str, str]]:
     """Distinct (section, quote) pairs where this entity is subject or object.
 
     Sorted so the most definitional sections come first, because for the handful
     of very frequent objects the list gets truncated and we want the surviving
     quotes to be the ones that say what the thing IS.
     """
+    load_section_priors(conn)
     rows = conn.execute(
         """
         SELECT DISTINCT ev.quote AS quote, ev.section_title AS section
@@ -169,7 +201,7 @@ def quotes(conn, entity_id: str, limit: int = MAX_QUOTES) -> list[tuple[str, str
     # it. Length is a crude but effective proxy for "is this a statement".
     ranked = sorted(
         rows,
-        key=lambda r: (section_rank(r["section"]), -len(r["quote"] or ""),
+        key=lambda r: (section_rank(r["section"], kind), -len(r["quote"] or ""),
                        (r["section"] or "").strip()),
     )
 
