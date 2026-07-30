@@ -1,7 +1,18 @@
 # Overview — current state
 
 *Living document: always reflects the present. History lives in `decisions.md` and `logs/`.*
-*Last updated: 2026-07-24*
+*Last updated: 2026-07-29*
+
+> **→ [`system.md`](system.md) (v1, 2026-07-29) is now the reference document for what gets built
+> next**: the query system and the agent layers on top of the graph, the evaluation design, the
+> technology stack, and the order of work (S-01 … S-22). Read it after this file.
+> The sections below still describe how the graph itself is built (M1 done, M2–M4 open).
+> **What changed on 2026-07-29**: the project's framing moved from *gap finding* to **coverage
+> review** — helping a physicist see what has been covered while reviewing or planning. Gap finding
+> is one use of that, now future work. **M3 became the critical path**: aggregate coverage questions
+> are the backbone of the evaluation and none are answerable until final-state signatures exist
+> (D-038 — and the long-standing "compile them from `count` qualifiers" plan was based on a wrong
+> reading of the data; no such qualifier exists).
 
 ## What this project is
 
