@@ -300,3 +300,166 @@ justification must come from **tool use / self-verification** (GeneAgent), not f
 **Tier 3 — skim/defer**: DeepLearning.AI KG-with-agents course (background only; architecture is decided, D-002); llm-wiki-newsroom (README skim).
 **Tier 4 — dropped for the dissertation** (off-domain; no orchestration agent per D-002; GitHub stars ≠ relevance): FINSABER, TradingAgents (2412.20138), ai-hedge-fund, MiroFish.
 **To add, not on the original list**: ATLAS model-independent general search (MUSiC's ATLAS counterpart); Rivet + Contur (see entry above); entity-resolution/canonicalization evaluation methodology (for reporting reconciliation merge precision/recall).
+
+---
+
+# Query-system arm — literature (search 2026-07-29)
+
+*Triage for the system in [`system.md`](system.md): GraphRAG, RAG/QA evaluation, abstention,
+text-to-SQL/Cypher, agentic KG curation. **Triaged from abstracts and search results only — none of
+these read in full yet.** Verify before citing. Reading order preserved: Tier 1 = read these, each
+one attaches to a specific decision; Tier 2 = support.*
+
+## Tier 1
+
+### Know Your Limits: A Survey of Abstention in LLMs (arXiv 2407.18418)
+**What**: Survey of the abstention literature — when and how models should decline to answer.
+**Why it matters here**: **S-13 is not a novel idea, it is a field**, and we did not know that. The
+deletion protocol measures abstention; this gives the vocabulary, the framing, and the prior work to
+position against. Highest-value single read on this list — it converts our "nice metric" into a
+literature-grounded contribution.
+**Where discussed**: 2026-07-29 (query-system lit search).
+
+### AbstentionBench + Do LLMs Know When to NOT Answer? (COLING 2025) + Abstain-QA
+**What**: Benchmarks and methodology for abstention. Abstain-QA = 2,900 MCQs, half unanswerable,
+with an explicit "I don't know" option. **AUCM — the Answerable/Unanswerable Confusion Matrix** — is
+a ready-made evaluation frame. Finding: models frequently fail to recognise unanswerability and
+fabricate instead; reasoning models often "know" internally but do not express abstention.
+**Why it matters here**: AUCM is directly reusable for the deletion protocol (S-13) — do not invent
+our own scoring frame. The "knows internally but answers anyway" result also bears on whether
+confidence (which the 72B calibrates well) can drive abstention.
+**Where discussed**: 2026-07-29.
+
+### CypherBench (ACL 2025, arXiv 2412.18702)
+**What**: First large-scale text-to-Cypher benchmark — 11 property graphs, 7.8M entities, >10k
+questions. Argues RDF KGs are inefficient for LLMs (schemas exceed context, resource identifiers,
+overlapping/ambiguous relations, no normalization) and that **property-graph views** are the fix.
+**Why it matters here**: **Read this precisely because it challenges S-05** (SQL-only querying,
+Neo4j as view). If graph querying is the better route, this is where the evidence would be. Also the
+benchmark to quote if we ever add Cypher generation. Note the schema-size argument cuts our way for
+now — our schema is small and closed.
+**Where discussed**: 2026-07-29.
+
+### Graph Retrieval-Augmented Generation: A Survey (arXiv 2408.08921)
+**What**: The anchor GraphRAG survey. Formalizes the workflow as Graph-Based Indexing →
+Graph-Guided Retrieval → Graph-Enhanced Generation.
+**Why it matters here**: Positions the whole system in a named field. Our architecture maps onto
+those three stages, so it gives the related-work chapter its spine. Companion:
+**RAG with Graphs (arXiv 2501.00309)**, which decomposes GraphRAG into query processor / retriever /
+organizer / generator / data source — component vocabulary that maps almost one-to-one onto S-03/04.
+**Where discussed**: 2026-07-29.
+
+### Text-to-SQL benchmark numbers — BIRD, Spider 2.0
+**What**: BIRD = 12,751 pairs over 95 real databases (~33GB, 37 domains). Reported figures:
+SENSE-13B 86.6% on Spider / 63.4% on BIRD; **Spider 2.0 — GPT-4o 10.1%, versus 86.6% on Spider 1.0**;
+enterprise variants 39.1 EX (BIRD-Ent) / 60.5 EX (Spider-Ent).
+**Why it matters here**: **This is the empirical justification for S-04** (templates filled with
+retrieved ids, not free-form generation). "Free-form text-to-SQL is unreliable on real schemas" stops
+being our opinion and becomes a cited number with a 10.1% next to it. Also gives the
+constrained-vs-free-form ablation a benchmark vocabulary.
+**Where discussed**: 2026-07-29.
+
+### KARMA — multi-agent LLM KG enrichment (OpenReview k0wyi4cOGy)
+**What**: Nine specialised agents that automatically update and expand a knowledge graph **from
+scientific papers**.
+**Why it matters here**: The closest published system to our paper-reading expansion loop (§2.3) —
+same input (papers), same output (graph growth), same multi-agent shape. Must be in related work,
+and read early enough to steal from rather than reinvent. Compare its verification story against
+S-08 (provenance) and S-07 (proposals, never self-edits).
+**Where discussed**: 2026-07-29.
+
+## Tier 2 — support
+
+### In-context Clustering-based Entity Resolution with LLMs (arXiv 2506.02509)
+**What**: Packs many records into one prompt for direct in-context **clustering**, instead of
+pairwise questioning. Design-space exploration of prompting strategies (match / compare / select).
+**Why it matters here**: Our Tier 3 is strictly **pairwise** (126k candidate pairs, one call each).
+This is the named alternative and it is cheaper. Read to decide whether to defend pairwise as a
+deliberate choice or switch — either way the write-up needs the sentence.
+**Where discussed**: 2026-07-29.
+
+### Cost-Efficient RAG for Entity Matching: A Blocking-based Exploration (arXiv 2602.05708)
+**What**: Blocking/filtering as the cost lever in LLM entity matching.
+**Why it matters here**: Our embedding+Jaccard candidate stage plus `guards.py` **is blocking** — we
+built it without using the word. This supplies the standard vocabulary and the comparison baseline
+for our 126,335 → 14,656 → 9,570 reduction (D-035, D-036).
+**Where discussed**: 2026-07-29.
+
+### Can we trust LLM Self-Explanations for Entity Resolution? (arXiv 2606.01210)
+**What**: Whether the explanation an LLM gives for a match/non-match can be trusted.
+**Why it matters here**: We store `explanation` on every adjudication and measured **1 contradiction
+in 2,198 answers** (verdict vs its own reasoning) on the 72B. This paper is exactly that question,
+and would let us report that number against a prior baseline instead of in isolation.
+**Where discussed**: 2026-07-29.
+
+### Benchmarking LLM Faithfulness in RAG with Evolving Leaderboards (EMNLP 2025 industry) — FaithJudge
+**What**: Hallucination/faithfulness leaderboard across summarization, QA, data-to-text;
+**FaithJudge** = LLM-as-judge grounded in human-annotated hallucination examples.
+**Why it matters here**: S-14 checks faithfulness **mechanically** (every claim must appear in a
+retrieved row), which is stronger than LLM-judging — but only if we can say what LLM-judging does
+and why ours is different. This is that citation.
+**Where discussed**: 2026-07-29.
+
+### The multi-layer RAG evaluation argument
+**What**: Recurring finding in the 2025–26 RAG-eval literature: the retriever can miss relevant
+material while the generator answers coherently from partial context, so **faithfulness stays high
+and no retrieval-stage metric surfaces the regression**. Hence evaluation across retrieval /
+generation / end-to-end.
+**Why it matters here**: This is precisely the argument for §4.4 (per-layer metrics) — end-to-end
+accuracy says *that* something broke, never *what*. Find the strongest paper stating it and cite it
+there. Also see *Benchmarking Hallucination Evaluation for RAG Under an Abstention Policy*, which
+sits exactly at our abstention × RAG-eval intersection.
+**Where discussed**: 2026-07-29.
+
+### Awesome-GraphRAG (github.com/DEEP-PolyU/Awesome-GraphRAG)
+**What**: Curated, maintained list of GraphRAG surveys, papers, benchmarks and code.
+**Why it matters here**: The cheap way to stay current in a field moving this fast, and to find the
+2026 work that post-dates these searches. Not a citation — a tool.
+**Where discussed**: 2026-07-29.
+
+## Second pass — the three remaining gaps (search 2026-07-29, same session)
+
+### LLM systematic-review / evidence-synthesis automation — **the closest framing to the actual goal**
+**What**: A live field with a blunt consensus. *LLMs for conducting systematic reviews: on the rise,
+but **not yet ready for use** — a scoping review* (J Clin Epidemiol 2025) is the headline; a 2026
+meta-analysis of 18 studies (2023–25) measures screening performance; **otto-SR** automates
+screening + extraction + risk-of-bias and claims it can reproduce and update existing reviews.
+Distribution of use across studies: **41% literature search, 38% screening, 30% data extraction**,
+89% GPT-family.
+**Why it matters here**: This is the application framing the supervisor actually described — help a
+researcher see what has been covered. It gives the dissertation a **named field with a stated gap**
+("not ready for use", tasks done in isolation, no persistent structure), and our answer to it is
+specific: a *persistent typed graph* rather than a per-review one-shot pipeline. The 41/38/30 split
+also shows nobody is building the coverage map — they automate the steps, not the artefact.
+Also: **Diagnosing Structural Failures in LLM-Based Evidence Extraction for Meta-Analysis**
+(arXiv 2602.10881) — a failure-mode taxonomy for evidence extraction, i.e. prior work for the M4
+diff idea (S-09). **Promote to Tier 1.**
+**Where discussed**: 2026-07-29.
+
+### CleanGraph — Human-in-the-loop KG Refinement and Completion (arXiv 2405.03932)
+**What**: Interactive accept/reject of model-proposed corrections to a knowledge graph; keeps expert
+control while cutting manual correction cost.
+**Why it matters here**: **This is §2.4 and S-09 already built by someone else.** Read before
+designing the editing UI. The general HITL loop it sits in — detect → elicit feedback → adapt →
+quality-control — is the shape our edit-diagnosis flow should follow, and the literature notes that
+captured corrections can feed back into prompts and retrieval constraints, which is exactly the
+"find other things wrong for the same reason" step. **Tier 1 for the editing stage.**
+**Where discussed**: 2026-07-29.
+
+### Multi-agent systems — one survey each, then stop
+**What**: *LLM-based Multi-Agents: A Survey of Progress and Challenges* (arXiv 2402.01680) as the
+anchor; **A Survey on Evaluation of LLM-based Agents (arXiv 2503.16416)** for the evaluation side.
+Architecture reviews catalogue ~18 reusable patterns from 57 sources; 2025–26 work has moved from
+fixed topologies to runtime-adaptive ones.
+**Why it matters here**: Cite and move on, per the "light" weighting — with **one finding worth
+acting on**: *multi-agent overhead grows superlinearly*, and centralized coordination only pays on
+parallelizable tasks. That is a direct argument for keeping the agent count low and for the
+cost-per-question metric in §4.4, which we included on instinct. The evaluation survey is the more
+useful of the two for us.
+**Where discussed**: 2026-07-29.
+
+## Still not searched
+
+- HEP-specific literature tooling beyond Rivet/Contur/AgentRivet (already in this file).
+- Calibration and confidence estimation in LLMs — relevant to the 72B calibration result and to
+  whether confidence can drive abstention (see *Know Your Limits*, Tier 1).
