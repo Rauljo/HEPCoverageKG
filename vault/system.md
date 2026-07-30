@@ -82,6 +82,17 @@ relevance. Failure returns the error to the generator for a bounded number of re
 
 **d. Present.** Text summary, table, plot, or graph view. Every claim carries its evidence.
 
+**Join trap, found 2026-07-30 while building the templates.** To get from a `result` to its paper,
+use **`entity_occurrence.paper_id`**, never the `paper_reports_result` predicate. The predicate
+links only the *headline* result of each paper — **60 of 272** — while the occurrence table reaches
+all 272. A `result` is one specific finding, and papers report between 1 and 44 of them (the
+headline analysis, plus normalisation factors, per-region numbers, limits).
+*Why this matters beyond one query*: it is the semantically obvious join, so it is exactly what a
+model writing free-form SQL would choose, and it fails **silently** — no error, no empty result,
+just 22% of the truth looking entirely plausible. A direct, concrete argument for S-04 (templates
+over free-form generation): the trap gets encoded once, in a tested template, instead of being
+rediscovered — or not — on every question.
+
 #### S-03 — the router is two jobs, not one
 Shape classification (LLM) and content retrieval (deterministic) stay separate and are measured
 separately.
@@ -102,6 +113,112 @@ variable depth if it comes to that.
 measure first, add Cypher generation second.
 *Why*: two query languages doubles the failure surface and doubles what has to be evaluated, for
 questions that are overwhelmingly filters and counts.
+
+#### S-24 (2026-07-30) — the router may answer "no template fits", and that is a measurement
+The shape classifier returns one of the templates **or `none`**. `none` routes to free-form query
+generation, and the answer is **flagged** as free-form so the evaluation can score the two paths
+separately.
+*Why*: closed templates cannot cover every question, and pretending otherwise means the router
+silently forces a bad fit — the worst outcome, because it looks like an answer. This is the same
+shape as abstention (S-13): the system saying "this is outside what I can do cleanly" is
+information, not failure.
+*The by-product is the design input*: the log of questions where no template fitted **is** the
+specification for templates 7, 8, 9. Recurring shapes get promoted from free-form to tested SQL.
+*Constraint*: the free-form path uses the **same rails** — read-only connection, `sqlglot` parse and
+write check, evidence collected from whatever it matched. Free-form means unconstrained *SQL*, never
+unconstrained *access*.
+
+#### S-25 (2026-07-30) — dual-path answering: template and free-form, compared
+Run both paths and have a third step compare them: does the free-form answer contain anything the
+template missed, and does the template answer contain anything free-form lost.
+*Why it is worth the cost*: it turns the central S-04 claim into a **per-question measurement**
+instead of a one-off ablation. "On N% of questions the unconstrained agent found something the
+templates could not express" is a result either way it comes out.
+*Two safeguards, both non-negotiable*:
+  1. **The free-form answer must have executed.** Its rows must come from SQL that actually ran and
+     returned real records — never from the model's prose. Otherwise the comparison rewards fluent
+     invention.
+  2. **Compare structurally first, LLM second.** Do the two return the same rows? Does one strictly
+     contain the other? Only the *qualitative* residue ("is this extra actually interesting?") goes
+     to a model. An LLM asked which answer is better will pick the richer one, and richer is exactly
+     what a hallucinated join looks like.
+*When to run both*: **always on the evaluation set** (that is where the comparison is the point);
+in the live system, only when the router abstained or the user asks to dig deeper — multi-agent
+overhead grows superlinearly (see [[literature]]) and most questions do not need two passes.
+
+#### S-27 (2026-07-30) — one planner, batched operations; hierarchy only under context pressure
+The agent is a **single planner** that emits a **batch of operations per round**, sees every result
+together, and plans again. One LLM call per round — not one per operation, and no separate
+"executor" agent (tool calling already emits structured calls; a translator agent would be a second
+call per round doing a job the schema does).
+
+*Measured, and it settles the design*: a template query takes **0.29 ms**; the heaviest (crosstab,
+386 cells) 16 ms; running them across 8 threads is **slower** (0.51 ms) because connection setup
+dominates. One LLM call ≈ **3,000–17,000 queries**. So parallelising *operations* buys nothing —
+the model is the entire cost.
+
+**Why a boss-and-workers hierarchy would be added is context, not speed.** A single planner that
+fans out already has full visibility and loses nothing to summarisation. Workers exist to
+*compress* — each explores a branch and returns a summary so the boss never sees raw rows. You pay
+N extra LLM calls to buy context headroom, and nothing else.
+*Trigger*: add hierarchy when the planner's context is the constraint. Log context size per round.
+*Note first*: `--max-model-len` is currently **8192**, which is a setting, not a limit — the AWQ
+model has ~120 GB of KV cache headroom on 2×A100. Raise it to 32k before building a hierarchy to
+work around a number we chose.
+*Ablation built in (user's idea)*: a **max-concurrent-places** attribute caps how many branches the
+planner may explore at once. That makes 1-vs-many a dial rather than a second architecture, so the
+comparison is a parameter sweep instead of a rewrite.
+*Also for SQLite*: a connection cannot be shared across threads (`ProgrammingError`). Moot while
+batching, but it would bite immediately if anything ever threads.
+
+#### S-28 (2026-07-30) — clusters collapse by default, groups expand by default
+They are different claims and therefore have opposite defaults.
+
+**A cluster** (`entity_canonical` / `same_as`) is an **identity** claim — "these *are* the same
+thing". If correct, members are interchangeable, so collapsing loses nothing. Default: **collapse**;
+drilling in is for *auditing the merge*.
+
+**A group** is **not** an identity claim — "these are different things that belong together".
+PYTHIA 6 and PYTHIA 8 genuinely differ. Collapsing loses information. Default: **expand**; the group
+is primarily a **retrieval handle** (the thing that turns the word "Pythia" into 56 ids).
+*A group may be the unit of an answer only when the question was posed at group granularity*:
+"how many analyses used Pythia, any version?" → group-level is right; "which Pythia versions?" →
+must expand.
+
+**And a merge that changes a number must be shown next to the number.** Not `58 papers` but
+`58 papers, collapsing 56 entities into 12 clusters`, inspectable. Otherwise a wrong merge is
+silently wrong forever; shown, it costs a visible dispute instead.
+*Correction to an earlier claim*: the agreement-by-paper-count figures (1 paper 79.0%, 2 papers
+91.7%, 3+ 100%) are **Tier 1/1.5 merges only** — that is what the trial set measured. Tiers 2/3 have
+not run at scale, so applying the paper-count rule to them is a **hypothesis to test**, not a
+finding.
+
+#### S-26 (2026-07-30) — learned lessons are promoted into structure, not into prose
+When the system discovers something — a failure mode, a data quirk, a trap — ask **"can this be
+code?"** before writing it anywhere. Order of preference, strongest first:
+
+| Where it goes | When | Strength |
+|---|---|---|
+| a **template / code** | mechanically enforceable | absolute; a test proves it |
+| the **schema card** | a fact about the data | generated, so it cannot drift |
+| a **guard / validator** | a check | fails loudly |
+| the **prompt** | judgement that cannot be mechanised | advisory only, obeyed *most* of the time |
+
+*Worked example*: "join to papers through `entity_occurrence`" could have been a line in PURPOSE and
+would have been followed most of the time. As a template it is followed **every** time. It therefore
+lives in `templates.py`, and appears in the prompt only for the free-form path, where there is no
+template to hold it.
+
+**The prompt may still be amended, but by proposal only.** The system logs a candidate line with the
+evidence that motivated it; a human accepts; the prompt is **versioned** and every evaluation run
+records which version it used.
+*Why the guard*: the prompt is the control surface — an agent editing it changes every future answer
+at once, and silently. Three specific failures: evaluation numbers stop being comparable across
+runs; the prompt bloats into thousands of tokens of half-contradictory caveats nobody can audit; and
+one bad case generalised into a rule poisons everything after it. Same principle as S-07, in a more
+dangerous place.
+*Same idea as the convenience detector*: recurring chains become tools, recurring mistakes become
+templates and guards. Prose absorbs only what neither can hold.
 
 #### S-06 — validation is mechanical first, LLM second
 An LLM judging its own query agrees with itself. Parse → read-only check (`sqlglot`) → execute →
@@ -317,12 +434,35 @@ Domain experts are also slow to schedule — book it early even if the full run 
 Roughly one month of building, then 15 days for final tests and >50 pages of writing.
 
 **Phase 1 — foundations**
-1. **M3 final-state signatures** (D-038). LLM parses the prose label into
-   `{object, count, comparator}`; code serialises the canonical id. 161 items, all 60 papers, 126
-   distinct labels out of 138. Nothing about coverage is answerable until this exists.
-2. **Accepted-view filter** — the other half of M3; cheap, but without it answers silently include
-   rejected assertions.
+1. **M3 final-state signatures** — **now an upstream dependency (2026-07-30).** Gabriel is working
+   on populating signatures in the acquisition pipeline, so **do not build the parse yet** (D-038
+   describes the fallback, not the plan).
+   *The risk this creates*: the backbone of the evaluation now sits on a deliverable we do not
+   control. Mitigation, in order:
+   - **Ask for the JSON shape now, not the data.** The shape is what unblocks us — the query layer
+     and the coverage templates can be written against it before a single row exists.
+   - **Ask for a date**, and whether the existing 60 bundles get re-extracted or only new papers
+     carry signatures. Re-extraction means a re-import, which is M4 territory.
+   - **Fallback trigger**: if no signature data has landed by the time the query system is working
+     (~end of Phase 2), run the D-038 parse on the 138 labels as a stopgap. One afternoon, and the
+     evaluation is not held hostage.
+   *Context*: 161 assertions, all 60 papers, **126 distinct labels out of 138**, `signature` column
+   0 populated. Note `assertion.signature` is a **third object shape**
+   (`CHECK (object_id + object_value + signature = 1)`), so signatures arriving upstream means those
+   assertions change shape — another reason re-import matters.
+2. **Accepted-view filter** — **PARKED (S-23)**, see below.
 3. **Evaluation harness + frozen question set** (S-10, S-11).
+
+#### S-23 (2026-07-30) — query everything for now; the accepted-view filter is deferred
+No status filter on the query path yet. Every assertion is queryable regardless of status.
+*Why*: human review has barely happened — one paper accepted (2001.06899) and 287 decisions staged
+for another. Filtering to "accepted" today would filter on the *extraction pipeline's* own status,
+which is not the same thing as "a human checked this", while silently hiding most of the corpus.
+Better to query everything and be honest that nothing is reviewed yet.
+*Cost of deferring*: low — it is a `WHERE` clause. But build the query path so the filter is a
+**flag that can be switched on**, not something bolted in later.
+*Watch for*: numbers measured before and after the filter exists are **not comparable**. If review
+lands mid-project, re-run the affected evaluation rather than comparing across the change.
 
 #### S-22 — the harness is built *before* the query system
 Point it at a stub that answers nothing, and watch the number move from day one.
@@ -399,6 +539,28 @@ The contract milestones are not a detour from this system — they are its subst
 ---
 
 ## Changelog
+
+**v1.2 — 2026-07-30.** Query layer began. **S-24** free-form escape hatch (the router may answer
+"no template fits", and the log of those *is* the specification for the next templates);
+**S-25** dual-path answering, template vs free, with the two safeguards; **S-26** learned lessons
+are promoted into structure, not prose; **S-27** one planner, batched operations, hierarchy only
+under context pressure (measured: one LLM call ≈ 3,000–17,000 queries); **S-28** clusters collapse,
+groups expand, and merges are shown beside the numbers they change.
+Also: the schema card now prints **real kind distributions** instead of a "mixed" verdict behind a
+60% threshold (~300 extra tokens, and it was hiding an 86/14 split); `PURPOSE` exists in **full and
+minimal variants with section markers**, so how much prompt instruction actually helps is an
+ablation rather than a guess.
+**Built**: `query/schema_card.py`, `query/templates.py`, `query/prompts.py`. 215 tests.
+**Two silent traps found in the pilot data and encoded in tested SQL** — join to papers via
+`entity_occurrence` (the obvious predicate reaches 60 of 272), and count facts not rows (up to 2x
+over-report). Both return a plausible wrong answer rather than an error, and both are now
+self-discovered evidence for S-04.
+
+**v1.1 — 2026-07-30.** S-23: the accepted-view filter is parked; query everything until review
+actually exists. Recorded that `assertion.signature` is a **third object shape** in the schema
+(`CHECK (object_id + object_value + signature = 1)`), 0 populated — so the parsed final state cannot
+be written back onto an existing assertion and needs its own derived table, consistent with S-02.
+Added [`hep-notation.md`](hep-notation.md).
 
 **v1 — 2026-07-29.** First version. Captures the system as designed across the 2026-07-29 session:
 purpose reframed from gap-finding to coverage review (supervisor conversation); query system as sole

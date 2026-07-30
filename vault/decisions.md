@@ -370,3 +370,16 @@ reliability number.
 **Consequence**: M3 is **on the critical path**, not deferred. Aggregate coverage questions are the
 backbone of the evaluation (the one place the KG structurally beats document retrieval), and none of
 them are answerable until signatures exist. `vault/ideas/final-state-representation.md` rewritten.
+
+### D-038 addendum (2026-07-30) — superseded in part: signatures are coming from upstream
+Gabriel is working on populating **signatures in the acquisition pipeline**. So the LLM parse
+described above is **no longer the plan — it is the fallback.** Do not build it yet.
+**What stays true**: the measurement (161 assertions, 0 count qualifiers, prose-only labels, 126
+distinct labels of 138), and the principle that a model must never write the canonical id itself.
+**What changes**: we wait, and we ask for two things — the **JSON shape** (which unblocks the query
+layer immediately, without any data), and a **date** plus whether the existing 60 bundles are
+re-extracted or only new papers carry signatures. Re-extraction ⇒ re-import ⇒ M4.
+**Fallback trigger**: no signature data by the end of query-system build ⇒ run the parse on the 138
+labels as a stopgap rather than let the evaluation stall.
+**New risk to watch**: the backbone of the evaluation now depends on a deliverable we do not
+control. See system.md §5 Phase 1.
