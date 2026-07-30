@@ -85,8 +85,11 @@ Themes: **Extraction & retrieval** · **Graph & canonicalization** · **Agents &
       **Two consumers, one search** (2026-07-27): the aliases layer *and* the held-out gap-matcher
       ("is this fill the same gap?") — see [[held-out-gap-validation]]. SapBERT-style cross-encoders
       are the strand GAPMAP used (RoBERTa) for its implicit-gap validation.
-- [ ] **Compile final-state signatures from the `count`/`subchannel` qualifiers** — the signature
-      field is empty, but the ingredients aren't. Blocks the M3 physics query. [[final-state-representation]].
+- [ ] **Build final-state signatures by LLM-parsing the label prose** (D-038, 2026-07-29 — replaces
+      "compile from the `count`/`subchannel` qualifiers", which was based on a wrong reading of the
+      data: **no `count` qualifier exists**, 0 of 161). The signature field is empty *and* so are the
+      structured ingredients; the information lives only in the English label. Blocks the M3 physics
+      query, which now blocks the evaluation. [[final-state-representation]].
 - [ ] **Neo4j projection** from SQLite (D-022) — for traversal + visualization.
 - [ ] **Query layer** — simple filters → multi-hop physics signatures (M2 done as trace; M3 = the
       physics query).
@@ -165,10 +168,27 @@ Themes: **Extraction & retrieval** · **Graph & canonicalization** · **Agents &
 
 - [x] **M1 — Load & reconcile** — importer, 60 bundles → 14,188/11,309/2,555/324. Done.
 - [~] **M2 — Trace** — `trace_assertion` built (contract condition 5 passes); polish later.
-- [ ] **M3 — Accepted view + a real physics query** — "2 electrons + MET>200", OR-logic. Needs the
-      final-state-from-qualifiers compile + status filter.
+- [ ] **M3 — Accepted view + a real physics query** — "2 electrons + MET>200", OR-logic. Status
+      filter (cheap) + final-state signatures (the real work). **Now on the critical path** — the
+      aggregate coverage questions the evaluation rests on are unanswerable without it.
+      **Corrected 2026-07-29 (D-038)**: there is no "compile from `count` qualifiers" — no such
+      qualifier exists (0 of 161), and the signature is not fanned out across object edges, it is
+      **one node holding English prose**. So: LLM parses the prose into `{object, count, comparator}`,
+      code serialises that into the canonical id. 161 items, all 60 papers, **126 distinct labels
+      out of 138**. See [[final-state-representation]].
 - [ ] **M4 — Re-import after review** — the apply-updates reconciler (status promotions + correction
       chains + `assertion_status_history` writes); guard + table exist, reconciler deferred (step 6).
       **PR #1 update**: real review decisions now exist (2001.06899 accepted; 2006.05880 = 287
       decisions staged in `runs/.../decisions.json`) — once a *reviewed* bundle is compiled, M4 has a
       real target beyond the `corrected_bundle` fixture.
+  - [ ] **M4 diff → failure-mode learning (2026-07-29, user's idea — do not lose).** The reconciler
+        already has to compute *what changed* between the extracted and the reviewed bundle. Keep
+        that diff as data, not as a transient step: it is **free labelled extraction error**,
+        corrected by physicists. Two uses: (a) derive a taxonomy of real failure modes instead of
+        guessed ones; (b) use each observed mode as a **detector** — sweep the corpus for other
+        assertions with the same shape and flag them, so one human review generalises.
+        **Economy**: this is the same machinery as the new system's user-editing stage ("what led to
+        this being wrong, and what else is wrong for the same reason"). Sourced from Gabriel's
+        review here, from a UI edit there. Build once, at M4.
+        **Caveat**: 1 accepted paper + 287 decisions is enough to build and demonstrate the
+        mechanism, **not** enough to claim a validated failure taxonomy. Say so in the write-up.

@@ -345,3 +345,28 @@ STRICT arrived in 3.37 and is a parse error even for `CREATE TABLE IF NOT EXISTS
 table. The workaround had been a hand-edited `schema.sql` living on the cluster — a fork that
 silently drifts from the real one every time the schema changes. Only per-column type enforcement is
 lost; every CHECK, foreign key and index still applies.
+
+## D-038 (2026-07-29) — final states are **parsed prose**, not compiled qualifiers; LLM reads, code names
+**Decision**: M3's signature step is (1) an **LLM parse** of the final-state label + evidence quote
+into structured `{object, count, comparator}` triples, then (2) a **deterministic serialization** of
+that structure into the canonical id (D-015). The LLM never writes the id string itself. Grouping
+related signatures (flavour hierarchy, `2e+MET` / `2μ+MET` → "2 same-flavour leptons + MET") is a
+**separate, later** LLM layer, not part of the parse.
+**Context**: the standing plan — compile signatures from `count` / `subchannel` qualifiers — rested
+on a description of the data that is **wrong**, and had been driving M3 planning since 2026-07-06.
+Measured against `hepkg.db`: **161** `result_has_final_state` assertions across all 60 papers;
+**zero** carry a `count` qualifier; 34% carry no qualifier at all; the ~15 that do encode
+multiplicity use ~6 invented key names. There is nothing to compile. Nor is there the assumed
+fan-out into object edges: the whole signature sits on **one** node as English prose
+("Exactly one lepton plus ≥4 b-tagged jets"). Prose is therefore the only available source, so
+reading it is the only possible mechanism.
+**Why the split**: **126 distinct labels out of 138** — coverage counting only works if two papers
+describing the same search reach the same id. A model asked to name the signature emits `1L+4b` once
+and `1lep_4bjet` the next, splitting the counts that the project's central claim rests on. Reading
+is what the model is good at; naming has to be consistent, so it is code's job. Same principle as
+D-034 and the faithful-base/LLM-layers architecture.
+**Scale**: 161 items — cheap enough to run several times and take the agreement rate as a free
+reliability number.
+**Consequence**: M3 is **on the critical path**, not deferred. Aggregate coverage questions are the
+backbone of the evaluation (the one place the KG structurally beats document retrieval), and none of
+them are answerable until signatures exist. `vault/ideas/final-state-representation.md` rewritten.

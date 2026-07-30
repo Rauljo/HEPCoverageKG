@@ -25,7 +25,7 @@
 |---|---|---|
 | **Bundle importer (milestone 1)** | **adopted (D-021..D-030)** | [bundle-importer-design.md](bundle-importer-design.md) — the durable build reference; M1 done |
 | Open vocabulary + batch reconciliation | discussed | [open-vocab-reconciliation.md](open-vocab-reconciliation.md) — the mechanism (D-016) and the **`aliases/` layer** over bundle entity_ids (D-025); Tier 1 built; vocab_policy still needs sign-off |
-| Final-state representation | discussed (open) | [final-state-representation.md](final-state-representation.md) — multiplicity composition; compile from `count`/`subchannel` qualifiers (signature field is empty). Blocks M3 |
+| **Final-state representation** | **discussed — rewritten 2026-07-29 (D-038)** | [final-state-representation.md](final-state-representation.md) — the old entry was **wrong**: no fan-out, and **no `count` qualifier exists**. The signature is one node of English prose; 126 distinct labels / 138. Fix = LLM parses prose → structure, code serialises the id; grouping is a separate later layer. **Blocks M3, which now blocks the evaluation** |
 | Neo4j migration | seed | Neo4j Community (local) as a projection from SQLite (D-022) — switch on ergonomics/visualization, not scale |
 
 ## Agents & reasoning (the payoff)
