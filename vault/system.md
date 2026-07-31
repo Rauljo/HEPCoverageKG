@@ -146,6 +146,74 @@ templates could not express" is a result either way it comes out.
 in the live system, only when the router abstained or the user asks to dig deeper — multi-agent
 overhead grows superlinearly (see [[literature]]) and most questions do not need two passes.
 
+#### S-29 (2026-07-31) — the model never handles entity ids; `search` saves a named set
+`search` stores its hits under a handle (`set_1`) and returns *"saved as set_1 (31 entities);
+pass set_1 as object_set -- do not retype the ids"*. Every id-taking tool accepts `object_set` /
+`entity_set` as well as explicit ids.
+**Why, measured on the first live runs.** Asked "how many analyses used Pythia?", the model:
+1. batched `search` and `count` in ONE round, so `count` was written before any ids existed, and it
+   **invented** `gen-223` → confident `{papers: 0}` → answered *"the graph records no analyses that
+   used Pythia"*. Truth: 58. The trace looked healthy — grounded, no errors, faithfulness clean,
+   because an answer with no numbers has nothing to check. **A wrong answer wearing a good trace.**
+2. told the ids were unknown, it corrected itself perfectly — right predicate, right ids — but wrote
+   the call as **text** rather than a structured call, so vLLM's parser missed it and the loop
+   recorded raw JSON as the final answer.
+3. the recovered text turned out to be **truncated at 6,521 characters**, mid-identifier: it had
+   looped writing ids until the token cap.
+Only there does the cause appear: **making a model retype 31 long identifiers**. 863 completion
+tokens for one call, every one a chance to mistype or invent.
+**Effect**: 122s → 6s, 863 → 139 completion tokens, 1 invented id → 0, answer wrong → **58 / 344 /
+367, exactly right, 100% grounded, 202 evidence quotes**. It also sequenced itself correctly without
+the batching guard firing, because "use the set name search gave you" implies waiting for search.
+**Kept as defence anyway**, all counted in the trace: invented ids rejected (`invented_ids`),
+text-mode calls parsed back out (`recovered_calls`), sets listed (`sets`). If the model reaches for
+raw ids again we will see it rather than infer it.
+**Unexpected second payoff**: the sets are the unit of *memory*. `set_1` survives compaction and
+survives a turn, so "how many of **those** also used Herwig?" has a real object to point at rather
+than prose to re-derive.
+
+#### S-30 (2026-07-31) — state describes the run; config carries the machinery
+Checkpointing forces the graph state to be **plain, serialisable data**. Learned three times in ten
+minutes when turning it on:
+- **undeclared keys vanish.** LangGraph keeps only the keys its schema names, so values passed
+  between nodes without being in the `TypedDict` are silently dropped — 29 tests failed at once.
+- **callables cannot be checkpointed.** `chat`, the tool executor and the tool schemas were in
+  state; every checkpoint tried to serialise a function. They belong in **config**, which is not
+  persisted.
+- **SDK objects cannot either.** Tool calls are normalised to `{id, name, arguments}` dicts and the
+  message to a plain string before entering state.
+Also: our trace dataclasses are **registered with the serialiser**. LangGraph deserialises
+unregistered types with a warning today and will *refuse* them in a future release — which would
+break resume silently and late.
+*The hand-rolled loop allowed all three, because nothing ever had to survive the process.*
+
+#### S-31 (2026-07-31) — context growth: compaction and recall, deferred until measurable
+One question already costs **11,902 prompt tokens over 3 rounds** against an 8,192 window, because
+each round re-sends everything before it. Two mechanisms, neither built yet:
+
+**Compaction, split by what a tool returns** — a first pass that proposed collapsing *everything*
+deterministically was wrong:
+| result | treatment |
+|---|---|
+| `search` → a set | deterministic collapse is **lossless**: the set holds the ids, so 31 rows become one line |
+| `describe` / `list` / `crosstab` | the rows **are** the content; a row count is useless |
+| the model's reasoning | keep — dense, and not reconstructable from a `Step` |
+| last 1–2 rounds | verbatim, always |
+*Trap*: the chat format requires an assistant `tool_calls` message be followed by `tool` messages
+with matching ids, so compaction rewrites content **in place** rather than deleting messages.
+
+**Recall instead of summarising, across questions.** Relevance across turns is long and sparse —
+question five rarely needs question two's rows, but occasionally needs exactly them. Summarising
+guesses wrong; carrying everything drowns. So: sets and question/answer pairs stay visible, and a
+`recall(query)` tool fetches the rest on demand. **The checkpointer is already the store** —
+`get_state_history()` per `thread_id`.
+*What LangGraph does NOT give*: search over that history, the tool itself, and — the one people
+assume — **any relief from context growth**. Checkpointing solves persistence, not pruning.
+**Deferred deliberately**: compaction quality is testable (same questions, compaction on and off,
+compare answers), and guessing a scheme before that exists is how the deterministic-everything
+version got proposed. Interim fix: raise `--max-model-len` to 32k — one flag, and the card has 97k
+of KV cache.
+
 #### S-27 (2026-07-30) — one planner, batched operations; hierarchy only under context pressure
 The agent is a **single planner** that emits a **batch of operations per round**, sees every result
 together, and plans again. One LLM call per round — not one per operation, and no separate
@@ -539,6 +607,18 @@ The contract milestones are not a detour from this system — they are its subst
 ---
 
 ## Changelog
+
+**v1.3 — 2026-07-31.** The query layer runs end to end against the real model and graph:
+*"How many analyses used Pythia?"* → **58 papers / 344 facts / 367 assertions**, matching ground
+truth exactly, 100% of claims grounded, 202 evidence quotes, 6 seconds. **280 tests.**
+**S-29** named result sets (the model never handles ids) · **S-30** state describes the run, config
+carries the machinery · **S-31** compaction and recall, designed and deliberately deferred.
+Built: `retrieve.py` (8,449 surface forms, hybrid rank-fusion, incremental cache shared with the
+aliases layer), `planner.py`, `verify.py` (mechanical faithfulness), `graph.py` (**S-16 fulfilled** —
+LangGraph orchestrates, LangChain deliberately not a dependency; checkpointing verified, 7
+checkpoints per run, diagram generated from the compiled graph).
+Hardware: **D-040** — one A100 on compute-gpu-0-1 fails with uncorrectable ECC on the first
+inference request; reproduced twice, reported, guarded against by bus id.
 
 **v1.2 — 2026-07-30.** Query layer began. **S-24** free-form escape hatch (the router may answer
 "no template fits", and the log of those *is* the specification for the next templates);

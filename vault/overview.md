@@ -1,12 +1,19 @@
 # Overview — current state
 
 *Living document: always reflects the present. History lives in `decisions.md` and `logs/`.*
-*Last updated: 2026-07-29*
+*Last updated: 2026-07-31*
 
-> **→ [`system.md`](system.md) (v1, 2026-07-29) is now the reference document for what gets built
+> **→ [`system.md`](system.md) (v1.3, 2026-07-31) is now the reference document for what gets built
 > next**: the query system and the agent layers on top of the graph, the evaluation design, the
 > technology stack, and the order of work (S-01 … S-22). Read it after this file.
 > The sections below still describe how the graph itself is built (M1 done, M2–M4 open).
+> **2026-07-31 — the query layer works end to end.** *"How many analyses used Pythia?"* returns
+> **58 papers / 344 facts / 367 assertions**, matching ground truth exactly, 100% grounded, 202
+> evidence quotes, 6 seconds. Built: `query/{schema_card,templates,retrieve,planner,verify,graph}.py`,
+> **280 tests**. The planner is a LangGraph state machine with checkpointing (S-16 fulfilled;
+> LangChain deliberately not a dependency). See [`logs/2026-07-31.md`](logs/2026-07-31.md).
+> One A100 on the cluster is failing with uncorrectable ECC (D-040) — serving TP=1 on a healthy card.
+>
 > **What changed on 2026-07-29**: the project's framing moved from *gap finding* to **coverage
 > review** — helping a physicist see what has been covered while reviewing or planning. Gap finding
 > is one use of that, now future work. **M3 became the critical path**: aggregate coverage questions
