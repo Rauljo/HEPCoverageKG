@@ -10,3 +10,9 @@ data/processed/*
 .DS_Store
 
 # Sync check: laptop -> GitHub -> DIAS (2026-07-28T22:48Z)
+
+# Backups of .env -- the original is ignored, and so must its copies be.
+# "git add -A" swept .env.bak into commit 1bf7723 on 2026-07-31 because only
+# ".env" was listed here.
+.env.*
+!.env.example
