@@ -169,10 +169,22 @@ TOOL_SPECS: list[dict] = [
                 "text": {"type": "string", "description": "the answer, citing what was retrieved"},
                 "answerable": {
                     "type": "boolean",
-                    "description": "false if the graph does not hold what was asked",
+                    "description": "false if you cannot answer from this graph",
+                },
+                "reason": {
+                    "type": "string",
+                    "enum": ["answered", "not_in_graph", "out_of_scope"],
+                    "description": (
+                        "answered: the rows support an answer. "
+                        "not_in_graph: the question IS about these physics papers, but the "
+                        "graph does not record it -- you must search before claiming this. "
+                        "out_of_scope: the question is not about high-energy-physics papers "
+                        "at all (chemistry, general knowledge, the weather), so there is "
+                        "nothing here to search for."
+                    ),
                 },
             },
-            "required": ["text", "answerable"],
+            "required": ["text", "answerable", "reason"],
         },
     },
 ]
@@ -192,12 +204,34 @@ class Step:
 
 
 @dataclass
+class Thought:
+    """What the planner said before acting, in one round.
+
+    Models emit reasoning alongside their tool calls, and discarding it throws
+    away the only record of WHY a chain was chosen. Two things need it: debugging
+    a wrong answer (was the plan bad, or the execution?), and the evaluation,
+    where "did it understand the question" is a different failure from "did it
+    pick the right tool".
+    """
+
+    round: int
+    text: str
+    tools_called: list[str] = field(default_factory=list)
+
+
+@dataclass
 class Session:
     """A whole question, and every measurable thing about answering it."""
 
     question: str
     answer: str = ""
     answerable: bool = True
+    # "answered" | "not_in_graph" | "out_of_scope".
+    # The last two are different kinds of no, and conflating them would ruin the
+    # signal this project produces: "no HEP paper here covers that" is COVERAGE
+    # INFORMATION, while "that is not physics" is just the wrong tool. Only the
+    # first is a fact about the literature.
+    reason: str = "answered"
     steps: list[Step] = field(default_factory=list)
     rounds: int = 0
     llm_calls: int = 0
@@ -206,6 +240,9 @@ class Session:
     seconds: float = 0.0
     evidence_ids: list[str] = field(default_factory=list)
     stopped_because: str = ""
+
+    thoughts: list[Thought] = field(default_factory=list)
+    nudged: bool = False
 
     # Every literal value that came back from a tool, for the faithfulness check
     # (S-14). Accumulated as results arrive rather than reconstructed afterwards:
@@ -221,12 +258,38 @@ class Session:
     def errors(self) -> int:
         return sum(1 for s in self.steps if s.error)
 
+    @property
+    def grounded_in_tools(self) -> bool:
+        """Did anything get retrieved before the answer was given?
+
+        False means the answer came from the model, not the graph -- which is a
+        distinct failure from being wrong, and one the faithfulness check would
+        only catch if the answer happened to contain a checkable number.
+        """
+        return any(not s.error for s in self.steps)
+
+    @property
+    def tool_usage(self) -> dict[str, int]:
+        """How often each tool was called.
+
+        Aggregated across a question set this is a direct read on whether the
+        model understands the toolkit: a planner that only ever calls `search`
+        and `count` has not grasped that the graph can be walked, and one that
+        never calls `quotes` is answering without checking its evidence. Tool
+        choice is diagnosable in a way that answer quality alone is not.
+        """
+        usage: dict[str, int] = {}
+        for step in self.steps:
+            usage[step.tool] = usage.get(step.tool, 0) + 1
+        return dict(sorted(usage.items(), key=lambda kv: -kv[1]))
+
     def to_jsonl(self) -> str:
         """One line per session, for the trace log (S-22)."""
         return json.dumps({
             "question": self.question,
             "answer": self.answer,
             "answerable": self.answerable,
+            "reason": self.reason,
             "rounds": self.rounds,
             "llm_calls": self.llm_calls,
             "tool_calls": self.tool_calls,
@@ -236,6 +299,11 @@ class Session:
             "seconds": round(self.seconds, 2),
             "evidence_ids": self.evidence_ids,
             "stopped_because": self.stopped_because,
+            "tool_usage": self.tool_usage,
+            "grounded_in_tools": self.grounded_in_tools,
+            "nudged": self.nudged,
+            "thoughts": [{"round": t.round, "text": t.text, "tools": t.tools_called}
+                         for t in self.thoughts],
             "steps": [
                 {"round": s.round, "tool": s.tool, "args": s.args, "rows": s.rows,
                  "error": s.error, "seconds": round(s.seconds, 4)}
@@ -320,7 +388,7 @@ def build_executor(conn, index) -> Callable[[str, dict], Any]:
         if tool == "crosstab":
             return templates.crosstab(conn, args["predicate_a"], args["predicate_b"])
         if tool == "quotes":
-            return templates.trace(conn, args["assertion_id"])
+            return templates.quotes(conn, args["assertion_id"])
         raise ValueError(f"unknown tool: {tool}")
 
     return run
@@ -401,15 +469,47 @@ def answer(
         calls = list(getattr(message, "tool_calls", None) or [])
 
         if not calls:
-            # Answered in prose instead of calling `answer`. Accept it rather
-            # than burn a round correcting form over substance.
+            # Answered in prose instead of calling a tool.
+            #
+            # If NOTHING has been retrieved yet, this is the failure the whole
+            # project is built to prevent: an answer from the model's own
+            # knowledge of physics rather than from this corpus. It reads as
+            # authoritative and a domain expert would not blink at it.
+            #
+            # Even "the graph does not contain this" has to be ESTABLISHED by
+            # looking. An abstention that was assumed rather than checked is a
+            # guess wearing the costume of caution.
+            #
+            # So: nudge once, then accept and flag. A second refusal is a
+            # finding, not something to keep spending rounds on.
+            if not session.steps and not session.nudged:
+                session.nudged = True
+                messages.append({
+                    "role": "user",
+                    "content": (
+                        "You have not retrieved anything yet. Answer only from this graph, "
+                        "never from your own knowledge of physics. Use the tools to look, "
+                        "then answer -- including to establish that the graph does not "
+                        "contain what was asked."
+                    ),
+                })
+                continue
+
             session.answer = (message.content or "").strip()
-            session.stopped_because = "answered without calling answer()"
+            session.stopped_because = ("answered from memory, no tool calls"
+                                       if not session.steps
+                                       else "answered without calling answer()")
             break
 
         if len(calls) > max_places:
             logger.info(f"round {round_no}: {len(calls)} calls capped to {max_places}")
             calls = calls[:max_places]
+
+        reasoning = (message.content or "").strip()
+        if reasoning:
+            session.thoughts.append(Thought(
+                round=round_no, text=reasoning,
+                tools_called=[c.function.name for c in calls]))
 
         messages.append({
             "role": "assistant",
@@ -434,9 +534,37 @@ def answer(
                 continue
 
             if name == "answer":
+                claimed = str(args.get("reason", "answered"))
+                # ONE RULE: look before answering, whatever the reason.
+                #
+                # An earlier version exempted `out_of_scope`, on the grounds
+                # that a chemistry question has nothing to check against a HEP
+                # corpus. True, but it made "not physics" a **cheap exit** -- a
+                # verdict that skips all work -- and a model offered a free way
+                # out will sometimes take it for questions that were perfectly
+                # answerable. Detecting a wrong out_of_scope claim would itself
+                # require searching, so the exemption removed the only evidence
+                # that could have contradicted it.
+                #
+                # The exemption bought one LLM call on absurd questions, which
+                # are near-absent from a physics question set. `reason` is still
+                # recorded -- it separates a real coverage gap from a wrong-tool
+                # question -- it just no longer buys a skip.
+                if not session.steps and not session.nudged:
+                    session.nudged = True
+                    messages.append({"role": "tool", "tool_call_id": call.id, "content": (
+                        "You have not retrieved anything yet. Search first, then answer. "
+                        "This applies even when you expect to find nothing: 'no paper here "
+                        "covers that' is a claim about the literature and has to be checked. "
+                        "If the question is not about high-energy-physics papers at all, "
+                        "search anyway (it costs nothing) and then answer with "
+                        "reason='out_of_scope'.")})
+                    continue
+
                 session.answer = str(args.get("text", "")).strip()
                 session.answerable = bool(args.get("answerable", True))
-                session.stopped_because = "answered"
+                session.reason = claimed
+                session.stopped_because = f"answered ({claimed})"
                 finished = True
                 break
 

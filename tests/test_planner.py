@@ -86,11 +86,18 @@ def index(conn):
 # -- the loop --------------------------------------------------------------
 
 def test_answer_tool_ends_the_loop(conn, index):
-    chat = scripted(_response([_call("answer", {"text": "42 papers.", "answerable": True})]))
+    """Answering ends the loop -- but only after something has been retrieved,
+    since an answer with no lookup behind it is the failure this guards."""
+    chat = scripted(
+        _response([_call("search", {"text": "Pythia"})]),
+        _response([_call("answer", {"text": "42 papers.", "answerable": True,
+                                    "reason": "answered"})]),
+    )
     s = planner.answer(conn, index, "how many?", chat=chat)
     assert s.answer == "42 papers."
-    assert s.rounds == 1
-    assert s.stopped_because == "answered"
+    assert s.rounds == 2
+    assert s.reason == "answered"
+    assert s.nudged is False, "it looked first, so no nudge was needed"
 
 
 def test_several_calls_run_in_one_round(conn, index):
@@ -147,14 +154,6 @@ def test_malformed_arguments_are_survivable(conn, index):
     s = planner.answer(conn, index, "q", chat=chat)
     assert s.steps[0].error == "bad_arguments"
     assert s.answer == "ok"
-
-
-def test_prose_answer_without_the_tool_is_accepted(conn, index):
-    """Form is not worth burning a round on."""
-    chat = scripted(_response(content="The graph holds 3 analyses."))
-    s = planner.answer(conn, index, "q", chat=chat)
-    assert "3 analyses" in s.answer
-    assert "without calling" in s.stopped_because
 
 
 def test_abstention_is_recorded_not_treated_as_failure(conn, index):
@@ -231,3 +230,114 @@ def test_system_prompt_has_both_variants(conn):
     small = planner.system_prompt(conn, minimal=True)
     assert len(small) < len(full)
     assert "PREDICATES" in full and "PREDICATES" in small, "schema card is in both"
+
+
+def test_answer_without_any_retrieval_is_nudged_once(conn, index):
+    """The failure the project exists to prevent: answering from the model's own
+    knowledge of physics rather than from this corpus."""
+    chat = scripted(
+        _response(content="Pythia is a parton shower generator."),   # from memory
+        _response([_call("search", {"text": "Pythia"})]),            # complies
+        _response([_call("answer", {"text": "3 analyses.", "answerable": True})]),
+    )
+    s = planner.answer(conn, index, "q", chat=chat)
+    assert s.nudged is True
+    assert s.grounded_in_tools is True
+    assert s.answer == "3 analyses."
+
+
+def test_persistent_memory_answer_is_accepted_but_flagged(conn, index):
+    """A second refusal is a finding, not something to spend more rounds on."""
+    chat = scripted(_response(content="It is a parton shower generator."))
+    s = planner.answer(conn, index, "q", chat=chat)
+    assert s.nudged is True
+    assert s.grounded_in_tools is False
+    assert "from memory" in s.stopped_because
+
+
+def test_abstention_must_also_be_established_by_looking(conn, index):
+    """An abstention that was assumed rather than checked is a guess wearing the
+    costume of caution -- so it gets nudged too."""
+    chat = scripted(
+        _response(content="The graph does not contain that."),
+        _response([_call("search", {"text": "x"})]),
+        _response([_call("answer", {"text": "Not recorded.", "answerable": False})]),
+    )
+    s = planner.answer(conn, index, "q", chat=chat)
+    assert s.nudged and s.grounded_in_tools
+    assert s.answerable is False
+
+
+def test_prose_answer_after_real_work_is_not_flagged(conn, index):
+    """Only the ungrounded case is suspicious; format alone is not."""
+    chat = scripted(
+        _response([_call("search", {"text": "Pythia"})]),
+        _response(content="Three analyses used it."),
+    )
+    s = planner.answer(conn, index, "q", chat=chat)
+    assert s.grounded_in_tools is True
+    assert "from memory" not in s.stopped_because
+
+
+def test_tool_usage_is_tallied(conn, index):
+    chat = scripted(
+        _response([_call("search", {"text": "a"}, "c1"), _call("search", {"text": "b"}, "c2")]),
+        _response([_call("answer", {"text": "x", "answerable": True})]),
+    )
+    assert planner.answer(conn, index, "q", chat=chat).tool_usage == {"search": 2}
+
+
+def test_reasoning_is_recorded_per_round(conn, index):
+    chat = scripted(
+        _response([_call("search", {"text": "a"})], content="First I will search."),
+        _response([_call("answer", {"text": "x", "answerable": True})], content="Enough."),
+    )
+    s = planner.answer(conn, index, "q", chat=chat)
+    assert [t.text for t in s.thoughts] == ["First I will search.", "Enough."]
+    assert s.thoughts[0].tools_called == ["search"]
+
+
+def test_out_of_scope_is_not_a_cheap_exit(conn, index):
+    """`out_of_scope` must not skip the work.
+
+    Exempting it would make "not physics" a free verdict, and a model offered a
+    free way out will take it for questions that were answerable. Detecting a
+    wrong claim would itself require searching -- so the exemption removes the
+    only evidence that could contradict it.
+    """
+    chat = scripted(
+        _response([_call("answer", {"text": "Not physics.",
+                                    "answerable": False, "reason": "out_of_scope"})]),
+        _response([_call("search", {"text": "boiling point"})]),
+        _response([_call("answer", {"text": "This graph only covers ATLAS/CMS papers.",
+                                    "answerable": False, "reason": "out_of_scope"})]),
+    )
+    s = planner.answer(conn, index, "boiling point of water?", chat=chat)
+    assert s.nudged is True, "even out_of_scope must look first"
+    assert s.grounded_in_tools is True
+    assert s.reason == "out_of_scope", "the label survives -- only the skip is gone"
+
+
+def test_not_in_graph_must_be_established_by_looking(conn, index):
+    """'No HEP paper covers that' is a claim about the LITERATURE, and is the
+    project's actual output -- so it cannot be asserted without checking."""
+    chat = scripted(
+        _response([_call("answer", {"text": "Not recorded.",
+                                    "answerable": False, "reason": "not_in_graph"})]),
+        _response([_call("search", {"text": "jet tunes"})]),
+        _response([_call("answer", {"text": "No analysis records tunes.",
+                                    "answerable": False, "reason": "not_in_graph"})]),
+    )
+    s = planner.answer(conn, index, "which jet tunes were used?", chat=chat)
+    assert s.nudged is True
+    assert s.grounded_in_tools is True, "it searched before concluding absence"
+    assert s.reason == "not_in_graph"
+
+
+def test_the_two_kinds_of_no_are_distinguishable_in_the_trace(conn, index):
+    """Conflating them would pollute the coverage signal."""
+    import json as _json
+    out = _json.loads(planner.answer(conn, index, "q", chat=scripted(_response(
+        [_call("answer", {"text": "x", "answerable": False,
+                          "reason": "out_of_scope"})]))).to_jsonl())
+    assert out["reason"] == "out_of_scope" and out["answerable"] is False

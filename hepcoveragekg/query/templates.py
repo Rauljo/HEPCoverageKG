@@ -392,13 +392,18 @@ def crosstab(conn, predicate_a: str, predicate_b: str) -> QueryResult:
     )
 
 
-def trace(conn, assertion_id: str) -> QueryResult:
-    """Where one fact came from. Delegates to the M2 implementation."""
+def quotes(conn, assertion_id: str) -> QueryResult:
+    """Where one fact came from -- the verbatim sentence, its section, its paper.
+
+    Called `quotes` everywhere in this layer. It wraps M2's `trace_assertion`,
+    which keeps its own name in `kg/queries.py` because that is the contract's
+    milestone -- but there is one name on this side of the boundary.
+    """
     from hepcoveragekg.kg import queries
 
     traced: Any = queries.trace_assertion(conn, assertion_id)
     return QueryResult(
-        shape="trace",
+        shape="quotes",
         rows=[traced] if traced else [],
         params=(assertion_id,),
         evidence_ids=[e["evidence_id"] for e in (traced or {}).get("evidence", [])
@@ -418,7 +423,7 @@ PRIMITIVES = {
     "subjects_of": subjects_of,  # object  -> subjects       (backward hop)
     "papers_of": papers_of,      # entities -> papers        (terminal)
     "count": count,              # -> numbers                (terminal)
-    "quotes": trace,             # fact -> evidence          (terminal)
+    "quotes": quotes,             # fact -> evidence          (terminal)
 }
 
 CONVENIENCES = {
@@ -427,4 +432,4 @@ CONVENIENCES = {
     "crosstab": crosstab,        # self-join on shared subject
 }
 
-SHAPES = {**PRIMITIVES, **CONVENIENCES, "trace": trace}
+SHAPES = {**PRIMITIVES, **CONVENIENCES}

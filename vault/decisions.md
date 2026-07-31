@@ -399,3 +399,31 @@ at all** — not a small one for smoke tests, not the 72B. Job 48122 sits queued
 planner loop (tested against an injected `chat`), and the faithfulness check all run without a GPU.
 What is blocked is verifying the **wire format** — that a real vLLM server emits tool calls our
 schemas accept — which scripted tests cannot cover because they use a fake response object.
+
+## D-040 (2026-07-31) — one A100 on compute-gpu-0-1 is faulty; serve on a single card and refuse it
+**Finding**: GPU `00000000:CA:00.0` fails with `uncorrectable ECC error encountered` on the **first
+inference request**, killing the vLLM engine. Reproduced twice — jobs **48125** (5:45) and **48128**
+(5:23), both at `rank=1`, both allocations including that card.
+| | |
+|---|---|
+| uncorrectable ECC since the 15:30 reboot | **27** |
+| uncorrectable ECC, aggregate | **805** |
+| remapped rows, uncorrectable | 8 |
+| **remapped rows, failure** | **1** |
+
+The other two cards (`17:00.0`, `65:00.0`) show **zero** errors and zero remapped rows.
+`remapped_rows.failure=1` with `pending=0` is the decisive reading: the card attempted to retire a
+bad memory row and **could not**, and nothing is queued awaiting a reset — so a reboot cannot fix it
+(and did not; the node rebooted at 15:30 and the card failed again at 17:00 and 17:13).
+**Decision**: serve with **TP=1** (AWQ weights are ~39GB, comfortably inside one 80GB card, leaving
+~35GB of KV cache), and **refuse to start on the bad card** — checked by **bus id**, since Slurm
+renumbers visible devices per job so an index means nothing inside an allocation. Exit 75
+(EX_TEMPFAIL) so a bad draw costs ten seconds rather than a five-minute load followed by a crash.
+**Why not TP=2**: it takes two of three cards, so it is *likely* to include the faulty one — it did,
+both times. TP=1 makes a healthy draw the common case. Revert to TP=2 for throughput once the card
+is out of service.
+**Not caused by us**: software cannot produce uncorrectable ECC errors, and eight already-retired
+rows are a long-term degradation. Heavy sustained use (72B at 0.90 utilisation for 24h) *exposed* a
+latent fault rather than creating one. Reported to the cluster admin.
+**No silent corruption risk**: uncorrectable means *detected*, and CUDA aborts rather than returning
+wrong values. The 2026-07-29/30 Qwen trial results stand.

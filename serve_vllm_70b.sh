@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH -p GPU
-#SBATCH --gres=gpu:a100:2
+#SBATCH --gres=gpu:a100:1
 #SBATCH --job-name=vllm-qwen72b
 #SBATCH --output=/home/xucabrjs/hepcoveragekg_setup/logs/vllm72b_%j.out
 #SBATCH --time=24:00:00
@@ -23,11 +23,16 @@
 #       other paths too.
 #   GPU / compute-gpu-0-1 : 3x real A100 80GB, no MIG. This is the one to use.
 #
-# Why AWQ rather than fp16: 72B fp16 is ~145GB of weights, and TP must divide
-# the 64 attention heads, so TP=3 is invalid -- leaving TP=2 on 160GB, which
-# fits the weights but leaves almost nothing for KV cache. AWQ is ~40GB, so TP=2
-# leaves ~120GB of cache and much higher throughput, for a 1-2% quality cost
-# that a binary same/different judgement will not notice.
+# Why AWQ rather than fp16: 72B fp16 is ~145GB of weights and would need at
+# least two cards. AWQ is ~39GB, which fits on ONE 80GB A100 with ~35GB left for
+# KV cache.
+#
+# Why TP=1 rather than TP=2 (changed 2026-07-31): one of the three A100s is
+# faulty, so TP=2 takes two of three cards and is very likely to include it --
+# it did, twice. TP=1 draws one card, so a healthy allocation is the common case
+# rather than the lucky one, and the check below turns a bad draw into a
+# ten-second exit instead of a five-minute crash. Revert to TP=2 for throughput
+# once the bad card is out of service.
 #
 # Why a bigger model at all: the 8B was measured to answer "are these related?"
 # rather than "are these the same?" -- it merged 8 distinct SMEFT Wilson
@@ -71,6 +76,29 @@ echo "--- allocated GPUs ---"
 nvidia-smi --query-gpu=index,pci.bus_id,name,memory.total,ecc.errors.uncorrected.volatile.total,ecc.errors.uncorrected.aggregate.total --format=csv
 nvidia-smi --query-remapped-rows=gpu_bus_id,remapped_rows.uncorrectable,remapped_rows.failure --format=csv
 echo "CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-unset}"
+
+# Refuse a known-bad card immediately.
+#
+# 00000000:CA:00.0 on compute-gpu-0-1 fails with "uncorrectable ECC error
+# encountered" on the FIRST inference request -- reproduced twice (48125, 48128),
+# both times ~5 minutes in. Without this check a bad draw costs a full model load
+# and then dies mid-request; with it, the job exits in seconds and can be
+# resubmitted onto a different card.
+#
+# Checked by BUS ID, not by index: Slurm renumbers visible devices per job, so
+# "GPU 2" means nothing inside the allocation. The bus id is stable.
+BAD_GPUS="00000000:CA:00.0"
+for bus in $(nvidia-smi --query-gpu=pci.bus_id --format=csv,noheader); do
+    for bad in ${BAD_GPUS}; do
+        if [ "${bus}" = "${bad}" ]; then
+            echo "REFUSING TO START: allocated known-faulty GPU ${bus}"
+            echo "  (uncorrectable ECC, remapped_rows.failure=1 -- see vault D-040)"
+            echo "  resubmit; with 3 cards there is a good chance of a healthy draw."
+            exit 75   # EX_TEMPFAIL: transient, worth retrying
+        fi
+    done
+done
+echo "GPU health check passed"
 echo "----------------------"
 
 # Credentials come from .env (gitignored), never hardcoded here.
@@ -90,7 +118,7 @@ apptainer exec --nv \
     vllm serve "${MODEL}" \
     --host 0.0.0.0 --port "${PORT}" \
     --api-key "${LLM_API_KEY}" \
-    --tensor-parallel-size 2 \
+    --tensor-parallel-size 1 \
     --max-model-len 8192 \
     --gpu-memory-utilization 0.90 \
     --enable-auto-tool-choice \
