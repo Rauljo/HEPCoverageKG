@@ -1,0 +1,15 @@
+# Streamlit ships usage telemetry on by default. Off here: this page shows
+# unpublished research and the questions asked of it are themselves data.
+[browser]
+gatherUsageStats = false
+
+# Bind to localhost only. The default binds every interface, and the startup
+# banner cheerfully prints a public URL -- on a university network that is an
+# unpublished knowledge graph on the open internet. Use an SSH tunnel to show
+# it to anyone else.
+[server]
+address = "localhost"
+headless = true
+
+[theme]
+base = "light"

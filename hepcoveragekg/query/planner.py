@@ -578,6 +578,71 @@ def _client():
     ), os.environ.get("LLM_MODEL_NAME", "Qwen/Qwen2.5-72B-Instruct-AWQ")
 
 
+def _prepare(conn, index, question, max_rounds, max_places, max_rows,
+             minimal_prompt, chat, thread_id):
+    """The state and runtime config a run needs. Shared by answer() and stream()."""
+    session = Session(question=question)
+    if chat is None:
+        client, model = _client()
+
+        def chat(msgs, tls):  # noqa: E306
+            return client.chat.completions.create(
+                model=model, messages=msgs, tools=tls, temperature=0.0)
+
+    state = {
+        "question": question,
+        "messages": [
+            {"role": "system", "content": system_prompt(conn, minimal_prompt)},
+            {"role": "user", "content": question},
+        ],
+        "session": session,
+        "round": 0,
+        "max_rounds": max_rounds,
+        "max_places": max_places,
+        "max_rows": max_rows,
+    }
+    runtime = {
+        "thread_id": thread_id,
+        "chat": chat,
+        "execute": build_executor(conn, index, session.sets),
+        "tools": [{"type": "function", "function": spec} for spec in TOOL_SPECS],
+    }
+    config = {"configurable": runtime, "recursion_limit": max_rounds * 3 + 6}
+    return session, state, config
+
+
+def stream(
+    conn,
+    index,
+    question: str,
+    max_rounds: int = DEFAULT_MAX_ROUNDS,
+    max_places: int = DEFAULT_MAX_PLACES,
+    max_rows: int = DEFAULT_MAX_ROWS,
+    minimal_prompt: bool = False,
+    chat: Optional[Callable] = None,
+    checkpointer: Any = None,
+    thread_id: str = "default",
+):
+    """Yield `(node_name, session)` after each node completes.
+
+    The same run as `answer()`, surfaced step by step. Exists so a UI can show
+    what the system is doing while it does it -- which for a non-technical
+    reader is the difference between a spinner and an explanation.
+    """
+    from hepcoveragekg.query import graph as graph_module
+
+    session, state, config = _prepare(conn, index, question, max_rounds,
+                                      max_places, max_rows, minimal_prompt,
+                                      chat, thread_id)
+    started = time.perf_counter()
+    app = graph_module.build(checkpointer=checkpointer)
+    for update in app.stream(state, config=config, stream_mode="updates"):
+        for node_name in update:
+            session.seconds = time.perf_counter() - started
+            yield node_name, session
+    session.seconds = time.perf_counter() - started
+
+
 def answer(
     conn,
     index,
@@ -605,44 +670,11 @@ def answer(
     """
     from hepcoveragekg.query import graph as graph_module
 
-    session = Session(question=question)
     started = time.perf_counter()
-
-    if chat is None:
-        client, model = _client()
-
-        def chat(msgs, tls):  # noqa: E306
-            return client.chat.completions.create(
-                model=model, messages=msgs, tools=tls, temperature=0.0
-            )
-
-    app = graph_module.build(checkpointer=checkpointer)
-    state = {
-        "question": question,
-        "messages": [
-            {"role": "system", "content": system_prompt(conn, minimal_prompt)},
-            {"role": "user", "content": question},
-        ],
-        "session": session,
-        "round": 0,
-        "max_rounds": max_rounds,
-        "max_places": max_places,
-        "max_rows": max_rows,
-    }
-    # Callables go in config, not state: state is serialised at every
-    # checkpoint and functions do not serialise.
-    runtime = {
-        "thread_id": thread_id,
-        "chat": chat,
-        "execute": build_executor(conn, index, session.sets),
-        "tools": [{"type": "function", "function": spec} for spec in TOOL_SPECS],
-    }
-    # recursion_limit must exceed the node visits a full run makes: each round is
-    # plan+execute, plus a possible nudge and the finish node.
-    app.invoke(state, config={
-        "configurable": runtime,
-        "recursion_limit": max_rounds * 3 + 6,
-    })
+    session, state, config = _prepare(conn, index, question, max_rounds,
+                                      max_places, max_rows, minimal_prompt,
+                                      chat, thread_id)
+    graph_module.build(checkpointer=checkpointer).invoke(state, config=config)
 
     session.seconds = time.perf_counter() - started
     return session

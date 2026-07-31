@@ -39,3 +39,7 @@ pytest==9.1.1
 # LangChain itself is deliberately NOT a dependency.
 langgraph>=1.2
 langgraph-checkpoint-sqlite>=3.1
+
+# Demo page (app.py). Streamlit renders DOT natively, so the planner graph is
+# drawn without a CDN and works offline on the cluster.
+streamlit>=1.40
