@@ -44,6 +44,29 @@ DEFAULT_MAX_ROUNDS = 6
 DEFAULT_MAX_PLACES = 8
 DEFAULT_MAX_ROWS = 25
 
+# How many distinct entities a `search` returns. NOT exposed to the model.
+#
+# It used to be, and that is a decision a model should not be making: breadth
+# decides correctness here. `concept("Pythia", limit=6)` yields 45 papers;
+# limit=60 yields 58, the true answer. A model economising on breadth produces a
+# wrong answer with a *clean* trace -- it searched, it got results, nothing looks
+# amiss.
+#
+# The value below is a considered default, NOT a measured one, and the measured
+# thing is that no single value can be right. Relative-score cutoffs behave
+# completely differently by concept:
+#   "Pythia"      rank 20 scores 50% of the best hit and is still a real Pythia
+#   "top squark"  rank 20 scores 71% and is already "single top" -- a different
+#                 particle entirely
+# A narrow concept with many spellings and a broad phrase that brushes many
+# neighbours cannot share a threshold. 60 is set to cover the observed concept
+# sizes (Pythia 31 clusters, b-jet 47, jet energy scale 109) while stopping the
+# broad ones running to 192.
+#
+# Tuning this is a job for the question set: sweep it, and see which questions
+# change answer. Guessing harder now would only look like rigour.
+SEARCH_BREADTH = 60
+
 # Sent when the model tries to answer having retrieved nothing. Shared with
 # graph.py so the two cannot drift apart.
 NUDGE = (
@@ -80,7 +103,6 @@ TOOL_SPECS: list[dict] = [
             "properties": {
                 "text": {"type": "string", "description": "what to look for, in words"},
                 "kind": {"type": "string", "description": "optional: restrict to one entity kind"},
-                "limit": {"type": "integer", "description": "how many distinct entities (default 50)"},
             },
             "required": ["text"],
         },
@@ -512,7 +534,8 @@ def build_executor(conn, index, sets: Optional[dict] = None) -> Callable[[str, d
 
     def run(tool: str, args: dict):
         if tool == "search":
-            limit = int(args.get("limit", 50))
+            # The model may not narrow this; see SEARCH_BREADTH.
+            limit = SEARCH_BREADTH
             hits = retrieve.search(index, args["text"], conn=conn,
                                    kind=args.get("kind"), limit=limit)
             ids = retrieve.concept(index, args["text"], conn=conn,

@@ -482,3 +482,22 @@ def test_set_reference_is_not_treated_as_an_invented_id(conn, index):
     )
     s = planner.answer(conn, index, "q", chat=chat)
     assert s.invented_ids == []
+
+
+def test_search_breadth_is_not_the_models_decision(conn, index):
+    """Breadth decides correctness: concept("Pythia", limit=6) gives 45 papers,
+    limit=60 gives 58. A model economising on breadth produces a wrong answer
+    with a clean trace, so the choice is taken away from it."""
+    spec = next(t for t in planner.TOOL_SPECS if t["name"] == "search")
+    assert "limit" not in spec["parameters"]["properties"], \
+        "the model must not be able to narrow the search"
+
+
+def test_a_limit_argument_is_ignored_if_one_arrives(conn, index):
+    """Models pass arguments that are not in the schema. It must not take."""
+    chat = scripted(
+        _response([_call("search", {"text": "Pythia", "limit": 1})]),
+        _response([_call("answer", {"text": "x", "answerable": True, "reason": "answered"})]),
+    )
+    s = planner.answer(conn, index, "q", chat=chat)
+    assert not any(st.error for st in s.steps), "an extra argument must not break the call"
