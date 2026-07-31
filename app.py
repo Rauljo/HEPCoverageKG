@@ -205,6 +205,29 @@ if question:
                    "about what the literature covers." if session.reason == "not_in_graph"
                    else "This question is outside what these papers cover.")
 
+    # -- the graph it was built from -------------------------------------
+    #
+    # The entities behind the answer, drawn. This is the read-only ancestor of
+    # the user subgraph in system.md 2.4, and for a non-technical reader it is
+    # the most convincing artefact on the page: it shows the answer standing on
+    # named things in the literature rather than on the model's memory.
+    from hepcoveragekg.query import subgraph as SG
+
+    all_ids = sorted({i for ids in session.sets.values() for i in ids})
+    if all_ids:
+        sg = SG.build(conn, all_ids)
+        if sg.nodes:
+            caption = f"{len(sg.nodes)} of {len(sg.nodes) + sg.omitted_nodes} entities"
+            with st.expander(f"🕸️ What the answer is built on — {caption}",
+                             expanded=not show_detail):
+                st.graphviz_chart(SG.to_dot(sg))
+                st.caption(
+                    "Red outline = matched your question. Others = what they connect to. "
+                    "Entities merged by deduplication are drawn once, with their spelling "
+                    "count." +
+                    (f" {sg.omitted_nodes} less-connected entities omitted to keep this "
+                     "readable." if sg.omitted_nodes else ""))
+
     # -- the evidence ----------------------------------------------------
     rows = quote_rows(conn, session.evidence_ids)
     if rows:

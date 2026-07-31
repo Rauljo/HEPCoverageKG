@@ -27,6 +27,15 @@
 # least two cards. AWQ is ~39GB, which fits on ONE 80GB A100 with ~35GB left for
 # KV cache.
 #
+# Why 32k context (changed 2026-07-31): 8192 was too small. ONE question already
+# cost 11,902 prompt tokens across three rounds, because every round re-sends the
+# whole conversation, and a six-round question or a follow-up would overflow. The
+# cost is concurrency, not memory -- the KV cache is fixed by
+# gpu-memory-utilization, so a longer per-request cap simply means fewer requests
+# in flight: ~97k cache / 32k = ~3 concurrent instead of ~12. Fine for one person
+# debugging; revisit before batch evaluation, where TP=2 (~320k cache) buys the
+# concurrency back.
+#
 # Why TP=1 rather than TP=2 (changed 2026-07-31): one of the three A100s is
 # faulty, so TP=2 takes two of three cards and is very likely to include it --
 # it did, twice. TP=1 draws one card, so a healthy allocation is the common case
@@ -133,7 +142,7 @@ apptainer exec --nv \
     --host 0.0.0.0 --port "${PORT}" \
     --api-key "${LLM_API_KEY}" \
     --tensor-parallel-size 1 \
-    --max-model-len 8192 \
+    --max-model-len 32768 \
     --gpu-memory-utilization 0.90 \
     --enable-auto-tool-choice \
     --tool-call-parser hermes
