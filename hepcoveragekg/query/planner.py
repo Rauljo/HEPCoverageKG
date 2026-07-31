@@ -35,6 +35,7 @@ import os
 import re
 import time
 from dataclasses import dataclass, field
+from types import SimpleNamespace
 from typing import Any, Callable, Optional
 
 logger = logging.getLogger(__name__)
@@ -50,9 +51,11 @@ TOOL_SPECS: list[dict] = [
     {
         "name": "search",
         "description": (
-            "Turn words into entity ids. ALWAYS the first step: every other tool takes ids, "
-            "not text. Returns the whole set a concept covers -- asking about 'Pythia' returns "
-            "all 56 Pythia entities, because the graph holds one per version and tune."
+            "Find the entities a concept covers, and SAVE them under a short name you can "
+            "reuse. ALWAYS the first step. Returns something like 'saved as set_1 (31 "
+            "entities)'; pass set_1 to other tools as `object_set` or `entity_set` instead of "
+            "listing ids. Asking about 'Pythia' finds all of them at once, because the graph "
+            "holds one entity per version and tune."
         ),
         "parameters": {
             "type": "object",
@@ -73,7 +76,10 @@ TOOL_SPECS: list[dict] = [
         "parameters": {
             "type": "object",
             "properties": {
-                "entity_ids": {"type": "array", "items": {"type": "string"}},
+                "entity_ids": {"type": "array", "items": {"type": "string"},
+                    "description": "explicit ids; prefer entity_set"},
+                "entity_set": {"type": "string",
+                    "description": "a set name returned by search, e.g. set_1"},
                 "predicate": {"type": "string", "description": "optional: only this relation"},
             },
             "required": ["entity_ids"],
@@ -89,7 +95,10 @@ TOOL_SPECS: list[dict] = [
             "type": "object",
             "properties": {
                 "predicate": {"type": "string"},
-                "object_ids": {"type": "array", "items": {"type": "string"}},
+                "object_ids": {"type": "array", "items": {"type": "string"},
+                    "description": "explicit ids; prefer object_set"},
+                "object_set": {"type": "string",
+                    "description": "a set name returned by search, e.g. set_1"},
             },
             "required": ["predicate", "object_ids"],
         },
@@ -114,7 +123,10 @@ TOOL_SPECS: list[dict] = [
             "type": "object",
             "properties": {
                 "predicate": {"type": "string"},
-                "object_ids": {"type": "array", "items": {"type": "string"}},
+                "object_ids": {"type": "array", "items": {"type": "string"},
+                    "description": "explicit ids; prefer object_set"},
+                "object_set": {"type": "string",
+                    "description": "a set name returned by search, e.g. set_1"},
             },
             "required": ["predicate", "object_ids"],
         },
@@ -244,6 +256,20 @@ class Session:
     thoughts: list[Thought] = field(default_factory=list)
     nudged: bool = False
 
+    # Entity ids the graph has actually handed back this session. Anything else
+    # passed to a tool was invented -- see _check_ids.
+    known_entity_ids: set[str] = field(default_factory=set)
+    invented_ids: list[str] = field(default_factory=list)
+    # Tool calls the model wrote as text and we parsed back out. A count worth
+    # watching: if it is high, the serving-side tool parser is underperforming.
+    recovered_calls: int = 0
+
+    # Named result sets. The model referred to 31 entities by writing out 31
+    # ids -- 863 completion tokens for one call, every one an opportunity to
+    # mistype or invent. A handle costs three tokens and cannot be misspelt
+    # into something that silently returns zero.
+    sets: dict[str, list[str]] = field(default_factory=dict)
+
     # Every literal value that came back from a tool, for the faithfulness check
     # (S-14). Accumulated as results arrive rather than reconstructed afterwards:
     # results are truncated before they enter the context, so replaying the steps
@@ -301,6 +327,8 @@ class Session:
             "stopped_because": self.stopped_because,
             "tool_usage": self.tool_usage,
             "grounded_in_tools": self.grounded_in_tools,
+            "invented_ids": self.invented_ids,
+            "recovered_calls": self.recovered_calls,
             "nudged": self.nudged,
             "thoughts": [{"round": t.round, "text": t.text, "tools": t.tools_called}
                          for t in self.thoughts],
@@ -337,6 +365,82 @@ def _values_in(rows: list[dict]) -> set[str]:
     return out
 
 
+# A tool call the model wrote as TEXT instead of emitting structurally.
+#
+# Observed live: after the id guard corrected it, Qwen produced exactly the right
+# call -- correct predicate, correct ids -- but wrapped in <tool_call> tags in
+# the message body, where vLLM's parser did not pick it up. The loop then saw
+# "no tool calls", assumed the model had answered in prose, and recorded raw
+# JSON as the final answer while the model was still mid-work.
+#
+# "No structured tool calls" is not the same as "answered in prose". Recovering
+# the call is a few lines and turns a wasted session into a working one.
+_TEXT_TOOL_CALL = re.compile(
+    r"<tool_call>\s*(\{.*?\})\s*(?:</tool_call>|$)", re.DOTALL)
+
+
+class _RecoveredCall:
+    """Shaped like an SDK tool call, so the loop needs no special case."""
+
+    def __init__(self, name: str, arguments: str, index: int):
+        self.id = f"recovered-{index}"
+        self.type = "function"
+        self.function = SimpleNamespace(name=name, arguments=arguments)
+
+
+def _recover_tool_calls(content: str) -> list:
+    """Tool calls the model wrote into the message body."""
+    out: list = []
+    for i, blob in enumerate(_TEXT_TOOL_CALL.findall(content or "")):
+        try:
+            parsed = json.loads(blob)
+        except json.JSONDecodeError:
+            continue  # truncated mid-JSON; nothing safe to recover
+        name = parsed.get("name")
+        if not name:
+            continue
+        args = parsed.get("arguments", parsed.get("parameters", {}))
+        out.append(_RecoveredCall(
+            name, args if isinstance(args, str) else json.dumps(args), i))
+    return out
+
+
+# Arguments that must name entities the graph already returned.
+_ID_ARGS = ("entity_ids", "object_ids", "subject_a", "subject_b")
+
+
+def _check_ids(args: dict, known: set[str]) -> list[str]:
+    """Ids in this call that the graph never returned.
+
+    The failure this catches, observed on the first live run: the model batched
+    `search` and `count` in ONE round, so when it wrote `count` the search
+    results did not exist yet -- and rather than wait, it invented a
+    plausible-looking id ("gen-223") and got a confident zero back.
+
+    Batching is right for independent operations and wrong for dependent ones,
+    and the model cannot always tell which it has. The prompt says so in words;
+    this says so in a way that cannot be overlooked. A wrong answer becomes a
+    corrective message instead.
+    """
+    unknown: list[str] = []
+    for name in _ID_ARGS:
+        value = args.get(name)
+        if value is None:
+            continue
+        for candidate in ([value] if isinstance(value, str) else value):
+            if isinstance(candidate, str) and candidate not in known:
+                unknown.append(candidate)
+    return unknown
+
+
+def _collect_ids(rows: list[dict], note: str) -> set[str]:
+    """Entity ids a result handed back, from its rows and its note."""
+    found = {str(r[k]) for r in rows for k in ("entity_id", "canonical_id")
+             if isinstance(r, dict) and r.get(k)}
+    found |= set(re.findall(r"hepkg:[a-z_]+:[A-Za-z0-9_.\-]+", note or ""))
+    return found
+
+
 def _render_rows(rows: list[dict], max_rows: int) -> str:
     """Results as compact text for the planner's context.
 
@@ -354,34 +458,64 @@ def _render_rows(rows: list[dict], max_rows: int) -> str:
     return "\n".join(lines)
 
 
-def build_executor(conn, index) -> Callable[[str, dict], Any]:
-    """Bind the tools to this database and index.
+def build_executor(conn, index, sets: Optional[dict] = None) -> Callable[[str, dict], Any]:
+    """Bind the tools to this database, index and set of named results.
 
     Returned as a closure so the planner never holds a connection itself and
     cannot be handed a writable one by accident.
     """
     from hepcoveragekg.query import retrieve, templates
 
+    sets = {} if sets is None else sets
+
+    def ids_for(args: dict, id_arg: str, set_arg: str) -> list[str]:
+        """Ids from a saved set name, or written out explicitly.
+
+        Set names exist because the alternative was measured and is bad: asked
+        about 31 Pythia entities, the model wrote out every id -- 863 completion
+        tokens on one call, and on a retry it looped and produced 6,521
+        characters before being cut off mid-identifier. A handle is three tokens
+        and cannot be mistyped into something that silently returns nothing.
+        """
+        name = args.get(set_arg)
+        if name:
+            if name not in sets:
+                raise ValueError(
+                    f"no set named '{name}'. Available: {sorted(sets) or 'none yet'}. "
+                    "Run `search` first; it tells you the name it saved.")
+            return sets[name]
+        explicit = args.get(id_arg)
+        if not explicit:
+            raise ValueError(f"give either {set_arg} (preferred) or {id_arg}")
+        return [explicit] if isinstance(explicit, str) else list(explicit)
+
     def run(tool: str, args: dict):
         if tool == "search":
+            limit = int(args.get("limit", 50))
             hits = retrieve.search(index, args["text"], conn=conn,
-                                   kind=args.get("kind"), limit=int(args.get("limit", 50)))
+                                   kind=args.get("kind"), limit=limit)
             ids = retrieve.concept(index, args["text"], conn=conn,
-                                   kind=args.get("kind"), limit=int(args.get("limit", 50)))
+                                   kind=args.get("kind"), limit=limit)
+            name = f"set_{len(sets) + 1}"
+            sets[name] = ids
             return templates.QueryResult(
                 shape="search",
                 rows=[{"entity_id": h.entity_id, "label": h.label, "kind": h.kind}
                       for h in hits],
-                note=f"{len(ids)} entity ids after expanding canonical clusters: {ids}",
+                note=(f"saved as {name} ({len(ids)} entities, canonical clusters expanded). "
+                      f"Pass {name} as object_set/entity_set -- do not retype the ids."),
             )
         if tool == "describe":
-            return templates.describe(conn, args["entity_ids"], args.get("predicate"))
+            return templates.describe(conn, ids_for(args, "entity_ids", "entity_set"),
+                                      args.get("predicate"))
         if tool == "subjects_of":
-            return templates.subjects_of(conn, args["predicate"], args["object_ids"])
+            return templates.subjects_of(conn, args["predicate"],
+                                         ids_for(args, "object_ids", "object_set"))
         if tool == "papers_of":
-            return templates.papers_of(conn, args["entity_ids"])
+            return templates.papers_of(conn, ids_for(args, "entity_ids", "entity_set"))
         if tool == "count":
-            return templates.count(conn, args["predicate"], args["object_ids"])
+            return templates.count(conn, args["predicate"],
+                                   ids_for(args, "object_ids", "object_set"))
         if tool == "compare":
             return templates.compare(conn, args["subject_a"], args["subject_b"],
                                      args["predicate"])
@@ -440,7 +574,7 @@ def answer(
     """
     session = Session(question=question)
     started = time.perf_counter()
-    execute = build_executor(conn, index)
+    execute = build_executor(conn, index, session.sets)
 
     tools = [{"type": "function", "function": spec} for spec in TOOL_SPECS]
     messages: list[dict] = [
@@ -467,6 +601,12 @@ def answer(
 
         message = response.choices[0].message
         calls = list(getattr(message, "tool_calls", None) or [])
+        if not calls:
+            calls = _recover_tool_calls(message.content or "")
+            if calls:
+                session.recovered_calls += len(calls)
+                logger.info(f"round {round_no}: recovered {len(calls)} tool call(s) "
+                            "written as text")
 
         if not calls:
             # Answered in prose instead of calling a tool.
@@ -568,6 +708,18 @@ def answer(
                 finished = True
                 break
 
+            unknown = [] if (args.get("object_set") or args.get("entity_set")) \
+                else _check_ids(args, session.known_entity_ids)
+            if unknown:
+                session.invented_ids.extend(unknown)
+                session.steps.append(Step(round_no, name, args, error="unknown_entity_id"))
+                messages.append({"role": "tool", "tool_call_id": call.id, "content": (
+                    f"ERROR: these ids were never returned by a search: {unknown}. "
+                    "Do not invent ids. Call `search` FIRST, wait for its results, and then "
+                    "use the exact entity_id values it gives you -- a tool that depends on "
+                    "another tool's output cannot be called in the same turn as it.")})
+                continue
+
             t0 = time.perf_counter()
             try:
                 result = execute(name, args)
@@ -576,6 +728,7 @@ def answer(
                 # BEFORE truncation: the planner is shown max_rows, but a claim
                 # is grounded if the graph returned it at all.
                 session.seen_values |= _values_in(result.rows)
+                session.known_entity_ids |= _collect_ids(result.rows, result.note)
                 body = _render_rows(result.rows, max_rows)
                 if result.note:
                     body += f"\n[{result.note}]"

@@ -141,7 +141,9 @@ def test_session_records_values_before_truncation(conn):
     from hepcoveragekg.query import retrieve as R
 
     index = R.build(conn, embed=False)
-    turns = [_resp([_call("papers_of", {"entity_ids": ["r1"]})]),
+    # searches first: ids must come from the graph, not from the caller's head
+    turns = [_resp([_call("search", {"text": "Search"})]),
+             _resp([_call("papers_of", {"entity_ids": ["r1"]})]),
              _resp([_call("answer", {"text": "Paper 2001.06899.", "answerable": True})])]
     state = {"i": 0}
 

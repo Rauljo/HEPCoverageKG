@@ -181,8 +181,13 @@ def test_session_records_cost_and_every_step(conn, index):
 
 
 def test_evidence_is_gathered_across_steps(conn, index):
-    """Citations must accumulate over the whole session, not only the last call."""
+    """Citations must accumulate over the whole session, not only the last call.
+
+    Searches first, because ids now have to come from the graph rather than from
+    the caller's head.
+    """
     chat = scripted(
+        _response([_call("search", {"text": "Pythia"})]),
         _response([_call("count", {"predicate": "uses_generator", "object_ids": ["g1"]})]),
         _response([_call("answer", {"text": "1 paper", "answerable": True})]),
     )
@@ -341,3 +346,139 @@ def test_the_two_kinds_of_no_are_distinguishable_in_the_trace(conn, index):
         [_call("answer", {"text": "x", "answerable": False,
                           "reason": "out_of_scope"})]))).to_jsonl())
     assert out["reason"] == "out_of_scope" and out["answerable"] is False
+
+
+def test_invented_entity_ids_are_rejected(conn, index):
+    """The first live run's actual failure.
+
+    The model batched `search` and `count` in ONE round, so when it wrote
+    `count` the search results did not exist -- and instead of waiting it
+    invented "gen-223" and got a confident zero back. A wrong answer with a
+    healthy-looking trace, which is the worst shape a failure can have.
+    """
+    chat = scripted(
+        _response([_call("search", {"text": "Pythia"}, "c1"),
+                   _call("count", {"predicate": "uses_generator",
+                                   "object_ids": ["gen-223"]}, "c2")]),
+        _response([_call("answer", {"text": "recovered", "answerable": True,
+                                    "reason": "answered"})]),
+    )
+    s = planner.answer(conn, index, "q", chat=chat)
+    assert s.invented_ids == ["gen-223"]
+    assert any(st.error == "unknown_entity_id" for st in s.steps)
+    assert s.answer == "recovered", "the model is told, and can recover"
+
+
+def test_ids_returned_by_search_are_accepted(conn, index):
+    """The guard must not block the legitimate path."""
+    chat = scripted(
+        _response([_call("search", {"text": "Pythia"})]),
+        _response([_call("count", {"predicate": "uses_generator", "object_ids": ["g1"]})]),
+        _response([_call("answer", {"text": "done", "answerable": True,
+                                    "reason": "answered"})]),
+    )
+    s = planner.answer(conn, index, "q", chat=chat)
+    assert s.invented_ids == []
+    assert not any(st.error for st in s.steps)
+
+
+def test_ids_persist_across_rounds(conn, index):
+    """An id learned in round 1 is still usable in round 3."""
+    chat = scripted(
+        _response([_call("search", {"text": "Pythia"})]),
+        _response([_call("papers_of", {"entity_ids": ["g1"]})]),
+        _response([_call("count", {"predicate": "uses_generator", "object_ids": ["g1"]})]),
+        _response([_call("answer", {"text": "x", "answerable": True, "reason": "answered"})]),
+    )
+    s = planner.answer(conn, index, "q", chat=chat)
+    assert s.invented_ids == []
+
+
+def test_tool_call_written_as_text_is_recovered(conn, index):
+    """Observed live: after the id guard corrected it, the model produced the
+    RIGHT call -- right predicate, right ids -- but wrapped in <tool_call> tags
+    in the message body, where vLLM's parser missed it. The loop then recorded
+    raw JSON as the final answer while the model was still working."""
+    text = ('I will now count them.\n<tool_call>\n'
+            '{"name": "search", "arguments": {"text": "Pythia"}}\n</tool_call>')
+    chat = scripted(
+        _response(content=text),
+        _response([_call("answer", {"text": "3 analyses.", "answerable": True,
+                                    "reason": "answered"})]),
+    )
+    s = planner.answer(conn, index, "q", chat=chat)
+    assert s.recovered_calls == 1
+    assert s.tool_usage == {"search": 1}, "it ran, rather than becoming the answer"
+    assert s.answer == "3 analyses."
+
+
+def test_truncated_text_tool_call_is_not_half_executed(conn, index):
+    """Cut off mid-JSON there is nothing safe to recover, so it must fall
+    through rather than run a guessed call."""
+    chat = scripted(_response(content='<tool_call>\n{"name": "count", "argum'),
+                    _response(content='<tool_call>\n{"name": "count", "argum'))
+    s = planner.answer(conn, index, "q", chat=chat)
+    assert s.recovered_calls == 0
+    assert s.tool_calls == 0
+
+
+def test_prose_without_a_tool_call_is_untouched(conn, index):
+    chat = scripted(
+        _response([_call("search", {"text": "Pythia"})]),
+        _response(content="Three analyses used it."),
+    )
+    s = planner.answer(conn, index, "q", chat=chat)
+    assert s.recovered_calls == 0
+    assert "Three analyses" in s.answer
+
+
+def test_search_saves_a_named_set(conn, index):
+    """The model should never have to retype ids: writing out 31 of them cost
+    863 completion tokens live, and on a retry looped to 6,521 characters before
+    being cut off mid-identifier."""
+    chat = scripted(
+        _response([_call("search", {"text": "Pythia"})]),
+        _response([_call("answer", {"text": "x", "answerable": True, "reason": "answered"})]),
+    )
+    s = planner.answer(conn, index, "q", chat=chat)
+    assert "set_1" in s.sets
+    assert s.steps[0].preview or True
+    assert "saved as set_1" in _last_note(s)
+
+
+def _last_note(session):
+    return " ".join(st.preview for st in session.steps)
+
+
+def test_a_set_can_be_used_instead_of_ids(conn, index):
+    chat = scripted(
+        _response([_call("search", {"text": "Pythia"})]),
+        _response([_call("count", {"predicate": "uses_generator", "object_set": "set_1"})]),
+        _response([_call("answer", {"text": "done", "answerable": True, "reason": "answered"})]),
+    )
+    s = planner.answer(conn, index, "q", chat=chat)
+    assert not any(st.error for st in s.steps)
+    assert s.tool_usage.get("count") == 1
+
+
+def test_unknown_set_name_says_which_exist(conn, index):
+    """An error that names the available sets is recoverable; one that just
+    fails is not."""
+    chat = scripted(
+        _response([_call("search", {"text": "Pythia"})]),
+        _response([_call("count", {"predicate": "uses_generator", "object_set": "set_9"})]),
+        _response([_call("answer", {"text": "ok", "answerable": True, "reason": "answered"})]),
+    )
+    s = planner.answer(conn, index, "q", chat=chat)
+    bad = [st for st in s.steps if st.error]
+    assert bad and "set_1" in bad[0].error
+
+
+def test_set_reference_is_not_treated_as_an_invented_id(conn, index):
+    chat = scripted(
+        _response([_call("search", {"text": "Pythia"})]),
+        _response([_call("papers_of", {"entity_set": "set_1"})]),
+        _response([_call("answer", {"text": "x", "answerable": True, "reason": "answered"})]),
+    )
+    s = planner.answer(conn, index, "q", chat=chat)
+    assert s.invented_ids == []
