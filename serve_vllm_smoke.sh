@@ -48,6 +48,15 @@ fi
 
 export HF_HUB_OFFLINE=1
 
+# Slurm hands out a MIG *UUID* in CUDA_VISIBLE_DEVICES, and vLLM's
+# get_device_capability() resolves it as a plain device index --
+# nvmlDeviceGetHandleByIndex then fails with NVMLError_InvalidArgument before
+# the model is even loaded (job 48123). That call sits behind the V1-engine
+# oracle check, so skipping V1 avoids it. If it fails again further down the
+# stack, MIG is simply not usable for vLLM here and the only route is a real
+# GPU on compute-gpu-0-1.
+export VLLM_USE_V1=0
+
 apptainer exec --nv \
     ~/hepcoveragekg_setup/images/vllm-openai-v0.8.5.sif \
     vllm serve "${MODEL}" \
