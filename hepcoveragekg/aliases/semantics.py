@@ -108,6 +108,65 @@ def embed(items: list[str]) -> np.ndarray:
     return model.encode(items, show_progress_bar=False, normalize_embeddings=True)
 
 
+def embed_cached(items: list[str], cache: "Path | str | None" = None) -> np.ndarray:
+    """`embed`, reusing anything already encoded by a previous run.
+
+    Lives here rather than in the query layer because BOTH layers encode the
+    same strings -- the aliases layer to generate merge candidates, retrieval to
+    build its index -- and at 3,000 papers that is roughly 420,000 encodings
+    done twice for no reason.
+
+    Keyed on **each string**, not on the collection. Keying on the whole corpus
+    means importing one paper invalidates everything and re-encodes all of it,
+    which is the opposite of what a growing corpus needs. A given string always
+    encodes to the same vector for a fixed model, so old vectors are reused
+    verbatim.
+
+    The model name is stored with the vectors and checked on load: switching
+    ALIASES_EMBED_MODEL must not silently reuse another model's embeddings,
+    which would be wrong in a way nothing downstream could detect.
+    """
+    from pathlib import Path as _Path
+
+    _, model_name = _get_model(), os.environ.get("ALIASES_EMBED_MODEL", DEFAULT_MODEL)
+    known: dict[str, np.ndarray] = {}
+
+    if cache:
+        cache = _Path(cache)
+        if cache.exists():
+            blob = np.load(cache, allow_pickle=False)
+            cached_model = str(blob["model"]) if "model" in blob else ""
+            if cached_model != model_name:
+                logger.info(
+                    f"embedding cache was built with '{cached_model or 'unknown'}', "
+                    f"now using '{model_name}' -- discarding"
+                )
+            elif "texts" in blob and "vectors" in blob:
+                known = dict(zip((str(t) for t in blob["texts"]), blob["vectors"]))
+                logger.info(f"embedding cache: {len(known)} known strings")
+
+    missing = [t for t in dict.fromkeys(items) if t not in known]
+    if missing:
+        logger.info(f"encoding {len(missing)} new strings "
+                    f"({len(items) - len(missing)} reused)")
+        for text, vector in zip(missing, embed(missing)):
+            known[text] = vector
+
+    if cache and missing:
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        pairs = list(known.items())
+        np.savez(
+            cache,
+            texts=np.array([t for t, _ in pairs], dtype=object).astype("U"),
+            vectors=np.stack([v for _, v in pairs]),
+            model=np.array(model_name),
+        )
+
+    if not items:
+        return np.zeros((0, 768), dtype=np.float32)
+    return np.stack([known[t] for t in items])
+
+
 def generate_candidates(
     items: list[str],
     sem_threshold: float | None = None,

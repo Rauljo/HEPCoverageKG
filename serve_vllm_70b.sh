@@ -12,11 +12,15 @@
 #
 # AWQ 4-bit across 2x A100-80GB, on the GPU partition. The two GPU nodes are
 # NOT interchangeable, which cost a failed job to discover:
-#   LIGHTGPU / compute-gpu-0-0 : 6x MIG slices of 20GB. MIG instances cannot do
-#       the peer-to-peer NCCL communication tensor parallelism needs, so the
-#       usable ceiling there is ONE 20GB slice -- fine for the old 8B, useless
-#       for a 72B. Requesting 4 "GPUs" there yields 4 MIG handles and vLLM dies
-#       with NVMLError_InvalidArgument.
+#   LIGHTGPU / compute-gpu-0-0 : 6x MIG slices of 20GB. UNUSABLE for vLLM
+#       0.8.5 at ANY size -- corrected 2026-07-31. An earlier note here guessed
+#       "fine for the old 8B"; that was never observed (the 8B always ran on
+#       -p GPU with a real A100) and jobs 48123/48124 disproved it. A single
+#       slice fails in get_device_capability() -> nvmlDeviceGetHandleByIndex()
+#       with NVMLError_InvalidArgument, BEFORE any weights load: Slurm puts a
+#       MIG *UUID* in CUDA_VISIBLE_DEVICES and vLLM resolves it as a plain
+#       device index. VLLM_USE_V1=0 does not help; the call is reached on
+#       other paths too.
 #   GPU / compute-gpu-0-1 : 3x real A100 80GB, no MIG. This is the one to use.
 #
 # Why AWQ rather than fp16: 72B fp16 is ~145GB of weights, and TP must divide

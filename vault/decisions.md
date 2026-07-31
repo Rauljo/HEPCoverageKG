@@ -383,3 +383,19 @@ re-extracted or only new papers carry signatures. Re-extraction ⇒ re-import �
 labels as a stopgap rather than let the evaluation stall.
 **New risk to watch**: the backbone of the evaluation now depends on a deliverable we do not
 control. See system.md §5 Phase 1.
+
+## D-039 (2026-07-31) — LIGHTGPU/MIG is unusable for vLLM 0.8.5, at any model size
+**Finding**: a single 20GB MIG slice fails in `get_device_capability()` →
+`nvmlDeviceGetHandleByIndex()` with `NVMLError_InvalidArgument`, **before any weights load**.
+Slurm places a MIG *UUID* in `CUDA_VISIBLE_DEVICES`; vLLM resolves it as a plain device index.
+`VLLM_USE_V1=0` does not help — the call is reached on other paths too (jobs 48123, 48124).
+**Corrects an earlier note** in `serve_vllm_70b.sh` claiming one slice was "fine for the old 8B".
+That was an assumption, never an observation: `hpc/serve_vllm.sh` always used `-p GPU` with a real
+A100. Two jobs have now disproved it.
+**Consequence**: the *only* route to a model is **compute-gpu-0-1** (3× real A100 80GB), which has
+been `IDLE+DRAIN` for a reboot since 2026-07-29 16:58. While it is down there is **no LLM available
+at all** — not a small one for smoke tests, not the 72B. Job 48122 sits queued for it.
+**What this does not block**: everything deterministic. The query layer's machinery, retrieval, the
+planner loop (tested against an injected `chat`), and the faithfulness check all run without a GPU.
+What is blocked is verifying the **wire format** — that a real vLLM server emits tool calls our
+schemas accept — which scripted tests cannot cover because they use a fake response object.
