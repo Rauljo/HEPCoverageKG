@@ -55,7 +55,23 @@ PORT="${LLM_PORT:-8000}"
 
 echo "Node:  $(hostname)"
 echo "Model: ${MODEL}"
-nvidia-smi --query-gpu=index,name,memory.total --format=csv
+
+# WHICH cards did Slurm give us, and are they healthy?
+#
+# compute-gpu-0-1 has one faulty A100: 00000000:CA:00.0 showed 27 uncorrectable
+# ECC errors within 90 minutes of a reboot (805 aggregate) and, worse,
+# remapped_rows.failure=1 -- its bad memory rows could not be retired. Job 48125
+# died on it with "uncorrectable ECC error encountered" mid-request.
+#
+# TP=2 takes two of three cards, so whether a run touches the bad one depends on
+# what else is scheduled. Logging bus ids and ECC counters up front means a
+# failure is interpretable instead of mysterious, and a SUCCESS is too -- it may
+# only mean we were allocated the two healthy cards.
+echo "--- allocated GPUs ---"
+nvidia-smi --query-gpu=index,pci.bus_id,name,memory.total,ecc.errors.uncorrected.volatile.total,ecc.errors.uncorrected.aggregate.total --format=csv
+nvidia-smi --query-remapped-rows=gpu_bus_id,remapped_rows.uncorrectable,remapped_rows.failure --format=csv
+echo "CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-unset}"
+echo "----------------------"
 
 # Credentials come from .env (gitignored), never hardcoded here.
 cd /home/xucabrjs/HEPCoverageKG
