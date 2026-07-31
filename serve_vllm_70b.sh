@@ -87,8 +87,22 @@ echo "CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-unset}"
 #
 # Checked by BUS ID, not by index: Slurm renumbers visible devices per job, so
 # "GPU 2" means nothing inside the allocation. The bus id is stable.
+#
+# And checked ONLY for the cards we were actually given. `nvidia-smi` talks to
+# NVML directly and IGNORES CUDA_VISIBLE_DEVICES, so a bare query lists every
+# card on the node -- an earlier version of this check did exactly that and
+# refused a perfectly healthy allocation (job 48129 held 65:00.0 and was turned
+# away because CA:00.0 exists elsewhere in the box). `-i` restricts it.
 BAD_GPUS="00000000:CA:00.0"
-for bus in $(nvidia-smi --query-gpu=pci.bus_id --format=csv,noheader); do
+VISIBLE="${CUDA_VISIBLE_DEVICES:-}"
+if [ -z "${VISIBLE}" ]; then
+    echo "CUDA_VISIBLE_DEVICES is unset; cannot tell which card we hold -- proceeding"
+    ALLOCATED=""
+else
+    ALLOCATED=$(nvidia-smi -i "${VISIBLE}" --query-gpu=pci.bus_id --format=csv,noheader)
+fi
+echo "allocated bus ids: ${ALLOCATED:-<unknown>}"
+for bus in ${ALLOCATED}; do
     for bad in ${BAD_GPUS}; do
         if [ "${bus}" = "${bad}" ]; then
             echo "REFUSING TO START: allocated known-faulty GPU ${bus}"
