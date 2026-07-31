@@ -44,6 +44,24 @@ DEFAULT_MAX_ROUNDS = 6
 DEFAULT_MAX_PLACES = 8
 DEFAULT_MAX_ROWS = 25
 
+# Sent when the model tries to answer having retrieved nothing. Shared with
+# graph.py so the two cannot drift apart.
+NUDGE = (
+    "You have not retrieved anything yet. Search first, then answer. "
+    "This applies even when you expect to find nothing: 'no paper here covers that' "
+    "is a claim about the literature and has to be checked. If the question is not "
+    "about high-energy-physics papers at all, search anyway (it costs nothing) and "
+    "then answer with reason='out_of_scope'."
+)
+
+UNKNOWN_ID_MESSAGE = (
+    "ERROR: these ids were never returned by a search: {unknown}. "
+    "Do not invent ids. Call `search` FIRST, wait for its results, and then use the "
+    "exact entity_id values it gives you -- or better, pass the set name it saved "
+    "(object_set / entity_set). A tool that depends on another tool's output cannot "
+    "be called in the same turn as it."
+)
+
 # Tool descriptions are the part the planner actually reasons over -- more so
 # than the SQL behind them -- so they say WHEN to reach for something, not just
 # what it does.
@@ -269,6 +287,9 @@ class Session:
     # mistype or invent. A handle costs three tokens and cannot be misspelt
     # into something that silently returns zero.
     sets: dict[str, list[str]] = field(default_factory=dict)
+
+    # Filled by the graph's `finish` node, so no answer leaves unchecked.
+    verification: Any = None
 
     # Every literal value that came back from a tool, for the faithfulness check
     # (S-14). Accumulated as results arrive rather than reconstructed afterwards:
@@ -566,21 +587,26 @@ def answer(
     max_rows: int = DEFAULT_MAX_ROWS,
     minimal_prompt: bool = False,
     chat: Optional[Callable] = None,
+    checkpointer: Any = None,
+    thread_id: str = "default",
 ) -> Session:
     """Answer one question, returning the answer and the whole trace.
 
+    The loop itself lives in `graph.py` as a LangGraph state machine; this stays
+    the public entry point so callers -- and the tests that pin the loop's
+    behaviour -- do not change.
+
     `chat` is injectable so the loop can be tested without a model: it takes
     (messages, tools) and returns an object shaped like an OpenAI response.
+
+    `thread_id` is carried for later: with a checkpointer, reusing it resumes the
+    same conversation, which is how follow-up questions ("how many of *those*
+    used Herwig?") will get a referent.
     """
+    from hepcoveragekg.query import graph as graph_module
+
     session = Session(question=question)
     started = time.perf_counter()
-    execute = build_executor(conn, index, session.sets)
-
-    tools = [{"type": "function", "function": spec} for spec in TOOL_SPECS]
-    messages: list[dict] = [
-        {"role": "system", "content": system_prompt(conn, minimal_prompt)},
-        {"role": "user", "content": question},
-    ]
 
     if chat is None:
         client, model = _client()
@@ -590,163 +616,33 @@ def answer(
                 model=model, messages=msgs, tools=tls, temperature=0.0
             )
 
-    for round_no in range(1, max_rounds + 1):
-        session.rounds = round_no
-        response = chat(messages, tools)
-        session.llm_calls += 1
-        usage = getattr(response, "usage", None)
-        if usage:
-            session.prompt_tokens += getattr(usage, "prompt_tokens", 0) or 0
-            session.completion_tokens += getattr(usage, "completion_tokens", 0) or 0
+    app = graph_module.build(checkpointer=checkpointer)
+    state = {
+        "question": question,
+        "messages": [
+            {"role": "system", "content": system_prompt(conn, minimal_prompt)},
+            {"role": "user", "content": question},
+        ],
+        "session": session,
+        "round": 0,
+        "max_rounds": max_rounds,
+        "max_places": max_places,
+        "max_rows": max_rows,
+    }
+    # Callables go in config, not state: state is serialised at every
+    # checkpoint and functions do not serialise.
+    runtime = {
+        "thread_id": thread_id,
+        "chat": chat,
+        "execute": build_executor(conn, index, session.sets),
+        "tools": [{"type": "function", "function": spec} for spec in TOOL_SPECS],
+    }
+    # recursion_limit must exceed the node visits a full run makes: each round is
+    # plan+execute, plus a possible nudge and the finish node.
+    app.invoke(state, config={
+        "configurable": runtime,
+        "recursion_limit": max_rounds * 3 + 6,
+    })
 
-        message = response.choices[0].message
-        calls = list(getattr(message, "tool_calls", None) or [])
-        if not calls:
-            calls = _recover_tool_calls(message.content or "")
-            if calls:
-                session.recovered_calls += len(calls)
-                logger.info(f"round {round_no}: recovered {len(calls)} tool call(s) "
-                            "written as text")
-
-        if not calls:
-            # Answered in prose instead of calling a tool.
-            #
-            # If NOTHING has been retrieved yet, this is the failure the whole
-            # project is built to prevent: an answer from the model's own
-            # knowledge of physics rather than from this corpus. It reads as
-            # authoritative and a domain expert would not blink at it.
-            #
-            # Even "the graph does not contain this" has to be ESTABLISHED by
-            # looking. An abstention that was assumed rather than checked is a
-            # guess wearing the costume of caution.
-            #
-            # So: nudge once, then accept and flag. A second refusal is a
-            # finding, not something to keep spending rounds on.
-            if not session.steps and not session.nudged:
-                session.nudged = True
-                messages.append({
-                    "role": "user",
-                    "content": (
-                        "You have not retrieved anything yet. Answer only from this graph, "
-                        "never from your own knowledge of physics. Use the tools to look, "
-                        "then answer -- including to establish that the graph does not "
-                        "contain what was asked."
-                    ),
-                })
-                continue
-
-            session.answer = (message.content or "").strip()
-            session.stopped_because = ("answered from memory, no tool calls"
-                                       if not session.steps
-                                       else "answered without calling answer()")
-            break
-
-        if len(calls) > max_places:
-            logger.info(f"round {round_no}: {len(calls)} calls capped to {max_places}")
-            calls = calls[:max_places]
-
-        reasoning = (message.content or "").strip()
-        if reasoning:
-            session.thoughts.append(Thought(
-                round=round_no, text=reasoning,
-                tools_called=[c.function.name for c in calls]))
-
-        messages.append({
-            "role": "assistant",
-            "content": message.content or "",
-            "tool_calls": [
-                {"id": c.id, "type": "function",
-                 "function": {"name": c.function.name, "arguments": c.function.arguments}}
-                for c in calls
-            ],
-        })
-
-        finished = False
-        for call in calls:
-            name = call.function.name
-            try:
-                args = json.loads(call.function.arguments or "{}")
-            except json.JSONDecodeError as exc:
-                args = {}
-                messages.append({"role": "tool", "tool_call_id": call.id,
-                                 "content": f"ERROR: arguments were not valid JSON ({exc})"})
-                session.steps.append(Step(round_no, name, {}, error="bad_arguments"))
-                continue
-
-            if name == "answer":
-                claimed = str(args.get("reason", "answered"))
-                # ONE RULE: look before answering, whatever the reason.
-                #
-                # An earlier version exempted `out_of_scope`, on the grounds
-                # that a chemistry question has nothing to check against a HEP
-                # corpus. True, but it made "not physics" a **cheap exit** -- a
-                # verdict that skips all work -- and a model offered a free way
-                # out will sometimes take it for questions that were perfectly
-                # answerable. Detecting a wrong out_of_scope claim would itself
-                # require searching, so the exemption removed the only evidence
-                # that could have contradicted it.
-                #
-                # The exemption bought one LLM call on absurd questions, which
-                # are near-absent from a physics question set. `reason` is still
-                # recorded -- it separates a real coverage gap from a wrong-tool
-                # question -- it just no longer buys a skip.
-                if not session.steps and not session.nudged:
-                    session.nudged = True
-                    messages.append({"role": "tool", "tool_call_id": call.id, "content": (
-                        "You have not retrieved anything yet. Search first, then answer. "
-                        "This applies even when you expect to find nothing: 'no paper here "
-                        "covers that' is a claim about the literature and has to be checked. "
-                        "If the question is not about high-energy-physics papers at all, "
-                        "search anyway (it costs nothing) and then answer with "
-                        "reason='out_of_scope'.")})
-                    continue
-
-                session.answer = str(args.get("text", "")).strip()
-                session.answerable = bool(args.get("answerable", True))
-                session.reason = claimed
-                session.stopped_because = f"answered ({claimed})"
-                finished = True
-                break
-
-            unknown = [] if (args.get("object_set") or args.get("entity_set")) \
-                else _check_ids(args, session.known_entity_ids)
-            if unknown:
-                session.invented_ids.extend(unknown)
-                session.steps.append(Step(round_no, name, args, error="unknown_entity_id"))
-                messages.append({"role": "tool", "tool_call_id": call.id, "content": (
-                    f"ERROR: these ids were never returned by a search: {unknown}. "
-                    "Do not invent ids. Call `search` FIRST, wait for its results, and then "
-                    "use the exact entity_id values it gives you -- a tool that depends on "
-                    "another tool's output cannot be called in the same turn as it.")})
-                continue
-
-            t0 = time.perf_counter()
-            try:
-                result = execute(name, args)
-                elapsed = time.perf_counter() - t0
-                session.evidence_ids.extend(getattr(result, "evidence_ids", []) or [])
-                # BEFORE truncation: the planner is shown max_rows, but a claim
-                # is grounded if the graph returned it at all.
-                session.seen_values |= _values_in(result.rows)
-                session.known_entity_ids |= _collect_ids(result.rows, result.note)
-                body = _render_rows(result.rows, max_rows)
-                if result.note:
-                    body += f"\n[{result.note}]"
-                session.steps.append(Step(round_no, name, args, rows=len(result.rows),
-                                          seconds=elapsed, preview=body[:200]))
-                messages.append({"role": "tool", "tool_call_id": call.id, "content": body})
-            except Exception as exc:  # noqa: BLE001 -- the planner must see any failure
-                elapsed = time.perf_counter() - t0
-                session.steps.append(Step(round_no, name, args, error=str(exc)[:200],
-                                          seconds=elapsed))
-                messages.append({"role": "tool", "tool_call_id": call.id,
-                                 "content": f"ERROR: {exc}"})
-
-        if finished:
-            break
-    else:
-        session.stopped_because = f"hit max_rounds ({max_rounds})"
-
-    session.evidence_ids = sorted(set(session.evidence_ids))
     session.seconds = time.perf_counter() - started
     return session

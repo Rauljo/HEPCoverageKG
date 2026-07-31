@@ -33,3 +33,9 @@ wikipedia==1.4.0
 
 # ── Testing ───────────────────────────────────────────────────────────────────
 pytest==9.1.1
+
+# Query-layer orchestration (S-16). LangGraph only -- nodes, edges, state and
+# checkpoints. Prompts, LLM calls, tools and retrieval stay hand-written, so
+# LangChain itself is deliberately NOT a dependency.
+langgraph>=1.2
+langgraph-checkpoint-sqlite>=3.1
