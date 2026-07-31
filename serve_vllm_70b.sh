@@ -34,6 +34,12 @@
 # coefficients, and accepted WH/ZH, W->e-nu / W->mu-nu and SRA/SRC as identical
 # at confidence >= 0.9. See vault/logs/2026-07-28.md.
 #
+# TOOL CALLING NEEDS BOTH FLAGS. Without them vLLM rejects any request carrying
+# `tools` with a 400: '"auto" tool choice requires --enable-auto-tool-choice and
+# --tool-call-parser to be set'. It is not a silent degradation to prose -- the
+# call fails outright, so the planner cannot run at all. `hermes` is the parser
+# for Qwen2.5's tool-call format.
+#
 # The model must already be in the HF cache; compute nodes have no outbound
 # network. Pre-fetch on the LOGIN node:
 #   python -c "from huggingface_hub import snapshot_download; \
@@ -70,4 +76,6 @@ apptainer exec --nv \
     --api-key "${LLM_API_KEY}" \
     --tensor-parallel-size 2 \
     --max-model-len 8192 \
-    --gpu-memory-utilization 0.90
+    --gpu-memory-utilization 0.90 \
+    --enable-auto-tool-choice \
+    --tool-call-parser hermes
