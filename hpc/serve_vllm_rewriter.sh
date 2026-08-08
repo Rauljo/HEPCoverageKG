@@ -1,14 +1,32 @@
 #!/bin/bash
 #SBATCH -p GPU
 #SBATCH --gres=gpu:a100:1
-# NOTE: an #SBATCH directive cannot read a shell variable, so TP=2 needs the
-# allocation overridden on the command line, which takes precedence:
-#     sbatch --gres=gpu:a100:2 --export=ALL,VLLM_TP=2,VLLM_MAX_LEN=16384 ...
-#SBATCH --job-name=vllm-qwen72b
-#SBATCH --output=/home/xucabrjs/hepcoveragekg_setup/logs/vllm72b_%j.out
-#SBATCH --time=24:00:00
-#SBATCH --mem=256G
+#SBATCH --job-name=vllm-rewriter
+#SBATCH --output=/home/xucabrjs/hepcoveragekg_setup/logs/vllm_rewriter_%j.out
+#SBATCH --time=04:00:00
+#SBATCH --mem=128G
 #SBATCH --cpus-per-task=16
+
+# =============================================================================
+# Serve the REWRITER model (S-67), not the answerer.
+#
+# Deliberately different from serve_vllm_70b.sh in three ways:
+#
+#   no tool-calling flags.  Rewriting is one prompt in, one sentence out. The
+#       `--tool-call-parser hermes` in the 70B script is Qwen-specific and would
+#       be wrong here anyway; Mistral uses a different parser.
+#
+#   8k context, not 32k.  A rewrite prompt is a few hundred tokens, so a long
+#       per-request cap would only shrink concurrency for nothing.
+#
+#   4h wall, 128G.  This is a short batch job, not a day-long server.
+#
+# WHY a different model family at all: the rewriter must not share vocabulary
+# with the answerer (S-37/S-67). Extraction is Claude Sonnet, answering is
+# Qwen-72B, so Mistral is a genuine third lineage -- and questions phrased by the
+# same model that answers them would be phrased in whatever wording that model
+# already finds easiest.
+# =============================================================================
 
 # =============================================================================
 # Serve Qwen2.5-72B-Instruct for aliases Tier 3 adjudication.
@@ -67,28 +85,7 @@ set -euo pipefail
 
 module load Python/3.9.6-GCCcore-11.2.0
 
-MODEL="${LLM_MODEL_NAME:-Qwen/Qwen2.5-72B-Instruct-AWQ}"
-# Port is a variable so a second model can be served alongside this one.
-# With 3 cards (one faulty) there is room for the answerer and the rewriter
-# at once, which removes a kill/reload cycle between them.
-PORT="${VLLM_PORT:-8000}"
-
-# Tensor parallelism and context length, both variable, because the right values
-# depend on what the server is FOR.
-#
-# Serving one debugging session: TP=1, 32k context. That was the 2026-07-31
-# setting and TP=1 was deliberate -- one of the three A100s is faulty (D-040) and
-# TP=2 draws two of three cards, so two of the three possible pairs include it.
-#
-# Running an evaluation BATCH: the constraint flips. Four concurrent jobs need
-# four KV-cache slots, and 97k cache / 32k context gives only ~3 -- so the jobs
-# queue behind each other. Measured on 1,352 real questions: median 7,627 tokens
-# per QUESTION summed across rounds, so a single request never approaches 32k.
-# Halving the context to 16k doubles the slots; TP=2 doubles cache and compute
-# again. The health guard below still refuses a bad draw in ~10s, so a wrong pair
-# costs a resubmit rather than a crashed run.
-TENSOR_PARALLEL="${VLLM_TP:-1}"
-MAX_LEN="${VLLM_MAX_LEN:-32768}"
+MODEL="${REWRITER_MODEL:-mistralai/Mistral-Small-24B-Instruct-2501}"
 PORT="${LLM_PORT:-8000}"
 
 echo "Node:  $(hostname)"
@@ -163,10 +160,9 @@ export HF_HUB_OFFLINE=1
 apptainer exec --nv \
     ~/hepcoveragekg_setup/images/vllm-openai-v0.8.5.sif \
     vllm serve "${MODEL}" \
-    --host 0.0.0.0 --port "${PORT}" \
+    --host 0.0.0.0 \
+    --port 8000 \
     --api-key "${LLM_API_KEY}" \
-    --max-model-len "${MAX_LEN}" \
-    --tensor-parallel-size "${TENSOR_PARALLEL}" \
-    --gpu-memory-utilization 0.90 \
-    --enable-auto-tool-choice \
-    --tool-call-parser hermes
+    --served-model-name "${MODEL}" \
+    --max-model-len 8192 \
+    --gpu-memory-utilization 0.90

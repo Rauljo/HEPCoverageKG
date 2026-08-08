@@ -25,6 +25,7 @@ the exact failure mode being fixed. Add it later as a measured ablation.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 
 MAX_LABELS = 6
@@ -129,8 +130,53 @@ class EntityContext:
         return "\n".join(out)
 
 
+# Typography-only LaTeX: it changes how a symbol is drawn and nothing about what
+# it means, so unwrapping it costs no information and buys back budget.
+_TYPOGRAPHY = re.compile(
+    r"\\(?:mathup|mathrm|mathbf|mathit|mathcal|mathsf|mathtt|text|textrm|textbf|"
+    r"textit|mbox|hbox|ensuremath|displaystyle|scriptstyle|boldsymbol|vec)\s*"
+)
+# Spacing commands, which are pure noise in a plain-text prompt.
+_SPACING = re.compile(r"\\(?:kern|hskip|hspace|vspace|quad|qquad)\s*-?[\d.]*\s*(?:pt|em|ex|cm|mm)?"
+                      r"|\\[,;:!>]|~")
+# A bar is meaning, not typography: `t\bar{t}` is ttbar and a physicist writes it
+# that way. Keep the letter and say so, rather than dropping the bar silently.
+# Tolerant of the nesting this corpus produces: after the typography commands
+# are removed, `\overline{{{\mathup{{{t}}}}}}` has collapsed to `\overline{{{{{{t}}}}}}`.
+_BAR = re.compile(r"\\(?:overline|bar|widebar)\s*\{*\s*([A-Za-z])\s*\}*")
+
+
+def clean_latex(text: str) -> str:
+    """Strip LaTeX *typography* while keeping the physics notation.
+
+    Measured on the corpus: ~10% of quote characters are markup, and the tail is
+    far worse -- some quotes are almost entirely `\\mathup{{{t}}}` wrappers, so a
+    320-character budget buys almost no sentence. That made the context dilute
+    rather than help on exactly the entities where quotes matter most.
+
+    What survives on purpose: subscripts and superscripts (`E_T^miss`), the bar
+    on an antiparticle (`t\\bar{t}` -> `ttbar`), and every ordinary word. What
+    goes: font commands, spacing commands, `$` delimiters and the braces left
+    behind. Cleaning happens BEFORE truncation, so the budget is spent on content.
+    """
+    text = text or ""
+    # Order matters: typography first, so `\overline{{{\mathup{{{t}}}}}}` has
+    # collapsed to something `_BAR` can see before the bar rule runs. Getting
+    # this backwards left a literal `\overlinet` in the output.
+    text = _TYPOGRAPHY.sub("", text)
+    text = _SPACING.sub(" ", text)
+    text = text.replace("$", "")
+    text = _BAR.sub(r"\1bar", text)
+    # Braces are now empty grouping left by the commands above. Repeat because
+    # the nesting in this corpus runs several deep: `{{{\mathup{{{t}}}}}}`.
+    for _ in range(4):
+        text = re.sub(r"\{([^{}]*)\}", r"\1", text)
+    text = text.replace("{", "").replace("}", "")
+    return " ".join(text.split())
+
+
 def _truncate(text: str, limit: int = QUOTE_CHARS) -> str:
-    text = " ".join((text or "").split())
+    text = clean_latex(text)
     return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
 
 

@@ -229,13 +229,19 @@ Answer ONLY with a JSON object:
 }"""
 
 
-def _build_prompt(term_a: str, term_b: str, kind: str, theory_a: str, theory_b: str,
+def _build_prompt(term_a: str, term_b: str, kind: str,
                   context_a: str, context_b: str) -> str:
     """Assemble the adjudication prompt.
 
     context_a / context_b are rendered blocks from aliases.context (every wording
     the papers used, aliases, attributes, evidence quotes). When absent, the
     prompt degrades to the bare labels.
+
+    Theory-RAG slots were removed on 2026-08-02. They were hard-set to "" inside
+    adjudicate_pair -- compute nodes have no outbound network -- so the prompt
+    carried two branches that could never be taken, which reads like a live
+    feature to anyone auditing why a verdict came out the way it did. See
+    ideas/open-vocab-reconciliation.md if the capability is ever revived.
     """
     parts = [_TASK, "", f"Entity kind: {kind}", ""]
 
@@ -244,11 +250,6 @@ def _build_prompt(term_a: str, term_b: str, kind: str, theory_a: str, theory_b: 
         parts += [context_b or f'ENTITY B:\n  primary name: "{term_b}"', ""]
     else:
         parts += [f'ENTITY A: "{term_a}"', f'ENTITY B: "{term_b}"', ""]
-
-    if theory_a:
-        parts += [f'Reference definition for A: "{theory_a}"']
-    if theory_b:
-        parts += [f'Reference definition for B: "{theory_b}"']
 
     parts += [_SCHEMA]
     return "\n".join(parts)
@@ -260,6 +261,7 @@ async def adjudicate_pair(
     kind: str = "concept",
     context_a: str = "",
     context_b: str = "",
+    temperature: float = 0.0,
 ) -> dict[str, Any]:
     """Ask the LLM whether term_a and term_b are the same entity.
 
@@ -267,19 +269,23 @@ async def adjudicate_pair(
     status is "error"), `confidence`, `explanation` and `error_type`.
 
     Check `status` before reading `is_match`. An error is not a negative verdict.
+
+    `temperature` defaults to 0.0 for production verdicts: greedy decoding is
+    reproducible, so a merge can always be explained. Sampling at temperature > 0
+    is a SEPARATE measurement -- see aliases/confidence.py -- because greedy
+    decoding hides doubt by construction: a pair the model is 51/49 on and one it
+    is 99/1 on both come back identical every time.
     """
     client, model_name = _get_llm_client()
 
-    # Theory RAG is disabled: compute nodes have no outbound network.
-    theory_a, theory_b = "", ""
-    prompt = _build_prompt(term_a, term_b, kind, theory_a, theory_b, context_a, context_b)
+    prompt = _build_prompt(term_a, term_b, kind, context_a, context_b)
 
     try:
         response = await client.chat.completions.create(
             model=model_name,
             messages=[{"role": "user", "content": prompt}],
             response_format={"type": "json_object"},
-            temperature=0.0,
+            temperature=temperature,
         )
         content = response.choices[0].message.content
         if not content:
