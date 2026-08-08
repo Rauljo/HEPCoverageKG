@@ -1,0 +1,19 @@
+{
+  "run_id": "20260802T101452-stub",
+  "started_at": "2026-08-02T10:14:52+00:00",
+  "git_sha": "6945b02-dirty",
+  "system": "stub",
+  "config": {
+    "kind": "stub"
+  },
+  "config_hash": "3bb2f83b0190",
+  "questions_path": "eval/questions/dev-2026-08-02-seed.jsonl",
+  "questions_hash": "cd716b2f4c37",
+  "n_questions": 10,
+  "repeats": 2,
+  "host": "eduroam-int-dhcp-97-59-134.ucl.ac.uk",
+  "model": "",
+  "finished_at": "2026-08-02T10:14:52+00:00",
+  "n_records": 20,
+  "wall_seconds": 0.0
+}

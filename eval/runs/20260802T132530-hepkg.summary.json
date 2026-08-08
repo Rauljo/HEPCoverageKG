@@ -1,0 +1,23 @@
+{
+  "run_id": "20260802T132530-hepkg",
+  "started_at": "2026-08-02T13:25:30+00:00",
+  "git_sha": "6945b02-dirty",
+  "system": "hepkg",
+  "config": {
+    "kind": "planner",
+    "model": "Qwen/Qwen2.5-72B-Instruct-AWQ",
+    "max_rounds": 6,
+    "max_places": 8,
+    "minimal_prompt": false
+  },
+  "config_hash": "b29c4f777113",
+  "questions_path": "eval/questions/dev-2026-08-02-sample.jsonl",
+  "questions_hash": "e36a9e0da2e8",
+  "n_questions": 53,
+  "repeats": 1,
+  "host": "eduroam-int-dhcp-97-59-134.ucl.ac.uk",
+  "model": "Qwen/Qwen2.5-72B-Instruct-AWQ",
+  "finished_at": "2026-08-02T13:25:31+00:00",
+  "n_records": 53,
+  "wall_seconds": 0.6
+}
