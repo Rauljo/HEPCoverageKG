@@ -184,10 +184,10 @@ def test_deep_pass_routes_errors_out_of_the_verdict_counts(tmp_path, monkeypatch
     from hepcoveragekg.aliases import run as aliases_run
 
     conn = _db_with([
-        ("hepkg:object:alpha", "detector_object", ["1"]),
-        ("hepkg:object:beta", "detector_object", ["1"]),
-        ("hepkg:object:gamma", "detector_object", ["1"]),
-        ("hepkg:object:delta", "detector_object", ["1"]),
+        ("hepkg:object:alpha", "detector_object", "alpha", ["1"]),
+        ("hepkg:object:beta", "detector_object", "beta", ["1"]),
+        ("hepkg:object:gamma", "detector_object", "gamma", ["1"]),
+        ("hepkg:object:delta", "detector_object", "delta", ["1"]),
     ])
 
     # Phase A stub: three candidate pairs, no embedding model involved.
@@ -235,7 +235,7 @@ def test_deep_pass_writes_only_where_told(tmp_path, monkeypatch):
     from hepcoveragekg.aliases import run as aliases_run
     import hepcoveragekg.aliases.semantics as semantics
 
-    conn = _db_with([("hepkg:object:alpha", "detector_object", ["1"])])
+    conn = _db_with([("hepkg:object:alpha", "detector_object", "alpha", ["1"])])
     monkeypatch.setattr(semantics, "generate_candidates", lambda items, **kw: [])
 
     target = tmp_path / "nested" / "here.json"
@@ -253,10 +253,10 @@ def test_dry_run_makes_no_llm_calls_and_writes_nothing(tmp_path, monkeypatch):
     import hepcoveragekg.aliases.semantics as semantics
 
     conn = _db_with([
-        ("hepkg:object:alpha", "detector_object", ["1"]),
-        ("hepkg:object:beta", "detector_object", ["1"]),
-        ("hepkg:generator:pythia8.212", "generator", ["1"]),
-        ("hepkg:generator:pythia8.230", "generator", ["1"]),
+        ("hepkg:object:alpha", "detector_object", "alpha", ["1"]),
+        ("hepkg:object:beta", "detector_object", "beta", ["1"]),
+        ("hepkg:generator:pythia8.212", "generator", "pythia8.212", ["1"]),
+        ("hepkg:generator:pythia8.230", "generator", "pythia8.230", ["1"]),
     ])
     monkeypatch.setattr(
         semantics, "generate_candidates", lambda items, **kw: [(items[0], items[1])]

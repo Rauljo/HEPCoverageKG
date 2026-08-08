@@ -49,6 +49,71 @@ def test_propose_groups_variants_but_not_versions_or_kinds():
     assert all(p.method == "normalize" and p.score == 1.0 for p in props)
 
 
+# --- Tier 1 label rules (pure) -----------------------------------------------
+
+
+def test_normalize_label_folds_case_and_separators_but_keeps_the_decimal_point():
+    assert normalize.normalize_label("B-Tagged Jet") == "btaggedjet"
+    assert normalize.normalize_label("b tagged jet") == "btaggedjet"
+    assert normalize.normalize_label("  b_tagged_jet  ") == "btaggedjet"
+    # the dot survives: labels carry cut values, and folding it would merge
+    # two different thresholds into one.
+    assert normalize.normalize_label("pT > 2.0 GeV") != normalize.normalize_label("pT > 20 GeV")
+
+
+def test_propose_labels_merges_identical_labels_across_unrelated_ids():
+    """The real MadGraph case: one label, ids the slug rule cannot connect."""
+    ents = [
+        ("hepkg:generator:madgraph5_amcnlo", "generator", "MadGraph5_aMC@NLO"),
+        ("hepkg:generator:mg5-amcnlo", "generator", "MadGraph5_aMC@NLO"),
+        ("hepkg:generator:madgraph5-amcatnlo", "generator", "MadGraph5_aMC@NLO"),
+        ("hepkg:generator:sherpa", "generator", "Sherpa"),
+    ]
+    assert normalize.propose(ents[:1] and [(i, k) for i, k, _ in ents]) == []  # ids never connect
+
+    props = normalize.propose_labels(ents)
+    ids = {i for p in props for i in (p.entity_id_a, p.entity_id_b)}
+    assert ids == {
+        "hepkg:generator:madgraph5_amcnlo",
+        "hepkg:generator:mg5-amcnlo",
+        "hepkg:generator:madgraph5-amcatnlo",
+    }
+    assert all(p.method == "label_exact" and p.score == 1.0 for p in props)
+
+
+def test_propose_labels_never_merges_across_kinds():
+    ents = [
+        ("hepkg:object:bjet", "detector_object", "b-tagged jet"),
+        ("hepkg:process:bjet", "physics_process", "b-tagged jet"),
+    ]
+    assert normalize.propose_labels(ents) == []
+
+
+def test_label_norm_only_covers_what_exact_missed():
+    ents = [
+        ("hepkg:object:a", "detector_object", "b-tagged jet"),
+        ("hepkg:object:b", "detector_object", "b-tagged jet"),   # exact with a
+        ("hepkg:object:c", "detector_object", "B Tagged Jet"),   # only after folding
+    ]
+    props = normalize.propose_labels(ents)
+    by_method = {p.method: [] for p in props}
+    for p in props:
+        by_method[p.method].append(frozenset((p.entity_id_a, p.entity_id_b)))
+
+    assert by_method["label_exact"] == [frozenset({"hepkg:object:a", "hepkg:object:b"})]
+    # c joins, and the a/b edge is not re-emitted under the weaker method
+    assert frozenset({"hepkg:object:a", "hepkg:object:b"}) not in by_method["label_norm"]
+    assert frozenset({"hepkg:object:a", "hepkg:object:c"}) in by_method["label_norm"]
+
+
+def test_propose_labels_ignores_blank_labels():
+    ents = [
+        ("hepkg:object:a", "detector_object", ""),
+        ("hepkg:object:b", "detector_object", "   "),
+    ]
+    assert normalize.propose_labels(ents) == []
+
+
 # --- clustering (pure) -------------------------------------------------------
 
 
@@ -95,7 +160,7 @@ def _db_with(entities):
     conn = store.connect(":memory:")
     # seed needs the bundle FKs; entity_occurrence.bundle_id references bundle_import,
     # so create one bundle per paper id used
-    papers = {p for _, _, ps in entities for p in ps}
+    papers = {p for *_, ps in entities for p in ps}
     conn.execute("INSERT INTO paper (arxiv_id, title, experiments) VALUES ('p','t','[]')")
     conn.execute(
         "INSERT INTO source_snapshot (source_hash, paper_id, title, source_path, experiments)"
@@ -107,35 +172,58 @@ def _db_with(entities):
             " schema_version, imported_at) VALUES (?, 'p','sh','h','v','t')",
             (f"b{p}",),
         )
-    for eid, kind, ps in entities:
-        conn.execute("INSERT INTO entity (entity_id, kind, label) VALUES (?,?,?)", (eid, kind, eid))
+    for eid, kind, label, ps in entities:
+        conn.execute("INSERT INTO entity (entity_id, kind, label) VALUES (?,?,?)", (eid, kind, label))
         for p in ps:
             conn.execute(
                 "INSERT INTO entity_occurrence (bundle_id, entity_id, paper_id, kind, label)"
                 " VALUES (?,?,?,?,?)",
-                (f"b{p}", eid, p, kind, eid),
+                (f"b{p}", eid, p, kind, label),
             )
     return conn
 
 
+# Labels are real wordings, not echoes of the id: the Tier 1 label rules key on
+# them, so a fixture that set label = entity_id would make the id rule and the
+# label rule indistinguishable.
 ENTITIES = [
-    ("hepkg:object:b_jet", "detector_object", ["1", "2", "3"]),        # 3 papers
-    ("hepkg:object:b-jet", "detector_object", ["1", "2", "3", "4"]),   # 4 papers -> canonical
-    ("hepkg:object:bjet", "detector_object", ["5", "6"]),              # 2 papers
-    ("hepkg:generator:sherpa_2_2_1", "generator", ["1"]),
-    ("hepkg:generator:sherpa_2_2_2", "generator", ["2"]),
+    ("hepkg:object:b_jet", "detector_object", "b-tagged jet", ["1", "2", "3"]),       # 3 papers
+    ("hepkg:object:b-jet", "detector_object", "b-tagged jet", ["1", "2", "3", "4"]),  # 4 -> canonical
+    ("hepkg:object:bjet", "detector_object", "B Tagged Jet", ["5", "6"]),             # 2 papers
+    ("hepkg:generator:sherpa_2_2_1", "generator", "Sherpa 2.2.1", ["1"]),
+    ("hepkg:generator:sherpa_2_2_2", "generator", "Sherpa 2.2.2", ["2"]),
 ]
 
 
 def test_build_writes_proposals_but_does_not_resolve():
     conn = _db_with(ENTITIES)
     run.build(conn)
-    # b-jet trio proposed; sherpa versions not
-    assert conn.execute("SELECT COUNT(*) FROM same_as WHERE status='proposed'").fetchone()[0] == 2
+    by_method = dict(conn.execute(
+        "SELECT method, COUNT(*) FROM same_as WHERE status='proposed' GROUP BY method"))
+    # the id rule connects the b-jet trio; the sherpa versions stay apart
+    assert by_method["normalize"] == 2
+    # b_jet and b-jet share a byte-identical label; bjet only matches once folded
+    assert by_method["label_exact"] == 1
+    assert by_method["label_norm"] == 1
     # nothing resolves yet
     assert conn.execute("SELECT COUNT(*) FROM entity_canonical").fetchone()[0] == 0
     # entity table untouched
     assert conn.execute("SELECT COUNT(*) FROM entity").fetchone()[0] == 5
+
+
+def test_label_rules_find_a_cluster_the_id_rule_cannot_see():
+    """Same label, ids with nothing in common — the MadGraph shape (D-050)."""
+    conn = _db_with(ENTITIES + [
+        ("hepkg:generator:madgraph5_amcnlo", "generator", "MadGraph5_aMC@NLO", ["1"]),
+        ("hepkg:generator:mg5-amcnlo", "generator", "MadGraph5_aMC@NLO", ["2"]),
+    ])
+    run.build(conn)
+    store.confirm(conn)
+    store.materialize_canonical(conn)
+    canon = dict(conn.execute("SELECT entity_id, canonical_id FROM entity_canonical"))
+    assert canon["hepkg:generator:madgraph5_amcnlo"] == canon["hepkg:generator:mg5-amcnlo"]
+    # and the version-numbered generators are still not touched
+    assert "hepkg:generator:sherpa_2_2_1" not in canon
 
 
 def test_build_is_idempotent():

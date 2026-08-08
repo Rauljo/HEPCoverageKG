@@ -39,6 +39,19 @@ def entities_with_kind(conn) -> list[tuple[str, str]]:
     return [(r["entity_id"], r["kind"]) for r in conn.execute("SELECT entity_id, kind FROM entity")]
 
 
+def entities_with_label(conn) -> list[tuple[str, str, str]]:
+    """(entity_id, kind, label) for the Tier 1 label rules.
+
+    Reads `entity`, not `entity_occurrence`: the label rules ask whether two
+    *entities* denote one concept, and the rollup label is the per-entity answer.
+    Per-paper wordings are Tier 2's input, not this tier's.
+    """
+    return [
+        (r["entity_id"], r["kind"], r["label"])
+        for r in conn.execute("SELECT entity_id, kind, label FROM entity")
+    ]
+
+
 def paper_counts(conn) -> dict[str, int]:
     """entity_id -> number of distinct papers it occurs in (for the canonical pick)."""
     return {
