@@ -67,6 +67,24 @@ DEFAULT_MAX_ROWS = 25
 # change answer. Guessing harder now would only look like rigour.
 SEARCH_BREADTH = 60
 
+# Hard cap on one completion. Without it a single call can run to the context
+# limit, and on 2026-08-02 that stalled an evaluation run for an hour on one
+# question ("How many analyses define the object Electron?").
+#
+# The arithmetic is the point, because the failure is silent and looks like a
+# hang rather than an error: the client allows 120s per request with 3 retries,
+# and a 72B AWQ on one A100 generates ~26 tokens/s. So ANY completion beyond
+# ~3,100 tokens times out, is retried, generates again from scratch, and the
+# server ends up working on stacked abandoned requests while the client makes no
+# progress. Six rounds x 4 attempts x 120s = 48 minutes for one question.
+#
+# 800 is generous for what a planner legitimately emits: a few tool calls and a
+# short prose answer. S-29 exists precisely so the model never retypes entity
+# ids, which was the only thing that ever needed a long completion -- so a
+# completion running past this cap means something has gone wrong, and truncating
+# it surfaces that as a visible bad answer instead of an hour of silence.
+MAX_COMPLETION_TOKENS = int(os.environ.get("LLM_MAX_COMPLETION_TOKENS", 800))
+
 # Sent when the model tries to answer having retrieved nothing. Shared with
 # graph.py so the two cannot drift apart.
 NUDGE = (
@@ -150,6 +168,84 @@ TOOL_SPECS: list[dict] = [
             "type": "object",
             "properties": {"entity_ids": {"type": "array", "items": {"type": "string"}}},
             "required": ["entity_ids"],
+        },
+    },
+    {
+        "name": "contents_of",
+        "description": (
+            "What one paper says. Give the arXiv id directly -- do NOT search for a paper "
+            "and do NOT pass a paper id to describe. This is the only way to answer "
+            "'which generators / systematics / regions does analysis 2001.06899 use?'. "
+            "Optionally filter to one predicate."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "paper_ids": {"type": "array", "items": {"type": "string"},
+                    "description": "arXiv ids, e.g. ['2001.06899']"},
+                "predicate": {"type": "string",
+                    "description": "optional; omit to get everything the paper says"},
+            },
+            "required": ["paper_ids"],
+        },
+    },
+    {
+        "name": "facets",
+        "description": (
+            "Papers whose analysis card carries these closed-vocabulary values. THE CHEAPEST "
+            "ROUTE: no search, no spelling, a set operation over a fixed menu. Use it whenever "
+            "the question names a standard object, technique or process family that appears in "
+            "the FACET VOCABULARY -- 'which searches select b-jets and missing transverse "
+            "momentum' is facets(field='objects', values=['BJet','MET'], mode='all', "
+            "category='search'). Values must come from the vocabulary EXACTLY as written "
+            "('BJet', not 'b-jet'). "
+            "Returns each paper with the labels that caused the match: read them. The tag is a "
+            "family, the label is what the paper actually did -- six papers tagged ABCD use six "
+            "different ABCD variants. The vocabulary is closed and misses roughly a quarter of "
+            "entities, so this is a CANDIDATE SET, not a final count; confirm with the labels, "
+            "or with search/contents_of when the question is not about a standard category."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "field": {"type": "string",
+                    "description": "one of: objects, generators, process_families, "
+                                   "background_methods, statistical_methods, "
+                                   "systematic_sources, observable_types"},
+                "values": {"type": "array", "items": {"type": "string"},
+                    "description": "vocabulary keys, exactly as spelled in the schema card"},
+                "mode": {"type": "string", "enum": ["all", "any"],
+                    "description": "'all' = the paper has every value (AND); 'any' = at least "
+                                   "one (OR). Default 'all'."},
+                "category": {"type": "string", "enum": ["search", "measurement"],
+                    "description": "optional filter on the paper's category"},
+                "experiment": {"type": "string",
+                    "description": "optional, e.g. 'ATLAS' or 'CMS'"},
+            },
+            "required": ["field", "values"],
+        },
+    },
+    {
+        "name": "facet_entities",
+        "description": (
+            "The distinct THINGS carrying one facet tag, with their labels -- not the papers. "
+            "`facets` answers 'which papers use an ABCD-family estimate'; this answers 'and what "
+            "are they', which is the question a coverage map is usually really being asked: "
+            "how many different ways does this literature do X, and what are they. "
+            "Returns three counts because they differ: papers, raw entity records, and distinct "
+            "things after alias merging. Use it for 'how many different / which different / what "
+            "kinds of' questions."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "field": {"type": "string", "description": "the facet field"},
+                "value": {"type": "string",
+                    "description": "one key, taken from a search hit's facets"},
+                "kind": {"type": "string",
+                    "description": "optional entity-kind filter"},
+            },
+            "required": ["field", "value"],
         },
     },
     {
@@ -476,9 +572,18 @@ def _check_ids(args: dict, known: set[str]) -> list[str]:
     return unknown
 
 
+# Every column a template can return an entity id in. Narrower than this is a
+# guard bug, not caution: `known_entity_ids` is what `_check_ids` accepts, so an
+# id the graph itself returned but that is not listed here gets rejected as
+# invented. `contents_of` exposed it on 2026-08-03 -- its rows carry `object_id`,
+# so nothing it returned was ever recognised -- and `describe` had the same
+# latent problem, which is why chaining one describe into another failed.
+_ID_COLUMNS = ("entity_id", "canonical_id", "object_id", "subject_id")
+
+
 def _collect_ids(rows: list[dict], note: str) -> set[str]:
     """Entity ids a result handed back, from its rows and its note."""
-    found = {str(r[k]) for r in rows for k in ("entity_id", "canonical_id")
+    found = {str(r[k]) for r in rows for k in _ID_COLUMNS
              if isinstance(r, dict) and r.get(k)}
     found |= set(re.findall(r"hepkg:[a-z_]+:[A-Za-z0-9_.\-]+", note or ""))
     return found
@@ -542,13 +647,24 @@ def build_executor(conn, index, sets: Optional[dict] = None) -> Callable[[str, d
                                    kind=args.get("kind"), limit=limit)
             name = f"set_{len(sets) + 1}"
             sets[name] = ids
-            return templates.QueryResult(
-                shape="search",
-                rows=[{"entity_id": h.entity_id, "label": h.label, "kind": h.kind}
-                      for h in hits],
-                note=(f"saved as {name} ({len(ids)} entities, canonical clusters expanded). "
-                      f"Pass {name} as object_set/entity_set -- do not retype the ids."),
-            )
+            # `facets` is included on every hit that has one. This is how the
+            # model learns which closed-vocabulary key covers a concept -- from
+            # an entity that demonstrably exists, rather than from a vocabulary
+            # list in the prompt. Shipping the list instead would have put five
+            # of the seven Tier 1 gold keys into the system prompt (D-054).
+            rows = []
+            for h in hits:
+                row = {"entity_id": h.entity_id, "label": h.label, "kind": h.kind}
+                if h.facets:
+                    row["facets"] = h.facets
+                rows.append(row)
+            tagged = sum(1 for h in hits if h.facets)
+            note = (f"saved as {name} ({len(ids)} entities, canonical clusters expanded). "
+                    f"Pass {name} as object_set/entity_set -- do not retype the ids.")
+            if tagged:
+                note += (f" {tagged}/{len(hits)} hits carry facet tags; those keys are"
+                         " what the `facets` tool takes.")
+            return templates.QueryResult(shape="search", rows=rows, note=note)
         if tool == "describe":
             return templates.describe(conn, ids_for(args, "entity_ids", "entity_set"),
                                       args.get("predicate"))
@@ -557,6 +673,29 @@ def build_executor(conn, index, sets: Optional[dict] = None) -> Callable[[str, d
                                          ids_for(args, "object_ids", "object_set"))
         if tool == "papers_of":
             return templates.papers_of(conn, ids_for(args, "entity_ids", "entity_set"))
+        if tool == "contents_of":
+            papers = args.get("paper_ids") or args.get("paper_id") or []
+            if isinstance(papers, str):
+                papers = [papers]
+            return templates.contents_of(conn, papers, args.get("predicate"))
+        if tool == "facets":
+            values = args.get("values") or args.get("value") or []
+            if isinstance(values, str):
+                values = [values]
+            return templates.facets(
+                conn, args["field"], values,
+                mode=args.get("mode", "all"),
+                category=args.get("category"),
+                experiment=args.get("experiment"),
+            )
+        if tool == "facet_entities":
+            value = args.get("value")
+            if isinstance(value, list):      # a values=[...] slip; one key is meant
+                value = value[0] if value else None
+            if not value:
+                raise ValueError("facet_entities needs a single `value`")
+            return templates.facet_entities(conn, args["field"], value,
+                                            kind=args.get("kind"))
         if tool == "count":
             return templates.count(conn, args["predicate"],
                                    ids_for(args, "object_ids", "object_set"))
@@ -610,7 +749,8 @@ def _prepare(conn, index, question, max_rounds, max_places, max_rows,
 
         def chat(msgs, tls):  # noqa: E306
             return client.chat.completions.create(
-                model=model, messages=msgs, tools=tls, temperature=0.0)
+                model=model, messages=msgs, tools=tls, temperature=0.0,
+                max_tokens=MAX_COMPLETION_TOKENS)
 
     state = {
         "question": question,

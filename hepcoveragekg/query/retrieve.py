@@ -95,6 +95,14 @@ class Hit:
     dense_rank: Optional[int] = None
     sparse_rank: Optional[int] = None
     matched_on: str = ""  # the surface form that actually matched
+    # Closed-vocabulary tags this entity carries, if the facet layer is derived.
+    # Attached here rather than shipped as a vocabulary list in the prompt: a
+    # hit already IS the answer to "which facet key covers this concept", it is
+    # grounded in an entity that demonstrably exists, and it costs nothing as
+    # the vocabulary grows. Measured on the phrasings the supervisor's Tier 1
+    # questions use, the right key is on the rank-1 hit 8 times out of 8 with
+    # BM25 alone (D-054).
+    facets: list[str] = field(default_factory=list)
 
     @property
     def found_by(self) -> str:
@@ -265,7 +273,38 @@ def search(
         ))
 
     hits = _dedupe(hits, conn)
-    return hits[:limit]
+    hits = hits[:limit]
+    _attach_facets(hits, conn)
+    return hits
+
+
+def _attach_facets(hits: list[Hit], conn) -> None:
+    """Hang each hit's closed-vocabulary tags on it, in one query.
+
+    After the slice, not before: tagging 200 pooled candidates to show 60 would
+    be five sixths wasted work.
+
+    Silent when the facet layer has not been derived. The query layer has to
+    keep working against a database built before the facets tables existed --
+    the alternative is that adding a derived layer breaks every older graph.
+    """
+    if conn is None or not hits:
+        return
+    ids = sorted({h.entity_id for h in hits})
+    try:
+        rows = conn.execute(
+            "SELECT DISTINCT entity_id, value FROM entity_facet"
+            f" WHERE entity_id IN ({','.join('?' * len(ids))})"
+            " ORDER BY entity_id, value",
+            ids,
+        ).fetchall()
+    except Exception:
+        return
+    by_entity: dict[str, list[str]] = defaultdict(list)
+    for row in rows:
+        by_entity[row["entity_id"]].append(row["value"])
+    for hit in hits:
+        hit.facets = by_entity.get(hit.entity_id, [])
 
 
 def _dedupe(hits: list[Hit], conn) -> list[Hit]:

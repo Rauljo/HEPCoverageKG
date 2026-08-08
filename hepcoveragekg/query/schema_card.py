@@ -109,6 +109,7 @@ class SchemaCard:
     evidence_share: float = 0.0
     kinds: list[tuple[str, int]] = field(default_factory=list)
     predicates: list[Predicate] = field(default_factory=list)
+    facet_fields: list[tuple[str, list[str], int, int]] = field(default_factory=list)
 
     def render(self) -> str:
         """The prompt block. Ordered most-useful-first, because a model reading a
@@ -129,7 +130,49 @@ class SchemaCard:
         if rare:
             out += ["", "  rare (<= 20 rows; usable, but check the result is not empty):"]
             out += [f"    {p.name} ({p.rows})" for p in rare]
+        out += self._facet_block()
         return "\n".join(out)
+
+    def _facet_block(self) -> list[str]:
+        """Field NAMES and coverage. Deliberately no example values.
+
+        An earlier version listed every value in every field (~590 tokens). Two
+        problems killed it, and the second is the serious one.
+
+        It anchors. Whichever values were chosen as "representative" would
+        quietly become the working vocabulary, and that editorial choice would
+        shape the distribution of tool calls with no measurement behind it.
+
+        It leaks the answers. The values that read as most natural to list --
+        BJet, MET, ABCD, Unfolding, SUSY -- are FIVE OF THE SEVEN distinct keys
+        in the supervisor's Tier 1 gold answers. Any Tier 1 score would then be
+        partly measuring that the answer key was pasted into the prompt.
+
+        Field names are a different category: they are STRUCTURE, required to
+        form a `facets` call at all and not discoverable from any result. Values
+        are CONTENT, and content comes from the graph -- search hits carry the
+        facet keys of whatever they matched, at rank 1 on 8 of 8 tested
+        phrasings (D-054). The rest of this card follows the same rule: it lists
+        entity kinds and predicate names, never example entity labels.
+
+        Coverage stays. It is a number about reliability, not an answer, and
+        without it a facet result reads as a complete index when a quarter of
+        entities carry no tag at all.
+        """
+        if not self.facet_fields:
+            return []
+        out = [
+            "",
+            "FACET FIELDS (closed vocabularies, filterable with the `facets` tool)",
+        ]
+        for field_name, _values, matched, total in self.facet_fields:
+            share = f"{matched / total:.0%} of entities tagged" if total else "empty"
+            out.append(f"  {field_name:<22} {share}")
+        out += [
+            "  Keys are fixed strings, not free text. Search results carry the keys of",
+            "  whatever they matched -- take keys from there rather than guessing.",
+        ]
+        return out
 
 
 def _distribution(rows: list) -> list[tuple[str, int]]:
@@ -192,7 +235,56 @@ def build(conn) -> SchemaCard:
             )
         )
 
+    card.facet_fields = _facet_fields(conn)
     return card
+
+
+def _facet_fields(conn) -> list[tuple[str, list[str], int, int]]:
+    """(field, every value in use, entities tagged, entities of that kind).
+
+    Values come from `entity_facet`, i.e. what the vocabulary actually MATCHED
+    in this corpus, not the full enum. Listing keys that match nothing here
+    would invite calls that correctly return zero papers, and a model reading an
+    empty result cannot tell "no paper does this" from "the key was wrong".
+
+    Silently absent when the layer has not been derived: the query layer must
+    keep working on a database that predates the facets tables.
+    """
+    from hepcoveragekg.facets import CARD_FIELDS
+
+    try:
+        rows = conn.execute(
+            "SELECT field, value FROM entity_facet GROUP BY field, value ORDER BY field, value"
+        ).fetchall()
+    except Exception:          # table absent -> no facet block, not a crash
+        return []
+    if not rows:
+        return []
+
+    values: dict[str, list[str]] = {}
+    for r in rows:
+        values.setdefault(r["field"], []).append(r["value"])
+
+    out: list[tuple[str, list[str], int, int]] = []
+    for field_name in sorted(values):
+        kinds = sorted(k for k, f in CARD_FIELDS.items() if f == field_name)
+        if not kinds:
+            continue
+        marks = ",".join("?" * len(kinds))
+        row = conn.execute(
+            "SELECT COUNT(*) AS total, SUM(tagged) AS matched FROM ("
+            "  SELECT MAX(CASE WHEN f.entity_id IS NULL THEN 0 ELSE 1 END) AS tagged"
+            "    FROM entity_occurrence eo"
+            "    LEFT JOIN entity_facet f"
+            "      ON f.paper_id = eo.paper_id AND f.entity_id = eo.entity_id"
+            "     AND f.field = ?"
+            f"  WHERE eo.kind IN ({marks})"
+            "   GROUP BY eo.paper_id, eo.entity_id)",
+            (field_name, *kinds),
+        ).fetchone()
+        out.append((field_name, values[field_name],
+                    row["matched"] or 0, row["total"] or 0))
+    return out
 
 
 def render(conn) -> str:

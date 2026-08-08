@@ -75,6 +75,27 @@ generator but does not record their tunes" is a good answer. Inventing the tunes
 is not. A question the graph cannot answer is information about coverage, which
 is the point of the project.
 
+FACET TAGS
+Some entities also carry facet tags: values from a small closed vocabulary,
+assigned by matching patterns against the entity's own label. No model was
+involved -- it is a lookup table. Because the values are fixed strings, they
+support exact set operations ("papers with both X and Y") without depending on
+how each paper happened to word things.
+
+Two limits, both of which matter when reading a facet result:
+  The vocabulary is CLOSED. Roughly a quarter of entities match no pattern and
+  carry no tag. They keep their label and every fact -- they are simply absent
+  from any facet answer, silently. A facet result is a floor, not a total.
+  A tag names a FAMILY, not a specific method. Papers sharing one tag routinely
+  did measurably different things -- a modified version, a two-dimensional
+  version, one built on a different variable. The tag says where to look; the
+  label says what is actually there, so read the labels before concluding that
+  two papers did the same thing.
+
+Search results carry the facet tags of whatever they matched, so that is where
+the keys come from. A key that is not in the vocabulary is reported as unknown
+rather than as zero papers, so an empty facet result means what it says.
+
 NOTATION
 l = lepton (electron or muon); v = neutrino, seen as missing energy;
 g = photon; m = muon; t = tau; s = cross-section; a bar means antiparticle
@@ -129,8 +150,29 @@ PURPOSE_SECTIONS = (
     "THE SAME THING IS WRITTEN MANY WAYS",
     "EVIDENCE",
     "WHEN THE GRAPH CANNOT ANSWER",
+    "FACET TAGS",
     "NOTATION",
 )
+
+# FACET TAGS is written to DESCRIBE the layer, never to recommend it. The line
+# it stays behind: no sentence tells the model which route to take.
+#
+# That restraint is the whole measurement. The supervisor's scoring says an LLM
+# call on a Tier 1 question is a soft fail *even when the answer is right* --
+# so which rung the agent picks IS the thing being graded. Writing "prefer the
+# cheapest route" into the prompt would not produce an agent that chooses well;
+# it would hard-code the exam answer and delete the result.
+#
+# Whether tier-appropriate choice emerges or has to be instructed is a real
+# question, so it is an ablation arm rather than a decision:
+#   A  no FACET TAGS section
+#   B  this section, descriptive          <- default
+#   C  this section + an explicit "prefer the cheapest route" line
+# B ~ C means the model works it out. C >> B is the more interesting finding.
+PREFER_CHEAPEST_ROUTE = """\
+When a question can be answered from facet tags alone, use them rather than
+retrieving and reading labels: it is exact, and it costs nothing.
+"""
 
 
 def ddl(conn) -> str:

@@ -501,3 +501,16 @@ def test_a_limit_argument_is_ignored_if_one_arrives(conn, index):
     )
     s = planner.answer(conn, index, "q", chat=chat)
     assert not any(st.error for st in s.steps), "an extra argument must not break the call"
+
+
+def test_ids_are_recognised_from_every_column_a_template_returns():
+    """`known_entity_ids` is what the invented-id guard accepts, so a column
+    missing from the list makes the guard reject ids the graph itself returned.
+    `contents_of` returns `object_id` and nothing it produced was recognised --
+    and `describe` had the same latent problem, which is why chaining one
+    describe into another failed."""
+    from hepcoveragekg.query import planner
+
+    rows = [{"object_id": "hepkg:generator:pythia8"}, {"subject_id": "hepkg:sample:ttbar"}]
+    found = planner._collect_ids(rows, "")
+    assert found == {"hepkg:generator:pythia8", "hepkg:sample:ttbar"}
