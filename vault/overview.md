@@ -1,12 +1,47 @@
 # Overview — current state
 
 *Living document: always reflects the present. History lives in `decisions.md` and `logs/`.*
-*Last updated: 2026-07-31*
+*Last updated: 2026-08-07*
 
-> **→ [`system.md`](system.md) (v1.3, 2026-07-31) is now the reference document for what gets built
+> **→ [`system.md`](system.md) (v1.8, 2026-08-07) is now the reference document for what gets built
 > next**: the query system and the agent layers on top of the graph, the evaluation design, the
-> technology stack, and the order of work (S-01 … S-22). Read it after this file.
+> technology stack, and the order of work (S-01 … S-57). Read it after this file.
+> **2026-08-02 — the order of work is agreed** (§5 Phase 3, blocks 0–7). **Step 0 is asking Gabriel
+> for questions**, today. Harness designed but not built:
+> [`ideas/eval-harness-design.md`](ideas/eval-harness-design.md). Two pipeline ideas recorded as
+> ablation axes and deliberately *not* built yet (S-53 decomposition → set algebra, S-54 paraphrase
+> fusion). **S-56: run the D-038 signature parse now** — prose reads but cannot be counted.
+> **2026-08-02 (afternoon) — the harness is BUILT and running** (`hepcoveragekg/eval/`, **335 tests**).
+> First real run: 10 questions × 3 repeats, **count_correct 0.75**, abstention 1.00, and **zero spread
+> across repeats** — so the noise floor is ~0 and any ablation difference will be readable.
+> **The generated question set does not work yet, and that is the day's finding**: truth must be
+> *invariant to where the concept boundary is drawn* (**S-58**); 52% of concepts survive that test and
+> **the 48% discarded is a direct measurement of how incomplete deduplication is**. Six question tiers
+> defined (**S-59**), with per-paper questions as the backbone. **Dedup is now upstream of the question
+> set.** Deep alias proposals exist (126,335 pairs) but must **not** be confirmed — ~50% precision,
+> physics errors (**D-044**); they are useful as an ambiguity *filter* (**S-60**).
+> See [`logs/2026-08-02.md`](logs/2026-08-02.md).
+> **2026-08-03 — three question tiers exist, and the biggest finding is a gap they exposed.**
+> **A coverage map could not read a paper**: every template went concept -> papers and nothing was
+> its inverse, so *"which generators does analysis X use?"* produced 60 `unknown_entity_id` errors.
+> `contents_of` (S-63, D-047) fixed it — `count_correct` 0.06 -> 0.50.
+> **Tier A** 1,352 per-paper questions (exact truth, no dedup, reaches the 31% of assertions stored
+> as free text) · **Tier B** 436 from 109 invariance-tested concepts · **retrieval** 720 whose truth
+> is an entity id and which ambiguity cannot spoil. **S-66**: confirming merges GROWS the question
+> set while filtering with them shrinks it, so reviewing the 111 pairs is what unlocks Tier B.
+> Four measurement bugs, all metrics anchored to one code path. See
+> [`logs/2026-08-03.md`](logs/2026-08-03.md).
 > The sections below still describe how the graph itself is built (M1 done, M2–M4 open).
+> **2026-08-01 — the evaluation is designed end to end** (§4 rewritten, S-32 … S-52). The reframing:
+> **three layers get measured separately**, and almost everything being built is *the agent against
+> the graph*, where **the graph itself is exact ground truth** — no judge needed for most of it.
+> Gabriel's time buys **judge calibration and disagreement adjudication, never labels** (<2 hours).
+> The **reference reader** (a third model, one pass per paper, constrained to our schema) is the only
+> thing that measures *the graph against the papers*. See [`logs/2026-08-01.md`](logs/2026-08-01.md).
+> **Two unblocks found** (D-041, D-042): Gabriel's extraction pipeline runs on our own vLLM
+> (`--provider openai`), so more papers are bounded by cluster time, not by him; and
+> `HEPKG_promopt_tests/GROUND_TRUTH.md` already holds **hand-written ground truth for ~17 papers** on
+> final states — stale since 2026-07-05, but real.
 > **2026-07-31 — the query layer works end to end.** *"How many analyses used Pythia?"* returns
 > **58 papers / 344 facts / 367 assertions**, matching ground truth exactly, 100% grounded, 202
 > evidence quotes, 6 seconds. Built: `query/{schema_card,templates,retrieve,planner,verify,graph}.py`,

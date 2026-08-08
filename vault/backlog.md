@@ -164,6 +164,70 @@ Themes: **Extraction & retrieval** · **Graph & canonicalization** · **Agents &
 
 ---
 
+## Evaluation (designed 2026-08-01 — `system.md` §4, S-32 … S-52)
+
+*Ordered by value-per-day. **Everything in the first block needs no human and no judge** — the graph
+is exact ground truth for it (S-32). The thing to resist is starting with Gabriel.*
+
+- [x] **Harness** (S-22) — `hepcoveragekg/eval/`, 335 tests. Runs any `System`; run identity, test-set lock, variance-first, `eval score` rescoring.
+- [~] **Backwards question generation** (S-33) — v1 and v2 both produced unusable truth (1/36, then 0/36). **Rebuild around S-58 invariance + S-59 tiers.**
+  - [ ] **Tier A (per-paper)** — the backbone, ~540 questions, dedup-independent. Pre-check the 22 intra-paper duplicates (D-046).
+  - [ ] **Tier B/C** — invariance-tested concepts (242 well-posed) and ordinal questions.
+  - [ ] **Tier D/E** — safe-unique anchors and anchor+hop. **Re-measure safe-unique with the alias proposals folded into the broad reading first** — 3,733 is an upper bound.
+  - [ ] **Tier F** — intersections; measure the yield before committing.
+- [ ] **Per-question item analysis** (S-62) — group by `qid` across runs/systems; a question everything fails is a suspect question. Report mode only, no re-runs.
+- [ ] **Fold `aliases_proposed.json` into the broad reading** (S-60) — filter, never merges.
+- [ ] **Two cheap baselines** (S-44) — the 70B with no corpus (1 h), and plain RAG over the same 60 papers (½ day, reuses bge + existing BM25). A number on day one.
+- [ ] **Plan type-checking against the schema card** (S-35) — guard *and* metric; the 2026-07-31 wrong-direction failure is **confirmed still live**, 3/3 in the seed run.
+- [x] **`contents_of`** (D-047) — the paper -> contents inverse hop. Built, tested, wired as a planner tool.
+- [ ] **Count inside `contents_of`** — counting is the weak spot (0.50). Diagnosed: for *result-subject* predicates the planner does not reach for `contents_of` at all (7 of 16 failures), and where it does it tallies rows **by eye** and lands one or two out. Arithmetic belongs in SQL, which is why `count` exists.
+- [ ] **★★ IMPORT the facet + signature layers** (`origin/kg-evaluation-questions`:`pilot/analysis_facets.jsonl`, 60 rows/49 KB; `hepkg_acquisition/signatures.py`). Blocks 9 of the supervisor's 15 questions AND M3. The long-open "vocabulary port".
+- [ ] **`facets(filter)` tool** — set operations over the closed enums; the cheapest exactness win available.
+- [ ] **Critic that flags before it filters** (S-69) — validated symmetrically: his Tier 1 catches under-use of facets, our Tier B catches over-use.
+- [ ] **Run the supervisor's 15 questions** — the first externally-authored measurement.
+- [ ] **Label the 111 review pairs** — then the adjudicator ablation: current prompt vs `explanation` moved BEFORE the verdict (free CoT) vs a reasoning model, all on the same pairs.
+- [ ] **Feed `entity.aliases` into candidate generation** — the funnel narrows at 1.3% of pairs considered, not at adjudication. `MET` / `E_T^miss` are sitting in the data unused.
+- [ ] **Fix `list_papers`** (D-043) — it disagrees with `count` (59 vs 58) because `papers_of` is untied to the assertion's bundle. Re-run affected numbers after.
+- [ ] **Measure alias precision properly** (D-044) — a random labelled sample, not 14 eyeballed. Then decide the human gate.
+- [ ] **Metamorphic checks** (S-34) — paraphrase invariance, monotonicity, inclusion–exclusion, order invariance. Violations are guaranteed bugs, no labels.
+- [ ] **Stability / repeat sampling** (S-52).
+- [ ] **Growth curve, subsample version** (S-47 B) — subsets of 10/20/…/60 of the existing 60. No dependencies. Answers "is 2% coverage enough to say anything?"
+- [ ] **Hops-to-node** (S-48) — Recall@k + MRR, stratified by rare/common, many-spellings/one, **merged/singleton** (tests whether dedup helps or hurts retrieval).
+- [ ] **Tool-selection + tool-necessity tests** (S-49) — remove a tool, see if it routes around; unused tools are a finding.
+- [ ] **Ablations** (S-36) — dedup, BM25/dense/RRF, guards, `SEARCH_BREADTH` 6/20/60, `PURPOSE` full vs minimal. Settles the open aliases and breadth questions **with evidence**.
+- [ ] **`missing:` field ablation** (S-50) — with/without, measure rounds-per-question and accuracy.
+
+*Then, with a dependency:*
+
+- [ ] **Reference reader** (S-37–S-39) — one pass, per paper, constrained to our schema, on a **third** model (not Sonnet, not Qwen). 3× for self-agreement; verbatim quote required per claim. Then **graph vs graph** at three strictness levels — and **measure the matcher itself** (50 matches + 50 non-matches by hand).
+- [ ] **GraphRAG** (S-44 arm 3) — as shipped with physics-tuned `entity_types`; the "was curation worth it?" arm. Budget: indexing is slow.
+- [ ] **Gabriel, once, <2 hours total** (S-40) — ~50 blind pairwise (judge κ) · ~40 graph-vs-graph disagreements · ~20 quote adjudications · ~10 checklist sanity checks · ~20 naturalness spot-checks.
+- [ ] **chATLAS_Benchmark scoping** (S-45) — 1 h: published analyses or internal docs? retrieval or answers? Decides whether it is usable.
+- [ ] **Growth curve, version A** (S-47 A) — 60 → 300 → 1,000, re-extracted **on our own vLLM** (D-041). Bounded by cluster time, not by Gabriel.
+- [ ] **Deletion protocol** (S-13) — select by *fact specificity*, not paper membership.
+- [ ] **Deep-research snapshot** (S-12) and **frontier-model-with-RAG arm** (S-44 arm 6, separates "our system is good" from "our model is good").
+
+*Ablation axes — the list the study sweeps (S-36). Nothing here is built before the harness, or the
+thing being measured moves while it is measured:*
+
+- [ ] dedup on/off · BM25 / dense / RRF · guards on/off · `SEARCH_BREADTH` 6/20/60 · `PURPOSE` full vs minimal
+- [ ] **question decomposition → set algebra** (S-53) — expect gains only on multi-constraint questions
+- [ ] **paraphrase fusion of retrievals via RRF** (S-54) — expect gains in retrieval recall; build once, it also serves S-34 paraphrase-invariance
+- [ ] **agreement-as-confidence** shown in the answer (S-54) — a product feature, measured as calibration
+- [ ] `missing:` field (S-50)
+
+*Blocking checks, cheap, do early:*
+
+- [ ] **Step 0 — one message to Gabriel** (today): ~30–50 questions, no answers, hard ones marked · is `GROUND_TRUTH.md` current? · chATLAS access + benchmark scope. **Longest-latency item in the project.**
+- [ ] **D-038 signature parse into a derived table** (S-56) — one afternoon; prose reads but cannot be counted (126 distinct labels of 138), and query-time bucketing would put the count outside `verify.py`'s reach.
+- [ ] **Tag Gabriel's questions against M3 the moment they arrive** (S-57) — decides whether S-56 is urgent or merely useful.
+
+- [ ] **`GROUND_TRUTH.md` field names** vs current pipeline output (~30 min) — it is stale since 2026-07-05 (D-042). Ask Gabriel if he considers it current.
+- [ ] **`html_harvester.py` against the DIAS corpus** — built for arXiv pages; this is a different layout.
+- [ ] **Who writes the checklists** (S-42) — deliberately open, needs the frozen question set first.
+
+---
+
 ## Milestones (the contract's four)
 
 - [x] **M1 — Load & reconcile** — importer, 60 bundles → 14,188/11,309/2,555/324. Done.

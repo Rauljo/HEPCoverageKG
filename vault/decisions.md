@@ -427,3 +427,429 @@ rows are a long-term degradation. Heavy sustained use (72B at 0.90 utilisation f
 latent fault rather than creating one. Reported to the cluster admin.
 **No silent corruption risk**: uncorrectable means *detected*, and CUDA aborts rather than returning
 wrong values. The 2026-07-29/30 Qwen trial results stand.
+
+## D-041 (2026-08-01) — Gabriel's extraction pipeline runs on our own vLLM; extraction is Sonnet, querying is Qwen
+**Finding**, from reading `HEPKG_promopt_tests` directly:
+```
+cli.py:  run.add_argument("--provider", choices=["anthropic","openai","claude-cli"], default="anthropic")
+run_pilot.sh:  hepkg-acquire run "$pid" --provider claude-cli --model sonnet ...
+               export HEPKG_CORPUS_ROOT=/Users/gfacini/.../hep-papers-html-since-2020
+```
+Two consequences.
+
+**1. Extraction is not blocked on Gabriel.** `--provider openai` accepts any OpenAI-compatible
+endpoint — i.e. our vLLM server. `HEPKG_CORPUS_ROOT` is an env var, repointable at the DIAS corpus
+(`/share/data1/xucapswo/hep-papers-html`, 2,969 papers). The pilot used `claude-cli` against
+Gabriel's subscription and needed a probe/sleep loop for usage limits, so running it ourselves is
+*better*, not merely possible. **The coverage-growth curve (S-47 version A) is bounded by cluster
+time, which we control** — an earlier assumption that it waited on Gabriel was wrong.
+
+**2. The graph was extracted by Claude Sonnet, and is queried by Qwen2.5-72B — already two different
+models.** This matters for evaluation independence (S-37): correlated blind spots are the risk, and
+they are already partly avoided. It also sets the constraint on the reference reader — it must be
+**neither Sonnet nor Qwen** (so Gemini or GPT), or a disagreement is a model agreeing with itself.
+**Note on same-model retrieval** (the question that prompted this): the query model never sees the
+extraction prompt. What passes between the two halves is *data* — entity labels, predicate names,
+kind distributions, via the generated schema card — not weights. A different model reading the same
+card gets the same information. The residual mismatch is at the string level (`PYTHIA 8.212` vs
+`Pythia8`) and is absorbed by hybrid retrieval and the aliases layer, which is what they are for.
+
+## D-042 (2026-08-01) — a hand-written gold set already exists (`GROUND_TRUTH.md`), and it is stale
+`HEPKG_promopt_tests/GROUND_TRUTH.md` — **~17 papers** with selection cuts, object definitions,
+multiplicities and expected event class, written by reading the papers' selection sections. It even
+carries a self-correction where the author re-checked against the paper and found their own entry
+wrong (2103.01290, AK8 vs AK4 for the ISR jet).
+**Why it matters**: it is human-made, it is about **final states and multiplicities** — i.e. M3, the
+thing the whole evaluation backbone waits on — and it means *"we have no ground truth"* was never
+quite true. It is also an independent check on the reference reader (S-37): does the big model agree
+with a human on those 17?
+**The caveat**: last committed **2026-07-05** ("M0+M1: measurement paper set, ground truth (11
+papers)"), while the repo moved on to **2026-07-27** (`canonical entity map v2 + facet layer`). Those
+are schema changes. The *physics* does not go stale — it was written from the papers, not the schema
+— but the field names may no longer line up with what the pipeline emits.
+**Action before scoring anything against it**: check the field names against current output (~30
+min), and ask Gabriel whether he considers it current. It is his, and it is the only human-made gold
+set either of us has.
+
+## D-043 (2026-08-02) — `list_papers` and `count` disagree; `count` is right
+**Finding**, while computing question truth: for the same predicate and the same entity set,
+```
+count()        -> 58 papers          list_papers() -> 59 papers      (the Pythia concept)
+```
+`count` ties the subject's occurrence to the assertion's bundle (`eo.bundle_id = a.bundle_id`).
+`list_papers` composes `subjects_of` + `papers_of`, and **`papers_of` is a generic entity → papers
+lookup that cannot know which assertion it came from**, so it returns every paper the subject appears
+in. A sample entity shared across ten papers contributes all ten even when only nine assert the link.
+**Consequence today**: asking *"which analyses used Pythia?"* returns 59 while *"how many?"* returns
+58. Set questions and counting questions about the same thing disagree with each other.
+**Decision**: `count` is correct; the evaluation generator computes truth with `count`'s join
+(`eval/generate.py::_papers_for`) rather than calling `list_papers`. **The query-layer fix is NOT
+applied yet** — changing query semantics while building the measurement would move the thing being
+measured. Fix `list_papers` to do a single joined query, then re-run any affected numbers.
+**Same family as the trap the vault already records** (join to papers via `entity_occurrence`): the
+join is right, the *bundle tie* is what was missing.
+**And it bit twice**: the hand-written seed truth for `hw-0004` (Herwig) made exactly this mistake and
+claimed 22 papers where the correct answer is 17. Written by hand, in a file about being careful.
+That is the argument for computing truth from `templates` rather than from bespoke SQL.
+
+## D-044 (2026-08-02) — the deep alias proposals must NOT be confirmed; use them as a filter
+`data/processed/aliases_proposed.json` (2026-07-28, 68 MB) holds the Tier 2/2.5/3 output that was
+never confirmed into `same_as`:
+```
+126,335 pairs adjudicated · 4,238 marked match (3.4%) · 4,144 of them at confidence exactly 0.9
+```
+**Precision is roughly half**, judged by reading a random sample of 14, and the errors are physics
+errors rather than near misses:
+```
+X  Dilepton ttbar final state     == Four-lepton final state (4e,4mu,2e2mu)
+X  |eta| of LEADING DNN jet       == |eta| of SUBLEADING DNN jet
+X  Muon IDENTIFICATION efficiency == Muon SELECTION AND TRIGGER efficiency
+V  Pile-up reweighting modelling  == Pileup modeling uncertainty
+V  ATLAS Run 2 13 TeV (139 fb)    == ATLAS Run 2 pp dataset, 139 fb
+```
+**Decision**: do not confirm. Applying ~4,238 merges at that precision would put ~2,000 wrong merges
+into the graph, and every count downstream would be wrong **invisibly**.
+**Confidence cannot rescue it**: 4,144 of 4,238 sit at *exactly* 0.9 — the "confidence measures
+fluency, not correctness" failure the vault predicted, now observed on real output.
+**But the file is immediately useful as an ambiguity FILTER (S-60)**, folded into the *broad* reading
+of the invariance test. A false positive then only drops a question and can never produce a wrong
+answer — the precision that makes it unusable for merging is harmless for filtering.
+**Current dedup state, for the record**: `same_as` holds `normalize` 328 + `spelling` 19 only;
+**342 of 5,114 entities merged = 6.7%.** Tier 1/1.5 only. So every ambiguity number measured today is
+a *before* figure.
+**Consistent with D-016 / the NELL lesson**: LLM-proposed merges are advisory, never auto-applied.
+
+### AMENDMENT (2026-08-02, same day) — the file is STALE, and two claims above are wrong
+Checked the dates instead of assuming (user's challenge, and correct):
+```
+2026-07-28 23:27   aliases_proposed.json written
+------------------------------------------------ everything below is AFTER it
+2026-07-29 13:04   Tier 3 REDESIGN: trial set, graph context, identity prompt, evaluator
+2026-07-29 13:13   Keep confidence raw and measure calibration instead of bucketing it
+2026-07-29 13:20   Send nearly all quotes, ordered by section
+2026-07-29 13:27   Learn section priority per kind
+2026-07-29 15:21   Accept the verdict under whichever key the model used
+```
+**1. The ~50% precision is a verdict on superseded code**, not on the current design. The redesign
+added exactly the machinery aimed at the failures observed (graph context and an identity prompt are
+what stop `dilepton == four-lepton` and `leading == subleading`).
+**2. The "4,144 of 4,238 at confidence exactly 0.9" was OUR bucketing, not model fluency.** The old
+`_confidence()` mapped values onto an enum (`if num >= 0.9: ...`); b28fa3b replaced it with a raw
+float precisely so calibration could be *measured* rather than destroyed. Citing it as "the
+confidence-measures-fluency failure, now observed" was wrong. (The underlying phenomenon is real and
+recorded in that commit message — the 8B run put all 2,712 matches at >= 0.9 — but that is a
+different run from the one inspected here.)
+**Therefore**: **re-run Tiers 2/3 with the current code.** The DB has not changed since
+2026-07-28 02:08, so the graph is the same; only the adjudicator improved. Do NOT confirm the output
+either way (the standing decision above), and re-measure precision on a labelled random sample rather
+than by eyeballing 14.
+**What stands unchanged**: the *use* of the output as an ambiguity **filter** (S-60) rather than as
+merges. That argument never depended on precision — a false positive only drops a question.
+
+## D-045 (2026-08-02) — same `entity_id` across papers is mostly the same concept
+Correcting an overstatement made earlier the same day (and used to justify rejecting `same_id` as a
+deduplication label source).
+```
+entity_ids in >1 paper: 347   |   same label everywhere: 35   |   different labels: 312
+```
+The 312 look alarming and are mostly benign — the id is the stable anchor and the label is
+**paper-local prose for the same thing**:
+```
+hepkg:generator:pythia8      21 labels  "Pythia 8" / "PYTHIA v8.2.2 (parton shower)" / "pythia8"
+hepkg:object:jet             20 labels  "Jet (anti-$k_t$, R=0.4)" / "Reconstructed jet (anti-kT...)"
+hepkg:systematic:luminosity  11 labels  "Luminosity uncertainty" / "Integrated luminosity unc. (1.7%)"
+```
+So the vault's "334 divergent" counts **label** divergence, not **concept** divergence, and
+`same_id` looks like a usable positive label source after all (revises the S-51 framing).
+**Caveat, stated rather than hidden**: this is the top cases eyeballed, not a random sample checked.
+Confirming it means reading ~30 pairs and asking "same thing?" — a good ten-minute task for the
+supervisor, since it needs physics judgement rather than effort.
+**The two failure directions are not symmetric here**: *same concept, different ids* (under-merging)
+is heavy and real — 6.7% merged, 48% of concepts ambiguous. *Same id, different concepts*
+(over-merging) has little evidence. The problem points in one direction, which simplifies the fix.
+
+## D-046 (2026-08-02) — intra-paper duplicate entities: 22 cases, a free dedup benchmark
+Same paper, same kind, same normalised label, **different entity ids**:
+```
+22 cases across 7 of 60 papers
+2207.00348  event_region  "qq h p t v 150 gev"  -> 2 ids
+2106.01676  bsm_model     "wino bino simplified susy" -> 2 ids
+```
+Within one paper the extractor should have reused the id, so each of these is an unambiguous
+extraction defect — no judgement call, no threshold.
+**Two uses**: (1) they corrupt Tier A truth (S-59) — *"which regions does 2207.00348 define?"* would
+list one region twice, so generation must pre-check for them; (2) **a free recall benchmark for the
+aliases layer** — 22 pairs we *know* must merge, that nobody had to label. If deduplication misses
+these it is broken.
+Small (7 of 60 papers), so not the dominant problem — but free signal.
+
+## D-047 (2026-08-03) — `contents_of`: the graph had no paper -> contents operation
+**Finding**: every template started from a CONCEPT and found papers. `papers_of` went
+entities -> papers; **nothing was its inverse**. So *"which generators does analysis 2001.06899
+use?"* could not be answered at all — the planner searched for the arXiv id, found nothing usable,
+and passed the id into `describe` as though it were an entity id:
+```
+60 `unknown_entity_id` errors across 45 questions · tool_error_rate 0.386 · count_correct 0.06
+answers stating a paper "is not found in the current graph" when it plainly is
+```
+**Why it went unnoticed**: every question shape built before Tier A starts from a concept, so the
+reverse direction was never exercised. It is also the most natural question a physicist has about one
+paper — *"what does this analysis cover?"* — so a **coverage map** could not answer its own core
+question.
+**Decision**: add `templates.contents_of(paper_ids, predicate=None)`, exposed as a planner tool whose
+description says explicitly to pass the arXiv id directly and NOT to search for the paper or hand it
+to `describe`. Joins `entity_occurrence` on **bundle_id AND entity_id**, like `count`, so it does not
+inherit the D-043 over-count.
+**Measured after**: `count_correct` 0.06 -> 0.50, `tool_error_rate` 0.386 -> 0.083, `answered`
+0.56 -> 0.85, set questions at 1.00 retrieval / 0.895 naming.
+**Two rows, one query each**: display rows are DISTINCT per fact so the model sees one line per fact;
+the evidence lookup needs `assertion_id`, and adding it to the display query would undo that grouping.
+
+## D-048 (2026-08-03) — `_evidence_for` silently matched every row; now it refuses
+**Finding**: the helper wraps a caller's SQL as `SELECT assertion_id FROM (<sql>)`. When the caller's
+query does not select `assertion_id`, SQLite resolves the bare name against the **enclosing** scope
+(`ae.assertion_id`), so the condition becomes always-true. `contents_of` hit it on first use:
+**11 rows of output, 8,369 evidence ids, no error, no warning.**
+**Decision**: `_evidence_for` raises if `assertion_id` is absent from the query. Not defensive
+padding — the failure is invisible, produces a plausible result, and every template that ever calls
+this helper is exposed to it.
+**Family**: the third silent-SQL trap in this project, after "join via `entity_occurrence`, not
+`paper_reports_result`" and "count facts, not rows". All three return a wrong answer with no error.
+
+## D-049 (2026-08-03) — compute-0-1 accepts jobs and runs nothing; excluded
+**Finding**: two evaluation jobs ran **8 hours and produced no output file at all**. Slurm always
+creates the output file if the script runs, so nothing ran.
+```
+compute-0-0   srun hostname  -> returns instantly
+compute-0-1   srun hostname  -> hangs indefinitely; Slurm later reports ReqNodeNotAvail
+```
+**Decision**: `#SBATCH --exclude=compute-0-1` in `hpc/eval_job.sh`, with the evidence written into the
+script so it is not silently reverted. Remove once the node is fixed or drained.
+**Same shape as D-040** (the faulty A100): a resource that accepts work and does none, where the
+failure looks like slowness rather than an error.
+**Two other things that night, worth keeping together**: `langgraph` was not installed in the DIAS
+venv, so every question died with `ModuleNotFoundError` — that alone would have cost the night. And
+the new circuit breaker (20 consecutive errors -> stop) **worked**, cutting a doomed run to 20
+seconds — then corrupted its own output file by calling `_rewrite_meta` from inside the still-open
+`with` block, producing `{"r{"run_id":...`. A correct guard ruined by where it was placed.
+
+## D-050 (2026-08-07) — Tier 1 keys on the label as well as the id; under-merging is not the safe direction
+**Finding**: every merge in the graph came from `normalize` (328) and `spelling` (19), all scoring
+1.0 — no judgement call had ever been applied. And Tier 1 folds the **entity id slug**, never the
+label, so two entities agree only when their ids look alike:
+```
+madgraph5_amcnlo  -> madgraph5amcnlo  ]  merged
+madgraph5-amcnlo  -> madgraph5amcnlo  ]
+mg5-amcnlo        -> mg5amcnlo           not merged
+```
+All three carry the **byte-identical label** `MadGraph5_aMC@NLO`. Seven such entities sat in four
+clusters. Measured across the graph: **41 groups of byte-identical, same-kind labels split across
+clusters** — wrong by definition, no physics involved.
+**Decision**: add two rules beside the id rule. `label_exact` (same kind, identical label) and
+`label_norm` (same kind, labels equal after folding case and separators), the latter emitted only
+for pairs `label_exact` missed so the two counts do not double-count one edge.
+**The dot is kept when folding labels, unlike slugs.** Slugs are identifiers where `pythia8.210` and
+`pythia8210` are one thing; labels carry cut values, and stripping the dot folds `pT > 2.0 GeV` onto
+`pT > 20 GeV` — a false merge that changes a number.
+**Result**: +138 `label_exact`, +20 `label_norm`; 41 split groups -> **0**. All 20 folded merges
+inspected by hand and correct (hyphenation, capitalisation, spacing around `=`); no version boundary
+crossed. Node counts fell — generators 223->150, systematic uncertainties 803->716,
+detector objects 227->191.
+**Why this was the right direction**: conservatism is not accuracy here, it is bias. Under-merging
+inflates every "how many distinct X" answer, which is the coverage map's headline number. Backup of
+the pre-change DB kept outside the repo; `same_as` is additive and `entity_canonical` is rebuilt from
+it, so the change is reversible by deleting the `label_*` edges and re-materialising.
+
+## D-051 (2026-08-07) — merging moves *inventory* counts, not *paper* counts
+**Finding**, measured while designing the dedup ablation. Canonical resolution inside `_FACT_KEY`
+changes almost nothing: **66 of 13,839 distinct facts, 0.48%**. For the b-jet cluster the answer was
+identical either way — 31 papers, 162 facts. The reason is that spelling is consistent *within* a
+paper, so two papers using different spellings already have different subjects; there is nothing for
+the fact key to collapse. `expand_canonical` plus search breadth already deliver the papers.
+Counting *things* is a different story: detector objects 227->191, generators 223->150 (33%).
+**Decision**: the alias ablation must be scored on **inventory questions** ("how many distinct X does
+the corpus define", "list the distinct X"), not on the paper-counting questions the generator
+currently emits. Run as-is and every arm returns the same number, which would read as
+"deduplication does not matter" — the wrong conclusion drawn from the wrong questions.
+**Correction to the comment on `_FACT_KEY`**: it claims the canonical resolution is what makes
+counting dedup-sensitive. It is doing that for 0.48% of facts. The sensitivity comes from entity
+inventory queries instead. Not a bug — an overstated rationale.
+
+## D-052 (2026-08-07) — derive the facet + signature layers, don't import them
+**The choice**: the supervisor's `pilot/analysis_facets.jsonl` is 60 per-paper analysis cards. It
+could be imported as data. Instead we recompute it from our own graph using his vocabulary, and keep
+his file as a **test fixture** — the oracle we check against, never production data.
+**Why**: recomputing reproduces all 60 cards exactly (verified). So the file is a snapshot of a
+function, and a snapshot is stale the moment paper 61 arrives. Deriving keeps the layer live.
+**Cost, stated plainly**: we now own a copy of his regex tables and they drift when he edits them.
+`test_vendored_vocabulary_is_unmodified` pins the hash, so drift is a failing test with a diff rather
+than a silent disagreement.
+**What is vendored vs ported**: `vocabulary.py` is copied **verbatim** (hash-pinned) plus a 30-line
+`models.py` carrying only the `DetectorObjectName` enum it imports — the alternative was editing a
+file we do not own. `signatures.py` is **ported**, because upstream takes pydantic models and we take
+SQLite rows; two tests run both implementations over every candidate and assert identical verdicts.
+Upstream modules are loaded **from git at the pinned revision**, not from the working tree, so a
+branch checkout cannot silently skip the tests that validate our copies.
+
+### The bug parity caught: facets are per-occurrence, not per-entity
+First implementation derived from `entity.label` and got extra and missing values on 8 papers.
+Cause: `entity.label` is a rollup — the schema literally calls entity_id a "convenience rollup ONLY,
+not identity — see entity_occurrence". **312 entity_ids carry different labels in different papers**,
+and the difference decides the tag:
+```
+2107.12553 wrote "b-tagged small-R jet"  -> no match (the object patterns are anchored)
+the rollup label is "b-tagged jet"       -> BJet
+```
+Deriving from the rollup credits a paper with an object it never named. `entity_facet` is therefore
+keyed `(paper_id, entity_id, field, value, vocabulary)`. This is the fourth silent-SQL-shape trap in
+the project (D-048's family): a plausible answer, no error.
+
+### Shape
+Two tables and a view, not four tables. `entity_facet` (tags and renames together — the difference is
+a cardinality constraint, not a shape) and `assertion_signature_derived`. `analysis_card` is a **VIEW**
+because it is fully computable from `entity_facet`; storing it would add a second source of truth that
+can drift, which this project has hit twice. Every table carries `vocabulary`, so re-deriving is
+delete-then-insert scoped to one version and a future `facets-v2` can be held alongside v1 and diffed.
+Neither table touches `entity` / `entity_occurrence` / `assertion`; a test asserts that.
+**Naming**: `entity_facet` vs the aliases layer's `entity_canonical` are different rungs (S-68) —
+one says a label belongs in an enum, the other says two entities are the same entity.
+
+### Measured
+Facets, per occurrence: **82.0% overall** (4,202 occurrences, 757 unmatched). Worst kinds
+detector_object **74.1%** and systematic_uncertainty **70.8%**. Misses have two causes that need
+separating by hand: genuine vocabulary gaps ("OS-SS subtraction", "Displaced electron") and
+mis-kinded entities (2006.05880 files its signal regions as `detector_object`, which is why its card
+shows 9/24 objects matched).
+Signatures: **734 leaves from 2,692 candidates, 0 native**, and the OR rule's `subchannel` flag
+appears on **46**. Recall is a property of the extraction, not of the rules — the AND/OR distinction
+survives extraction ~2% of the time.
+**Over-tagging is real too** and not yet quantified: 68 entities carry 3+ tags, and
+`"Data-driven control sample ... replacing simulation"` is tagged `SimulationBased` — the regex
+cannot see negation. Precision needs a hand-labelled sample; recall is measured, precision is not.
+
+## D-053 (2026-08-07) — the `facets` tool returns the entity trail, never bare paper ids
+**The tool**: `facets(field, values, mode='all'|'any', category=, experiment=)` over `entity_facet`.
+Zero model calls, zero retrieval, no spelling to get right. All of the supervisor's Tier 1 gold
+answers reproduce through the planner's executor: Q1 18 papers, Q2/Q3/Q5 exact sets.
+**Three deliberate choices, each against an obvious cheaper option.**
+
+**1. It returns the labels that caused each match, not just paper ids.** The card is lossy by design.
+Six papers carry `ABCD` and all six do a different ABCD — `Modified ABCD estimate`,
+`Two-dimensional ABCD sideband method`, `Multidimensional ABCD reweighting`. Shown six ids, a reader
+concludes they share a method; shown the labels, they see six variants, which for a coverage map is
+the more interesting answer. The tag says where to look, the label says what is there (S-69).
+
+**2. The whole vocabulary is inline in the schema card, not behind a lookup tool.** Measured at
+**~590 tokens** for every value in every field, against a 1,762-token card. Cheap enough that a round
+trip would be the wrong trade — and inline, the model never has to guess that the key is `BJet`
+rather than "b-jet", which is exactly the Tier 1 failure the layer exists to prevent. Values listed
+are those the vocabulary actually MATCHED in this corpus, not the full enum: listing keys that match
+nothing invites calls that correctly return zero, and an empty result cannot distinguish "no paper
+does this" from "wrong key". Per-field coverage is printed beside each list.
+
+**3. An empty result says WHY it is empty.** `facets('objects', ['b-jet'])` now answers
+`NOT IN THE VOCABULARY: ['b-jet'] -- these match nothing by definition`, while a real key that
+happens to match no paper is not flagged. Without this the two cases are byte-identical to a reader,
+and the misspelling silently becomes a confident "no papers do this".
+
+**Every result carries coverage and a candidate-set caveat** in `note`, because a facet miss is
+invisible: the entity keeps its label and all its facts and simply never appears. An uncaveated set
+of ids reads as complete when 26% of objects and 29% of systematics carry no tag at all.
+**Coverage denominators come from the declared `CARD_FIELDS` mapping, not from the kinds present in
+`entity_facet`.** Reading them back from data joins on entity_id alone, and an entity_id that is
+`detector_object` in one paper and `object_definition` in another inflates the denominator (515 vs
+486 for `objects`) and understates coverage — the same rollup-vs-occurrence confusion as D-052.
+
+## D-054 (2026-08-07) — search hits carry facet keys; the prompt never lists them
+**Reversal of a choice made the same day.** D-053 put the whole closed vocabulary inline in the
+schema card (~590 tokens), arguing the model must never have to guess that the key is `BJet` rather
+than "b-jet". Two objections from the user killed it, and the second is disqualifying.
+
+**1. It does not scale.** The vocabulary is curated and will grow; a design whose prompt cost tracks
+it is a design with a deadline.
+
+**2. It leaks the answers.** The values that read as most natural to list — BJet, MET, ABCD,
+Unfolding, SUSY — are **five of the seven** distinct keys in the supervisor's Tier 1 gold answers.
+Any Tier 1 score would have been partly measuring that the answer key was pasted into the prompt.
+This is not hypothetical: writing the section that *warns* about leakage, I used `ABCD` as the
+worked example and the regression guard caught it.
+
+**The measurement that made the reversal safe.** The keys do not need shipping, because search
+already supplies them. BM25 only, no embeddings, on the phrasings his Tier 1 questions use:
+```
+b-jets -> BJet  |  missing transverse momentum -> MET  |  ABCD background estimate -> ABCD
+HistFitter -> HistFitter  |  unfold their distributions -> Unfolding  |  supersymmetry search -> SUSY
+```
+**rank 1, 8 times out of 8.** A hit IS the answer to "which key covers this concept", and it is
+grounded in an entity that demonstrably exists.
+
+**The shape now**: `Hit.facets` carries the tags; the planner includes them on every search row and
+says so in the note; the card block is **~137 tokens** of field names plus per-field coverage, no
+values; `PURPOSE` gains a descriptive `FACET TAGS` section.
+**The line, stated once and applied at three levels**: *the prompt describes structure, the data
+supplies content.* The rest of the card already worked this way — it lists entity kinds and
+predicate names, never example labels.
+
+**Known residual**: `MET` appears in the NOTATION block, which predates facets and explains a
+standard physics abbreviation. The facet key happens to be spelled the same. Removing useful notation
+to avoid the coincidence would cost more than it buys; the leakage test excludes short keys and says
+why.
+
+**Weakness accepted, not hidden.** On *described* phrasings search is much weaker — 6/8, and both
+misses were total (`"estimating background from data in sidebands"` finds no ABCD-tagged entity;
+`"correcting detector effects to particle level"` finds no Unfolding). Under the inline vocabulary
+the model could have reached those keys anyway. That advantage is exactly the contaminated kind. The
+hole is now a *measurable retrieval failure* rather than a hidden prompt advantage.
+
+### The same trap one level up: describing vs prescribing
+`FACET TAGS` describes what the layer is, what it covers and where keys come from. It contains no
+sentence telling the model which route to prefer — because his scoring says an LLM call on a Tier 1
+question is a soft fail **even when the answer is right**, so *which rung the agent picks is the
+thing being graded*. "Prefer the cheapest route" in the prompt would not build an agent that chooses
+well; it would hard-code the exam answer and delete the result. That line is kept as
+`prompts.PREFER_CHEAPEST_ROUTE`, unused by default, as ablation arm C:
+```
+A  no FACET TAGS section        B  descriptive (default)        C  B + prefer-cheapest
+```
+B ~ C means tier-appropriate choice emerges. C >> B is the more interesting finding, and either way
+it is a result rather than an assumption. Three regression tests pin all of this.
+
+## D-055 (2026-08-07) — `facet_entities`: the inventory shape, and why it is a tool not an ablation
+**The question that had no tool.** `facets` answers "which papers use an ABCD-family estimate" — 6.
+It could not answer "and what are the six of them", which for a coverage map is usually the question
+actually being asked: *how many different ways does this literature do X, and what are they.*
+```
+ABCD data-driven background estimation method
+ABCD (matrix) ... using control regions in data with parametric fits
+Data-driven ABCD-style ratio method using eight non-overlapping regions (A-H)
+Modified ABCD estimate
+Multidimensional ABCD reweighting technique (CR-to-SR, data-driven)
+Two-dimensional ABCD sideband method using control regions B, C, D
+```
+One tag, six genuinely different methods. A tag is a family; this is what the family contains.
+
+**Three counts, reported separately**, for the same reason `count` reports three — they answer
+different questions and conflating them is how "how many" goes wrong:
+```
+tag        papers   entity records   distinct after merging
+BJet          38          10                   4
+JES           45          21                  13
+TTbar         51         159                 150
+ABCD           6           6                   6
+```
+**`distinct` is the column that moves with deduplication.** Paper counts do not — canonical expansion
+and search breadth already reach every spelling (D-051, 0.48%). So this is not a nice-to-have: it is
+the **question shape the dedup ablation requires**, without which every arm returns the same number
+and the result reads as "deduplication does not matter". Hence a tool, built now, rather than an
+ablation arm — it is what *enables* the ablation.
+
+**Bug caught in the first run**: `GROUP_CONCAT(DISTINCT x)` cannot take a separator in SQLite, so it
+joins on commas — and these labels contain commas. `b-tagged jet (MV2c10, 77% efficiency)` came back
+as two labels, one of them ` 77% efficiency)`. Labels are now a second query grouped in Python, the
+same two-query pattern `contents_of` and `facets` already use for the same class of reason. A
+regression test puts a comma inside a fixture label.
+
+**What the BJet inventory actually shows**, and it is a good coverage-map answer in itself: 38 papers,
+4 distinct objects — one dominant cluster of 18 wordings across 34 papers, plus separately-kept
+tight- and relaxed-working-point variants. Whether those variants *should* stay separate is a physics
+call, and it is exactly the kind of pair sitting in the 111-pair review queue.

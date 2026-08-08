@@ -463,3 +463,109 @@ useful of the two for us.
 - HEP-specific literature tooling beyond Rivet/Contur/AgentRivet (already in this file).
 - Calibration and confidence estimation in LLMs — relevant to the 72B calibration result and to
   whether confidence can drive abstention (see *Know Your Limits*, Tier 1).
+
+---
+
+# Evaluation arm — literature (session 2026-08-01)
+
+*Entered while designing §4 of [`system.md`](system.md) (S-32 … S-52). Split into **systems we
+compare against** and **methods we borrow**. Items marked ⚠ are from memory and need verifying
+against the source before they go in the write-up.*
+
+## Systems to compare against
+
+### chATLAS + chATLAS_Benchmark — **the in-domain baseline, and the corpus source**
+**What**: a RAG assistant over ATLAS documentation, with a published benchmark on PyPI
+(`chATLAS_Benchmark`) and an MCP server. Paper draft read 2026-07-31; **Gabriel is an author**, and
+its future-work section names **graph-based retrieval** as the next step.
+**Why it matters here**: (1) it is the honest domain baseline — a real system, same physics, same
+users; (2) **the 2,969-paper corpus on DIAS came from the chATLAS EOS area**
+(`/eos/atlas/atlascerngroupdisk/phys-mlf/Chatlas/hep-papers-html/`), so same corpus lineage and its
+questions may be answerable over documents we hold; (3) *it names our project as its own future
+work*, which is the single best positioning sentence available to the dissertation.
+**Open, and worth an hour before betting on it** (S-45): does the benchmark target **published
+analyses** or **ATLAS internal documentation** (CDS notes, TWikis, indico — papers cannot answer
+those)? And does it score retrieval, answers, or both? Retrieval-only is still valuable: an
+externally-defined number on someone else's questions is the independent check we cannot manufacture.
+**Where discussed**: 2026-07-31 (found), 2026-08-01 (scoped as a baseline). *Not previously in the
+vault — recorded late.*
+
+### GraphRAG (Microsoft) — the KG competitor, and the project's obvious challenge
+**What**: builds a graph from a corpus automatically — LLM extracts entities and relations, clusters
+them into communities, summarises each — then answers via **local search** (entity neighbourhood) or
+**global search** (from community summaries). Aimed explicitly at *global/sensemaking* questions
+that vanilla RAG cannot answer. Ships its own query system, so no re-implementation is needed.
+`entity_types` is configurable and extraction prompts are editable (⚠ it also ships a prompt-tuning
+step — verify the exact command).
+**Why it matters here**: it is the **off-the-shelf answer to "why not just run GraphRAG?"**, which is
+the obvious challenge to this whole project and currently unanswered. Its graph is *induced and
+untyped* — relations are free-text descriptions — where ours is typed, fixed-schema, evidence-linked
+and deduplicated. So the head-to-head asks a real question: **does hand-curating a typed schema buy
+anything, or does an induced graph get most of the way there?** (S-44)
+**Expected result, and the honest framing**: we should win on counting/coverage (free-text relations
+cannot be counted reliably, and global search answers from summaries, which have already discarded
+the counts) and **lose on open-ended sensemaking**, where community summaries are genuinely good and
+we have no equivalent. *Reporting the loss is what makes the win credible.*
+**Caveat recorded from the user (2026-08-01, largely correct)**: they serve different purposes, so
+beating it at counting proves nothing anyone doubted — hence the reframing above rather than a
+"we win" claim. And if it were successfully *reprompted into* a coverage map it would be a
+reimplementation of our system and would measure nothing.
+**Related**: **LightRAG** (cheaper, same idea), **RAPTOR** (hierarchical summarisation rather than a
+graph, same target class). ⚠ citations to be pinned.
+
+## Methods borrowed
+
+### Question generation from logical forms — Spider, BIRD (text-to-SQL); GrailQA (KGQA)
+**What**: benchmarks built by generating questions *from* queries/logical forms, then paraphrasing
+into natural language — because it is the only way to get exact labels at scale over a database.
+**Why here**: the precedent for **S-33** (generate questions backwards from the graph). Also supplies
+the standard caveat we must state: generated questions can only ask what the database can answer, so
+they are a dev set, not the headline. ⚠ pin exact citations.
+
+### TREC-style pooling — evaluation when the collection cannot be exhaustively judged
+**What**: judge the *union* of what all participating systems returned, plus a sample outside the
+pool; report metrics with intervals. Standard IR practice since nobody has ever labelled a large
+collection completely.
+**Why here**: **S-43** — the answer to "how do we label anything at 2,969 papers". Also the reason a
+multi-system comparison *helps* the labelling rather than multiplying it: more systems, better pool.
+The user's refinement — judge the **quote**, not the answer — makes each judgement ~10 seconds and
+requires no physics reasoning.
+
+### LLM-as-judge — MT-Bench / Chatbot Arena (Zheng et al. 2023)
+**What**: the standard reference on using strong LLMs as evaluators. Findings we obey directly:
+pairwise comparison is far more reliable than absolute 1–5 scoring; **position bias** is large (swap
+the order, keep only consistent verdicts); **self-preference** is real; judge–human agreement lands
+around human–human agreement, which is what makes calibration meaningful rather than hopeful.
+**Why here**: **S-41**, and the shape of **S-40** — Gabriel's time buys a **κ against the judge**, not
+labels. That is what converts "we used a judge" into a measured instrument.
+
+### CheckList — behavioural testing via invariants (Ribeiro et al. 2020)
+**What**: test NLP systems with capability-targeted invariance and directional tests instead of a
+single accuracy number.
+**Why here**: **S-34** metamorphic relations (paraphrase invariance, monotonicity,
+inclusion–exclusion, order invariance). Every violation is a guaranteed bug, and none of them need a
+label.
+
+### Chain-of-thought unfaithfulness (Turpin et al. 2023, *Language Models Don't Always Say What They Think*)
+**What**: models' stated reasoning can be systematically unfaithful to the computation that produced
+the answer — steered by factors never mentioned, with a fluent rationale attached.
+**Why here**: **S-50**. It is why "make the model justify every tool call" was rejected as a *metric*,
+and why the adopted version (`missing:`) is designed to be **mechanically checkable** — we verify the
+claim against the retrieved rows rather than trusting the explanation.
+
+### Semantic entropy (Farquhar et al. 2024, *Nature*)
+**What**: sample an answer repeatedly and measure entropy over *meanings* (not token strings);
+high entropy predicts hallucination without any ground truth.
+**Why here**: **S-52** stability. Unusually clean in our setting because counting answers are numbers,
+so "same meaning" needs no entailment model — `58, 58, 58, 45, 58` is already the signal.
+
+### Lost in the middle — long-context degradation (Liu et al. 2023)
+**What**: retrieval-augmented models attend poorly to information in the middle of long inputs.
+**Why here**: **S-37** — the argument for the reference reader working **one paper at a time** rather
+than being handed all 60 (≈700k–900k tokens) at once. Per-paper also gives per-paper provenance and
+moves the arithmetic out of the model and into Python.
+
+### Distant supervision — noisy labels used honestly
+**Why here**: **S-51**. `same_id` is a *noisy positive* signal (347 shared ids vs **334 divergent**),
+not ground truth. The honest use is to measure the label source's own precision on a sample and
+report results against a stated noise level — not to pretend it is gold.

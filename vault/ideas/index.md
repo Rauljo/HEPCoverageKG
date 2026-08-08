@@ -1,6 +1,6 @@
 # Ideas — index
 
-**Status counts: 4 seed · 10 discussed · 3 adopted · 0 rejected**
+**Status counts: 4 seed · 12 discussed · 3 adopted · 0 rejected**
 
 *Statuses: seed (one-liner, never discussed) · discussed (has a doc) · adopted (graduated to a D-nnn decision; doc is its pre-history) · rejected (kept forever, with rationale).*
 *Organized by theme (each idea placed by its primary concern; several span themes — cross-links in the docs). Actionable to-dos live in [`../backlog.md`](../backlog.md), not here.*
@@ -16,6 +16,7 @@
 | Pydantic / guided decoding | discussed | [pydantic-validation.md](pydantic-validation.md) — NO to retrofitting the contract dataclasses; YES to vLLM guided decoding as a measured ablation (fixes signatures + typing + kind-flips) |
 | `result_type` vocabulary | discussed (open) | [result-type-vocabulary.md](result-type-vocabulary.md) — needs supervisor; gates what counts toward a gap |
 | Grounding & evaluation | discussed | [grounding-and-evaluation.md](grounding-and-evaluation.md) — Rivet/SimpleAnalysis/pyhf as external truth; n=3 runs; upper-bound eval |
+| **Evaluation harness** | discussed | [eval-harness-design.md](eval-harness-design.md) — runs *any* system behind one `System` protocol, so baselines and ablations share one runner; test-set lock and variance-first built in (S-22, S-10, S-36, S-52) |
 | HEPData harvesting | seed | Future numeric-results source (D-008); not current scope |
 | arXiv table extraction | seed | Only if structured numerics are needed and HEPData isn't built (D-008) |
 
@@ -25,6 +26,7 @@
 |---|---|---|
 | **Bundle importer (milestone 1)** | **adopted (D-021..D-030)** | [bundle-importer-design.md](bundle-importer-design.md) — the durable build reference; M1 done |
 | Open vocabulary + batch reconciliation | discussed | [open-vocab-reconciliation.md](open-vocab-reconciliation.md) — the mechanism (D-016) and the **`aliases/` layer** over bundle entity_ids (D-025); Tier 1 built; vocab_policy still needs sign-off |
+| **Discovered grouping layer** | discussed | [discovered-grouping-layer.md](discovered-grouping-layer.md) — fills the never-built middle rung of S-68: cluster what the closed vocabulary *fails* to classify and propose new tags. Propose-never-adopt (parity against v1 must survive). Held-out test **using the curated vocabulary as ground truth** is the contribution; expect under-splitting (JES/JER). Sequenced after the 15 questions are scored |
 | **Final-state representation** | **discussed — rewritten 2026-07-29 (D-038)** | [final-state-representation.md](final-state-representation.md) — the old entry was **wrong**: no fan-out, and **no `count` qualifier exists**. The signature is one node of English prose; 126 distinct labels / 138. Fix = LLM parses prose → structure, code serialises the id; grouping is a separate later layer. **Blocks M3, which now blocks the evaluation** |
 | Neo4j migration | seed | Neo4j Community (local) as a projection from SQLite (D-022) — switch on ergonomics/visualization, not scale |
 
