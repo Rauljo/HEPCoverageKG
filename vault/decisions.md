@@ -853,3 +853,131 @@ regression test puts a comma inside a fixture label.
 4 distinct objects — one dominant cluster of 18 wordings across 34 papers, plus separately-kept
 tight- and relaxed-working-point variants. Whether those variants *should* stay separate is a physics
 call, and it is exactly the kind of pair sitting in the 111-pair review queue.
+
+## D-056 (2026-08-09) — the reference reader: what it measures, and the six ways it lied first
+**What it is**: an independent second opinion, read from the PAPERS. The supervisor's gold is his
+own words "graph-agreement gold, not physics truth" — computed by filtering his pilot export — so
+scoring our graph against it measures whether two pipelines built from one extraction agree with each
+other. Where the extraction dropped something, both drop it and both score 100%. The reader touches
+`source_block` and nothing else.
+**Ran**: 420 paper-reads, 19,251 calls, 0.2% errors, 97.3% usable, 1h43m on Mistral-Small-24B.
+
+### Six failures, every one silent, every one reporting success
+1. **Windows sized from a guess.** `CHUNK_CHARS` assumed 4 chars/token; measured with the served
+   tokenizer, this corpus is **3.46**. Half the calls 400'd on context overflow — and systematically,
+   because overflow kills the biggest windows, which are the content-rich ones holding the answers.
+   Reported confident negatives on answers already located by hand.
+2. **`failed: 0` while 55% of calls errored**, because `failed` counted only reads where EVERY sample
+   died. API error, unparseable reply and a real "no" were three things flattened into one.
+3. **Consensus pooled across windows.** A 23-window paper has the answer in one window; the other 22
+   correctly say "not here". Pooling made unanimity impossible EXACTLY when the answer was found, so
+   successful reads became "split" and were counted as misses, while papers where nothing was found
+   agreed trivially and reported a confident False. **Finding the answer was what made the result
+   unusable.** gf-02 reported 0 of 6 gold papers; five sat in the split bucket with verified quotes.
+4. **A verified quote is not a correct answer.** `verify_quote` proves a sentence is in the paper, not
+   that it answers the question. Measured: **43–45% precision** — "exactly two muons, no identified
+   electrons" cited as evidence for an electron-OR-muon requirement.
+5. **The support judge was asked a corpus question about one sentence** and refused nearly everything
+   (3% precision), including quotes that plainly establish the fact. No sentence can name which of 60
+   papers do something.
+6. **The prompts asked for the verdict BEFORE the reasoning.** JSON generates left to right, so the
+   model committed to yes/no before emitting a token of justification — chain-of-thought backwards.
+
+### The finding underneath: a sweep question must be asked one paper at a time
+gf-03 found **0 of 4** HistFitter papers. Same window, same model, temperature 0 — only the phrasing:
+```
+"Which SUSY searches did their statistics in HistFitter?"
+   -> no,  "The text does not mention SUSY searches in HistFitter."
+"Does this analysis use the HistFitter framework?"
+   -> yes, "implemented in the HistFitter [ 168 ] framework"
+```
+The prompt already INSTRUCTED "does THIS analysis do it". The model anchored on the question's own
+wording anyway. **Instructing around a corpus-wide question does not work; decomposing it does.**
+Seven hand-written per-paper forms, recorded beside the originals. gf-03 went **0/4 -> 3/4**.
+This same confusion cost three separate runs (the reader, the judge, and gf-05).
+
+### After every fix
+```
+gf-02 ABCD          4/6 gold      gf-03 HistFitter  3/4 gold     gf-08 e-OR-mu  1/1 gold
+gf-05 Higgs object  0/2 gold, and 10 false positives — his trap question, and the reader falls in
+```
+**The reader is a LITERAL reader**, measured three ways: it will not invert "masses up to 875 GeV are
+excluded" into "lower limit" (gf-12, confirmed against three phrasings); it will not answer a
+corpus-wide question about one paper; it matches surface topic over structural role. Good
+corroborator, poor contradictor — it can support the gold and cannot yet overturn it.
+
+### What it corrected in US
+gf-11: I reported "CSVv2 appears in 0 evidence quotes and 0 source blocks". True of the literal
+string; the paper spells it **"the combined secondary vertex (Version 2)"**, which the reader found.
+A string-matching artefact — the exact failure his Tier 1 is designed to catch — in my own analysis.
+
+### Also established
+- gf-05's 0/2 splits in two: 2006.05880 says "A jet pair is tagged as a Higgs boson candidate if the
+  neural network score..." — findable, missed, a **model** failure. 2504.13081 has **zero**
+  candidate-ish mentions in the readable text — no model can find what is not there.
+- gf-14 is answerable and his premise is wrong twice over: the reader cites "extending beyond the
+  previous limits ... by up to 160 GeV", a DIFFERENT sentence from the "approximately 300 GeV" one in
+  the evidence table.
+- Q9 remains unanswerable by any reader: provenance metadata is in no paper.
+
+## D-057 (2026-08-09) — reason-first ordering is free; a thinking model is the open question
+**Measured, gf-05, same windows and temperature, only the JSON field order:**
+```
+paper        truth   ANSWER-FIRST  REASON-FIRST
+2302.05225     no        True        False   <- fixed
+2602.18611     no        True        False   <- fixed
+2605.14245     no        True        False   <- fixed
+2006.05880    YES       False        False   <- recall unchanged
+```
+**3 of 5 false positives fixed for nothing.** Precision is a prompt-ordering property; recall is not.
+Kept honest: reasoning that precedes the verdict in TOKEN order is not thereby a faithful account of
+the computation (Turpin et al.). This buys accuracy, not interpretability.
+**No thinking mode was ever enabled and none exists to enable** — Mistral-Small-24B-Instruct-2501 is
+not a reasoning model, and the server ran `enable_reasoning=False, reasoning_parser=None`. Field
+order is the version of "thinking" available to a non-reasoning model.
+**QwQ-32B-AWQ downloaded (19GB, under 3 min) and served on port 8001 beside the 24B** so both arms
+compare without giving up an allocation. Needed three code changes: a per-call token budget (vLLM
+counts prompt+completion, so QwQ's 4000 makes an 8k server reject outright), `<think>` stripping, and
+taking the LAST balanced JSON object because a chain of thought contains abandoned drafts.
+**The comparison did not complete**: the QwQ server died 7 minutes in with
+`CUDA error: uncorrectable ECC error encountered` — failing GPU memory, on the third A100 of
+compute-gpu-0-1. Slurm still reports the node `mixed` with no drain reason, so a resubmit can land on
+the same card. Third hardware fault of this kind after D-040 and D-049: **a resource that looks
+healthy until you use it.** Retry submitted; the head-to-head is still open.
+
+### D-057 continued (2026-08-09, late) — QwQ-32B measured: recall recovered, precision lost
+Reached a healthy card only after the allocation fight below. Result on gf-05, where the 24B scored
+0/2 with 10 false positives:
+```
+paper        truth   24B(reason-first)   QwQ-32B
+2006.05880    YES         False           True    <- the genuine win: evidence WAS present
+2504.13081    YES         False           True    <- but the text has ZERO candidate mentions
+2302.05225     no         False           True    <- regression
+2008.05928     no          True           True
+2510.07527     no          True           True
+```
+**QwQ answers True to everything.** It recovers the one case a stronger reader should recover
+(2006.05880 states "A jet pair is tagged as a Higgs boson candidate if the neural network score...",
+which the 24B read and rejected) — and then says yes to a paper whose readable text contains **no
+Higgs-candidate mention at all**, with a quote that passes verification. That is the
+misreading-not-invention failure amplified, not fixed: reasoning lets it argue from weaker evidence.
+
+**So the two models fail in opposite directions**: the 24B is literal and under-finds; QwQ reasons
+and over-finds. Neither is usable alone, and the support judge becomes more necessary with QwQ, not
+less. The sensible configuration to test next is QwQ for RECALL feeding the judge for PRECISION —
+which is the retrieve-then-verify shape the whole harness already uses, one level up.
+
+**gf-12 refuses on both.** Neither model converts "masses up to 875 GeV are excluded" into a "lower
+limit". Not a capacity limit — a defensible reading, and the finding to put to the supervisor.
+
+**The allocation fight, worth recording because it will recur.** GPU 2 of compute-gpu-0-1
+(`GPU-bd028739`) carries 569 volatile / 1413 aggregate uncorrected ECC errors, loads a model happily,
+and dies on the first inference. Slurm reports the node `mixed` with no drain reason and assigned that
+card on **six consecutive** single-GPU requests — the allocator is deterministic, so retrying never
+escapes it. Fixed by requesting TWO GPUs and pinning to the clean one. Two further bugs surfaced in
+the process, both fatal before any model loaded: `nvidia-smi | awk '{print; exit}'` killed the pipe
+and, under `set -o pipefail`, the script (exit 13, 00:00:00 elapsed); and `nvidia-smi` reports **all
+three** GPUs regardless of the allocation, so "pick the first healthy index" would have pointed
+CUDA_VISIBLE_DEVICES at a card another user's job owned. The choice is now made only from Slurm's own
+CUDA_VISIBLE_DEVICES — narrow the allocation, never widen it. **Report the card to the sysadmins**;
+it will keep eating jobs and the failure always presents as the user's bug.
