@@ -31,7 +31,14 @@
 #   READER_MAX_TOKENS=4000 LLM_MODEL_NAME=Qwen/QwQ-32B-AWQ ...
 # =============================================================================
 #SBATCH -p GPU
-#SBATCH --gres=gpu:a100:1
+# TWO GPUs, one of which is then IGNORED. Slurm assigned the failing GPU 2 on six
+# consecutive single-GPU requests -- the allocator is deterministic, so retrying
+# never escapes it. Taking two guarantees at least one healthy card, and the
+# script pins execution to it with CUDA_VISIBLE_DEVICES.
+#
+# Wasteful, and worth it: the bad card is unusable by anyone until it is drained,
+# so the only thing sacrificed is a GPU nobody can compute on.
+#SBATCH --gres=gpu:a100:2
 #SBATCH --job-name=vllm-thinking
 #SBATCH --output=/home/xucabrjs/hepcoveragekg_setup/logs/vllm_thinking_%j.out
 #SBATCH --time=04:00:00
@@ -72,18 +79,22 @@ echo "port  : ${PORT}"
 # accepts work and runs none): a resource that looks healthy until used. So test
 # it, and exit non-zero in seconds so the allocation is released rather than
 # burned. Submit with --requeue to cycle onto a different card.
-nvidia-smi --query-gpu=index,uuid,name,ecc.errors.uncorrected.volatile.total \
+nvidia-smi --query-gpu=index,uuid,ecc.errors.uncorrected.aggregate.total \
            --format=csv,noheader
-BAD=$(nvidia-smi --query-gpu=ecc.errors.uncorrected.aggregate.total \
-        --format=csv,noheader,nounits 2>/dev/null \
-      | awk '$1 ~ /^[0-9]+$/ && $1 > 0 {n++} END {print n+0}')
-if [ "${BAD:-0}" -gt 0 ]; then
-    echo "ERROR: this allocation includes a GPU with uncorrected ECC errors."
-    echo "       Refusing to serve on it -- it would die on the first inference."
-    echo "       Resubmit; with --requeue Slurm will try a different card."
+
+# Pick the first allocated GPU with a clean ECC record and pin to it. The index
+# here is already relative to the allocation, so it is what CUDA_VISIBLE_DEVICES
+# expects.
+HEALTHY=$(nvidia-smi --query-gpu=index,ecc.errors.uncorrected.aggregate.total \
+            --format=csv,noheader,nounits 2>/dev/null \
+          | awk -F', *' '$2 ~ /^[0-9]+$/ && $2 == 0 {print $1; exit}')
+if [ -z "${HEALTHY}" ]; then
+    echo "ERROR: every GPU in this allocation has uncorrected ECC errors."
+    echo "       Refusing to serve -- it would die on the first inference."
     exit 1
 fi
-echo "GPU health: no uncorrected ECC errors"
+export CUDA_VISIBLE_DEVICES="${HEALTHY}"
+echo "GPU health: serving on allocated GPU ${HEALTHY} (clean ECC record)"
 
 apptainer exec --nv \
     ~/hepcoveragekg_setup/images/vllm-openai-v0.8.5.sif \
