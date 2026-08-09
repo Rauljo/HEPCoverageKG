@@ -82,19 +82,35 @@ echo "port  : ${PORT}"
 nvidia-smi --query-gpu=index,uuid,ecc.errors.uncorrected.aggregate.total \
            --format=csv,noheader
 
-# Pick the first allocated GPU with a clean ECC record and pin to it. The index
-# here is already relative to the allocation, so it is what CUDA_VISIBLE_DEVICES
-# expects.
-HEALTHY=$(nvidia-smi --query-gpu=index,ecc.errors.uncorrected.aggregate.total \
-            --format=csv,noheader,nounits 2>/dev/null \
-          | awk -F', *' '$2 ~ /^[0-9]+$/ && $2 == 0 {print $1; exit}')
+# Only ever choose from within OUR allocation. `nvidia-smi` on this node reports
+# all three GPUs regardless of what Slurm gave us, so picking "the first healthy
+# index" would happily hand back a card another job owns. Slurm's own
+# CUDA_VISIBLE_DEVICES is the allocation; narrow it, never widen it.
+ALLOCATED="${CUDA_VISIBLE_DEVICES:-$(nvidia-smi --query-gpu=index --format=csv,noheader,nounits | tr '\n' ',')}"
+ALLOCATED="${ALLOCATED%,}"
+echo "allocated to us: ${ALLOCATED}"
+
+HEALTHY=""
+for gpu in ${ALLOCATED//,/ }; do
+    # No pipe into a program that exits early: `awk ... exit` closed the pipe on
+    # nvidia-smi and, under `set -o pipefail`, took the whole script down with
+    # SIGPIPE (exit 13) before a single model byte was loaded.
+    errs=$(nvidia-smi -i "$gpu" \
+             --query-gpu=ecc.errors.uncorrected.aggregate.total \
+             --format=csv,noheader,nounits 2>/dev/null || echo "unknown")
+    echo "  gpu ${gpu}: uncorrected ECC = ${errs}"
+    if [ "$errs" = "0" ] && [ -z "$HEALTHY" ]; then
+        HEALTHY="$gpu"
+    fi
+done
+
 if [ -z "${HEALTHY}" ]; then
-    echo "ERROR: every GPU in this allocation has uncorrected ECC errors."
+    echo "ERROR: no GPU in this allocation has a clean ECC record."
     echo "       Refusing to serve -- it would die on the first inference."
     exit 1
 fi
 export CUDA_VISIBLE_DEVICES="${HEALTHY}"
-echo "GPU health: serving on allocated GPU ${HEALTHY} (clean ECC record)"
+echo "GPU health: serving on GPU ${HEALTHY} (clean ECC record)"
 
 apptainer exec --nv \
     ~/hepcoveragekg_setup/images/vllm-openai-v0.8.5.sif \
