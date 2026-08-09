@@ -277,6 +277,30 @@ def _cmd_reader(args) -> int:
         print(f"  {r['qid']}  {'all 60' if scope is None else ','.join(scope):22} "
               f"{r['text'][:62]}")
 
+    if args.rescore:
+        # Every consensus rule is derived from the stored verdicts, so a scoring
+        # change costs a file read rather than 22,000 LLM calls.
+        info = R.rescore(args.rescore)
+        print(f"rescored {info['reads']} reads, {info['changed']} changed")
+        for k in ("yes", "no", "split"):
+            print(f"  {k}: {info.get(k, 0)}")
+        print(f"-> {info['out']}")
+        return 0
+
+    if args.check_support:
+        # The second pass: a verified quote proves the sentence is in the paper,
+        # not that it answers the question. Measured on gf-08, half the cited
+        # sentences answered something else.
+        info = asyncio.run(R.verify_supports(
+            args.check_support, records, concurrency=args.concurrency))
+        print(f"checked {info['checked']} yes-answers")
+        print(f"  upheld     {info.get('upheld', 0)}")
+        print(f"  downgraded {info.get('downgraded', 0)}")
+        if info["precision"] is not None:
+            print(f"  precision  {info['precision']:.0%}")
+        print(f"-> {info['out']}")
+        return 0
+
     if args.dry_run:
         print("\n--dry-run: nothing called")
         return 0
@@ -459,6 +483,12 @@ def build_parser() -> argparse.ArgumentParser:
                           help="read whole papers instead of routing to sections first")
     p_reader.add_argument("--limit-papers", type=int, default=None,
                           help="first N papers per question — for a smoke test")
+    p_reader.add_argument("--rescore", default=None, metavar="RUN.jsonl",
+                          help="recompute answers from a run's stored verdicts (no LLM calls)")
+    p_reader.add_argument("--check-support", default=None, metavar="RESCORED.jsonl",
+                          help="re-check every YES: does the cited quote actually answer "
+                               "the question? A verified quote proves the sentence is in "
+                               "the paper, not that it was read correctly.")
     p_reader.add_argument("--dry-run", action="store_true",
                           help="print the plan and the read count, call nothing")
     p_reader.set_defaults(func=_cmd_reader)

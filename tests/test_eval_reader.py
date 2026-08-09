@@ -592,3 +592,72 @@ def test_rescore_recovers_answers_from_stored_verdicts(tmp_path):
     assert out["answer"] is True
     assert out["previous_answer"] is None
     assert "ABCD" in out["quote"]
+
+
+# --- the second pass: does the quote answer the question? ----------------------
+
+
+def test_support_check_parses_a_verdict():
+    """Separate from quote verification, and separate from the reader's own
+    answer: a sentence can be genuinely in the paper and still answer something
+    else. Measured on gf-08, half the cited sentences did."""
+    import asyncio
+
+    class _Stub:
+        def __init__(s, reply): s.reply = reply; s.chat = s; s.completions = s; s.seen = []
+        async def create(s, **kw):
+            s.seen.append(kw)
+            class M: content = s.reply
+            class C: message = M()
+            class R_: choices = [C()]
+            return R_()
+
+    ok, why = asyncio.run(R.check_support(
+        _Stub('{"supports": false, "why": "the sentence is about muons only"}'),
+        "m", "which analyses require 2 electrons OR 2 muons?",
+        "exactly two oppositely charged muons, no identified electrons"))
+    assert ok is False and "muons" in why
+
+    ok, _ = asyncio.run(R.check_support(
+        _Stub('{"supports": true, "why": "states the alternative directly"}'),
+        "m", "q", "identified through reconstructed dielectrons or dimuons"))
+    assert ok is True
+
+
+def test_the_judge_never_sees_the_paper_or_the_readers_reasoning():
+    """It gets the question and the quote. Showing it the surrounding text would
+    let the argument that produced the mistake also excuse it."""
+    prompt = R.SUPPORT_PROMPT.format(
+        question="Q?", quote="a cited sentence", claim="")
+    assert "a cited sentence" in prompt and "Q?" in prompt
+    assert "supports" in prompt
+
+
+def test_a_failed_support_check_downgrades_rather_than_deletes(tmp_path):
+    """The read happened and the quote is real; the record of the model reading
+    it wrongly IS the measurement, so it is kept and marked."""
+    import asyncio
+
+    row = {"qid": "gf-08", "paper_id": "2009.04363", "answer": True,
+           "quote": "exactly two oppositely charged muons, no identified electrons",
+           "answers": ["muons"], "verdicts": []}
+    src = tmp_path / "r.jsonl"
+    src.write_text(json.dumps(row) + "\n")
+
+    class _Stub:
+        chat = None
+        def __init__(s): s.chat = s; s.completions = s
+        async def create(s, **kw):
+            class M: content = '{"supports": false, "why": "muons only"}'
+            class C: message = M()
+            class R_: choices = [C()]
+            return R_()
+
+    R._client = lambda: (_Stub(), "stub")
+    info = asyncio.run(R.verify_supports(src, [{"qid": "gf-08", "text": "e OR mu?"}]))
+    out = json.loads(Path(info["out"]).read_text().splitlines()[0])
+    assert out["answer"] is False
+    assert out["quote_supports"] is False
+    assert out["downgraded"]
+    assert out["quote"], "the quote is kept -- it is evidence of the misreading"
+    assert info["precision"] == 0.0

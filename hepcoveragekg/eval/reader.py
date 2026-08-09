@@ -779,3 +779,126 @@ def rescore(path: Path | str, out_path: Path | str | None = None) -> dict:
         for row in rows:
             handle.write(json.dumps(row, ensure_ascii=False) + "\n")
     return {"out": str(out_path), **{k: int(v) for k, v in stats.items()}}
+
+
+# --------------------------------------------------------------------------
+# Does the quote actually answer the question?
+# --------------------------------------------------------------------------
+#
+# The gap this closes, measured rather than assumed. `verify_quote` proves a
+# sentence is IN the paper; it cannot tell whether the sentence supports the
+# claim. On gf-08 ("exactly 2 electrons OR exactly 2 muons"), three of six
+# sampled yes-answers cited real sentences that answer a different question:
+#
+#   "exactly two muons ... no identified electrons"      -> muons only, not an OR
+#   "Events are required to have at least one primary vertex"  -> irrelevant
+#
+# Precision on that question was about 50% while every quote verified. So the
+# reader catches invention and misses misreading, exactly as its docstring
+# says -- and this is the second pass that turns that caveat into a filter.
+#
+# Cheap by construction: only the supported yes-answers are re-checked, a few
+# dozen per question rather than 22,000 calls. The judge sees ONLY the question
+# and the quote -- never the paper, never the model's own reasoning -- so it
+# cannot be talked into agreement by the surrounding argument.
+
+SUPPORT_PROMPT = """\
+A question was asked about a physics paper. Another reader answered it and cited \
+the sentence below as their evidence.
+
+Judge ONE thing: does that sentence, on its own, actually answer the question?
+
+QUESTION
+{question}
+
+CITED SENTENCE
+{quote}
+
+{claim}Say "no" if the sentence is merely on a related topic, describes something \
+similar but not the same, or would need other sentences to complete the answer. \
+A sentence about muons alone does not establish a choice between electrons and \
+muons. A sentence about an unrelated selection cut does not establish anything.
+
+Reply as JSON, nothing else:
+{{"supports": true|false, "why": "<one short sentence>"}}
+"""
+
+
+async def check_support(client, model, question: str, quote: str,
+                        claimed: str = "", temperature: float = 0.0) -> tuple[bool | None, str]:
+    """(supports, why). None when the call or the reply failed.
+
+    Temperature 0: this is an adjudication, not a sample. Disagreement between
+    runs here would be noise, not signal -- the uncertainty worth measuring was
+    already measured upstream by the repeats.
+    """
+    claim = f'The reader answered: "{claimed}"\n\n' if claimed else ""
+    prompt = SUPPORT_PROMPT.format(question=question, quote=quote, claim=claim)
+    try:
+        raw = await _ask(client, model, prompt, temperature)
+    except Exception as exc:                       # noqa: BLE001
+        logger.warning("support check failed: %s", exc)
+        return None, f"ERROR: {type(exc).__name__}"
+    match = re.search(r"\{.*\}", raw or "", re.S)
+    if not match:
+        return None, ""
+    try:
+        data = json.loads(match.group(0))
+    except ValueError:
+        return None, ""
+    value = data.get("supports")
+    if isinstance(value, str):
+        value = value.strip().lower() in ("true", "yes")
+    if not isinstance(value, bool):
+        return None, ""
+    return value, str(data.get("why") or "")
+
+
+async def verify_supports(rescored_path: Path | str, questions: list[dict],
+                          out_path: Path | str | None = None,
+                          *, concurrency: int | None = None) -> dict:
+    """Re-check every YES in a rescored run, and write the surviving answers.
+
+    A yes that fails here is downgraded to `false_support` rather than deleted:
+    the read happened, the quote is real, and the record of the model reading it
+    wrongly is itself the measurement.
+    """
+    rescored_path = Path(rescored_path)
+    out_path = Path(out_path) if out_path else rescored_path.with_suffix(".supported.jsonl")
+    text = {q["qid"]: q["text"] for q in questions}
+    client, model = _client()
+    gate = asyncio.Semaphore(concurrency or DEFAULT_CONCURRENCY)
+
+    rows = [json.loads(l) for l in rescored_path.read_text(encoding="utf-8").splitlines() if l.strip()]
+    targets = [r for r in rows if r.get("answer") is True and r.get("quote")]
+
+    async def one(row: dict) -> None:
+        async with gate:
+            answers = row.get("answers") or []
+            ok, why = await check_support(
+                client, model, text.get(row["qid"], row["qid"]), row["quote"],
+                answers[0] if answers else "")
+        row["quote_supports"] = ok
+        row["support_why"] = why
+        if ok is False:
+            row["answer"] = False
+            row["downgraded"] = "quote does not answer the question"
+
+    await asyncio.gather(*(one(r) for r in targets))
+
+    stats = Counter()
+    for r in rows:
+        stats["reads"] += 1
+        if r.get("quote_supports") is True:
+            stats["upheld"] += 1
+        elif r.get("quote_supports") is False:
+            stats["downgraded"] += 1
+        elif "quote_supports" in r:
+            stats["unchecked"] += 1
+    with out_path.open("w", encoding="utf-8") as handle:
+        for r in rows:
+            handle.write(json.dumps(r, ensure_ascii=False) + "\n")
+    checked = stats["upheld"] + stats["downgraded"]
+    return {"out": str(out_path), "checked": checked,
+            **{k: int(v) for k, v in stats.items()},
+            "precision": round(stats["upheld"] / checked, 3) if checked else None}
