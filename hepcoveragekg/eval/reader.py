@@ -95,6 +95,17 @@ CHARS_PER_TOKEN = 3.46          # measured, Mistral-Small-24B on this corpus
 CHUNK_CHARS = 12_000
 CHUNK_OVERLAP = 1_500
 
+# ORDER MATTERS INSIDE THE JSON. These prompts originally put "answer" first
+# and "why" last, so the model emitted its verdict before generating a single
+# token of justification -- chain-of-thought backwards, and free to fix. The
+# reasoning field now comes first and the verdict last, which is the whole
+# mechanism by which CoT helps.
+#
+# Worth keeping honest about: a stated reason that FOLLOWS the token order is
+# not thereby a faithful account of the computation (Turpin et al. 2023). This
+# buys accuracy, not interpretability -- the `reasoning` field is evidence about
+# the answer, not proof of how it was reached.
+
 # Which prompt a question gets. Existence questions ("which analyses do X?")
 # sweep the corpus and only need yes/no; the questions that name a paper ask
 # WHAT or WHY, and a yes/no answer to "what is the observed 95% CL limit on the
@@ -451,8 +462,10 @@ appear verbatim in the text will be discarded and your answer will not count.
 If the text below does not show it, answer "no". "no" here means "not shown in \
 this passage", which is the useful answer - do not guess to be helpful.
 
-Reply as JSON, nothing else:
-{{"answer": "yes"|"no", "quote": "<exact sentence, or empty>", "why": "<one short sentence>"}}
+Reply as JSON, nothing else. Fill the fields IN ORDER -- the reasoning first,
+the verdict last:
+{{"reasoning": "<what the text does and does not establish, one or two sentences>", \
+"quote": "<exact sentence, or empty>", "answer": "yes"|"no"}}
 
 PAPER TEXT ({paper_id}, section: {section})
 ---
@@ -569,9 +582,10 @@ If the text below does not answer it, set "found" to false. That is the useful \
 answer here, not a failure - do not guess to be helpful, and do not answer from \
 your own knowledge of physics.
 
-Reply as JSON, nothing else:
-{{"found": true|false, "answer": "<the answer, or empty>", \
-"quote": "<exact sentence, or empty>"}}
+Reply as JSON, nothing else. Fill the fields IN ORDER -- the reasoning first,
+the verdict last:
+{{"reasoning": "<what the text does and does not say about this, one or two sentences>", \
+"quote": "<exact sentence, or empty>", "answer": "<the answer, or empty>", "found": true|false}}
 
 PAPER TEXT ({paper_id}, section: {section})
 ---
@@ -824,8 +838,10 @@ but not the same, or does not establish the thing at all. A sentence about muons
 alone does not establish a CHOICE between electrons and muons. A sentence about an \
 unrelated selection cut establishes nothing.
 
-Reply as JSON, nothing else:
-{{"supports": true|false, "why": "<one short sentence>"}}
+Reply as JSON, nothing else. Fill the fields IN ORDER -- the reasoning first,
+the verdict last:
+{{"why": "<what the sentence establishes, and whether that is the thing asked for>", \
+"supports": true|false}}
 """
 
 
