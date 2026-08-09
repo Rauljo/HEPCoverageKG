@@ -680,3 +680,29 @@ def test_the_judge_is_asked_about_ONE_paper_not_the_corpus():
     assert "ONE PARTICULAR PAPER" in prompt
     assert "do not ask whether the sentence names" in prompt
     assert "THIS paper" in prompt
+
+
+def test_every_sweep_question_has_a_per_paper_form():
+    """A sweep IS 60 instances of "does THIS paper do X", and the phrasing
+    decides the answer. Same window, same model:
+
+        "Which SUSY searches did their statistics in HistFitter?"  -> no
+        "Does this analysis use the HistFitter framework?"         -> yes
+
+    The reader prompt already instructs "does THIS analysis do it" and the model
+    anchored on the question's wording regardless. Instructing around a
+    corpus-wide question does not work; decomposing it does.
+    """
+    for r in S.sweep_questions():
+        assert r.get("per_paper"), f"{r['qid']} has no per-paper phrasing"
+        assert not r["per_paper"].lower().startswith("which "), (
+            f"{r['qid']}: still phrased across the corpus")
+    # the original is kept, so both are auditable
+    for r in S.build_records():
+        assert r["provenance"]["question_as_asked"] == r["text"]
+
+
+def test_single_paper_questions_need_no_rephrasing():
+    """They already name their paper, so they are already per-paper."""
+    for r in S.single_paper_questions():
+        assert r["provenance"]["paper_scope"]

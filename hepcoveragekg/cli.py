@@ -291,8 +291,13 @@ def _cmd_reader(args) -> int:
         # The second pass: a verified quote proves the sentence is in the paper,
         # not that it answers the question. Measured on gf-08, half the cited
         # sentences answered something else.
+        # The judge is given the same per-paper phrasing the reader was, or it
+        # repeats the reader's own failure: refusing a good quote because one
+        # sentence cannot name which of 60 papers do something.
+        judged = [{"qid": r["qid"], "text": r.get("per_paper") or r["text"]}
+                  for r in records]
         info = asyncio.run(R.verify_supports(
-            args.check_support, records, concurrency=args.concurrency))
+            args.check_support, judged, concurrency=args.concurrency))
         print(f"checked {info['checked']} yes-answers")
         print(f"  upheld     {info.get('upheld', 0)}")
         print(f"  downgraded {info.get('downgraded', 0)}")
@@ -312,8 +317,11 @@ def _cmd_reader(args) -> int:
     mode = R.EXTRACTION if args.scope == "single" else R.EXISTENCE
     print(f"  mode: {mode}")
 
+    # A sweep question is asked one paper at a time, in its per-paper form.
+    asked = [{**r, "text": r.get("per_paper") or r["text"]} for r in records]
+
     meta = asyncio.run(R.run(
-        conn, records, papers_for, args.out,
+        conn, asked, papers_for, args.out,
         repeats=args.repeats, temperature=args.temperature,
         concurrency=args.concurrency, cascade=not args.no_cascade,
         limit_papers=args.limit_papers, mode=mode,

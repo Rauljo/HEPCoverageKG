@@ -55,32 +55,32 @@ def paper_scope(text: str) -> Optional[list[str]]:
 SUPERVISOR_QUESTIONS: list[dict] = [
     # --- Tier 1: facet-index lookups. Should need zero LLM calls. -----------
     {
-        "qid": "gf-01", "tier": 1, "shape": "set",
+        "qid": "gf-01", "per_paper": 'Is this analysis a SEARCH (rather than a measurement) whose event selection uses b-tagged jets AND missing transverse momentum?', "tier": 1, "shape": "set",
         "text": "Which searches select b-jets and missing transverse momentum?",
         "gabriel_gold": {"kind": "count", "value": 18},
         "gold_note": "objects superset of {BJet, MET}, category=search",
     },
     {
-        "qid": "gf-02", "tier": 1, "shape": "set",
+        "qid": "gf-02", "per_paper": 'Does this analysis estimate a background using an ABCD method, or an ABCD-style sideband or matrix method over independent regions?', "tier": 1, "shape": "set",
         "text": "Which analyses use an ABCD background estimate?",
         "gabriel_gold": {"kind": "set", "papers": [
             "2004.01678", "2011.07812", "2012.01581",
             "2404.06204", "2511.11853", "2604.27044"]},
     },
     {
-        "qid": "gf-03", "tier": 1, "shape": "set",
+        "qid": "gf-03", "per_paper": 'Does this analysis use the HistFitter framework for its statistical analysis?', "tier": 1, "shape": "set",
         "text": "Which SUSY searches did their statistics in HistFitter?",
         "gabriel_gold": {"kind": "set", "papers": [
             "2006.05880", "2011.07812", "2106.01676", "2211.08028"]},
     },
     {
-        "qid": "gf-04", "tier": 1, "shape": "set",
+        "qid": "gf-04", "per_paper": 'Does this analysis unfold its measured distributions -- that is, correct them back to particle level or truth level?', "tier": 1, "shape": "set",
         "text": "Which measurements unfold their distributions?",
         "gabriel_gold": {"kind": "count", "value": 10},
         "gold_note": "'10 papers incl. ...' — his list is explicitly partial",
     },
     {
-        "qid": "gf-05", "tier": 1, "shape": "set",
+        "qid": "gf-05", "per_paper": 'Does this analysis RECONSTRUCT a Higgs-boson candidate as a physical object it selects on (not merely study Higgs production or decay)?', "tier": 1, "shape": "set",
         "text": "Which analyses reconstruct a Higgs-boson candidate as a detector object?",
         "gabriel_gold": {"kind": "set", "papers": ["2006.05880", "2504.13081"]},
         "gold_note": "his trap: string-matching 'Higgs' drowns in Higgs PROCESS papers",
@@ -95,7 +95,7 @@ SUPERVISOR_QUESTIONS: list[dict] = [
         "gold_note": "4 SR^Z, 2 CR, 5 VR",
     },
     {
-        "qid": "gf-07", "tier": 2, "shape": "freeform",
+        "qid": "gf-07", "per_paper": 'Does this analysis have a ttZ background, and a control region used to normalise that background?', "tier": 2, "shape": "freeform",
         "text": ("In papers with a ttZ background, which control region normalises it, "
                  "and what quote defines that region?"),
         "gabriel_gold": {"kind": "none"},
@@ -103,7 +103,7 @@ SUPERVISOR_QUESTIONS: list[dict] = [
                       "(2006.05880: CR^Z_ttZ, Table 6 caption), not the set"),
     },
     {
-        "qid": "gf-08", "tier": 2, "shape": "set",
+        "qid": "gf-08", "per_paper": 'Does this analysis require exactly two electrons OR exactly two muons as ALTERNATIVE selections -- that is, parallel ee and mumu channels, rather than requiring both?', "tier": 2, "shape": "set",
         "text": ("Which analyses require exactly 2 electrons OR exactly 2 muons "
                  "as alternatives?"),
         "gabriel_gold": {"kind": "set", "papers": ["2001.06899"]},
@@ -211,8 +211,23 @@ def build_records(split: str = "test") -> list[dict]:
             "difficulty": {1: "easy", 2: "medium", 3: "hard", 4: "hard"}[q["tier"]],
             "truth": {"kind": "none"},
             "truth_source": "none",
+            # What the reader is actually asked, one paper at a time.
+            #
+            # Not a change of question: a sweep IS 60 instances of "does THIS
+            # paper do X". But the phrasing decides the answer. Same window,
+            # same model, only the wording differs:
+            #   "Which SUSY searches did their statistics in HistFitter?"
+            #      -> no, "the text does not mention SUSY searches in HistFitter"
+            #   "Does this analysis use the HistFitter framework?"
+            #      -> yes, "implemented in the HistFitter [168] framework"
+            # The reader prompt already INSTRUCTS "does THIS analysis do it", and
+            # the model anchored on the question's phrasing anyway. Instructing
+            # around a corpus-wide question does not work; decomposing it does.
+            # Hand-written and recorded beside the original so both are auditable.
+            "per_paper": q.get("per_paper"),
             "provenance": {
                 "tier": q["tier"],
+                "question_as_asked": q["text"],
                 "paper_scope": scope,                 # None => sweep all 60
                 "scope_rule": "arXiv id present in the question text",
                 "gabriel_gold": q.get("gabriel_gold"),
