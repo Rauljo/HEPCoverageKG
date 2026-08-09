@@ -57,7 +57,33 @@ export HF_HUB_OFFLINE=1
 echo "node  : $(hostname)"
 echo "model : ${MODEL}"
 echo "port  : ${PORT}"
-nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
+
+# REFUSE A FAILING GPU BEFORE LOADING 19GB ONTO IT.
+#
+# compute-gpu-0-1 GPU 2 (GPU-bd028739-e189-8a3c-d439-85fadc134cc3) has 569
+# volatile / 1413 aggregate uncorrected ECC errors. It loads a model and serves
+# happily, then dies on the first real inference with
+#     RuntimeError: CUDA error: uncorrectable ECC error encountered
+# Two QwQ attempts died that way, at 7 and 4.5 minutes. Slurm still reports the
+# node `mixed` with no drain reason, so it keeps handing the card out -- and
+# with GPUs 0 and 1 busy, every single-GPU request lands on it.
+#
+# Third fault of this shape after D-040 (a slow A100) and D-049 (a node that
+# accepts work and runs none): a resource that looks healthy until used. So test
+# it, and exit non-zero in seconds so the allocation is released rather than
+# burned. Submit with --requeue to cycle onto a different card.
+nvidia-smi --query-gpu=index,uuid,name,ecc.errors.uncorrected.volatile.total \
+           --format=csv,noheader
+BAD=$(nvidia-smi --query-gpu=ecc.errors.uncorrected.aggregate.total \
+        --format=csv,noheader,nounits 2>/dev/null \
+      | awk '$1 ~ /^[0-9]+$/ && $1 > 0 {n++} END {print n+0}')
+if [ "${BAD:-0}" -gt 0 ]; then
+    echo "ERROR: this allocation includes a GPU with uncorrected ECC errors."
+    echo "       Refusing to serve on it -- it would die on the first inference."
+    echo "       Resubmit; with --requeue Slurm will try a different card."
+    exit 1
+fi
+echo "GPU health: no uncorrected ECC errors"
 
 apptainer exec --nv \
     ~/hepcoveragekg_setup/images/vllm-openai-v0.8.5.sif \
