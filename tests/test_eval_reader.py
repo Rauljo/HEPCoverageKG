@@ -661,3 +661,22 @@ def test_a_failed_support_check_downgrades_rather_than_deletes(tmp_path):
     assert out["downgraded"]
     assert out["quote"], "the quote is kept -- it is evidence of the misreading"
     assert info["precision"] == 0.0
+
+
+def test_the_judge_is_asked_about_ONE_paper_not_the_corpus():
+    """The first support run downgraded 70 of 72 answers -- 3% precision -- by
+    judging corpus-wide questions against single sentences:
+
+        quote: "Distributions are unfolded to the particle level ..."
+        judge: "does not specify WHICH measurements have distributions unfolded"
+
+    That quote plainly shows the paper unfolds. The reader prompt reframes to
+    "does THIS analysis do it"; the judge prompt did not, so it demanded a
+    sentence answer a question about 60 papers at once.
+    """
+    prompt = R.SUPPORT_PROMPT.format(
+        question="Which measurements unfold their distributions?",
+        quote="Distributions are unfolded to the particle level.", claim="")
+    assert "ONE PARTICULAR PAPER" in prompt
+    assert "do not ask whether the sentence names" in prompt
+    assert "THIS paper" in prompt

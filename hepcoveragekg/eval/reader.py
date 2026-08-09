@@ -803,21 +803,26 @@ def rescore(path: Path | str, out_path: Path | str | None = None) -> dict:
 # cannot be talked into agreement by the surrounding argument.
 
 SUPPORT_PROMPT = """\
-A question was asked about a physics paper. Another reader answered it and cited \
-the sentence below as their evidence.
+Someone is checking whether ONE PARTICULAR PAPER does the thing described below. \
+They cited this sentence from that paper as their evidence.
 
-Judge ONE thing: does that sentence, on its own, actually answer the question?
+Judge ONE thing: does the sentence show that this paper does it?
 
-QUESTION
+THE THING BEING LOOKED FOR
 {question}
 
-CITED SENTENCE
+CITED SENTENCE FROM THE PAPER
 {quote}
 
-{claim}Say "no" if the sentence is merely on a related topic, describes something \
-similar but not the same, or would need other sentences to complete the answer. \
-A sentence about muons alone does not establish a choice between electrons and \
-muons. A sentence about an unrelated selection cut does not establish anything.
+{claim}The question is phrased across many papers ("which analyses ..."), but you \
+are judging ONE sentence from ONE paper. So do not ask whether the sentence names \
+which papers - it cannot. Ask only whether it shows that THIS paper does the thing.
+
+Say "yes" if the sentence shows this paper does it, even in passing.
+Say "no" if the sentence is merely on a related topic, describes something similar \
+but not the same, or does not establish the thing at all. A sentence about muons \
+alone does not establish a CHOICE between electrons and muons. A sentence about an \
+unrelated selection cut establishes nothing.
 
 Reply as JSON, nothing else:
 {{"supports": true|false, "why": "<one short sentence>"}}
