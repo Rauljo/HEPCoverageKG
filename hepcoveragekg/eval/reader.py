@@ -494,12 +494,20 @@ def _read_prompt(question: str, passage: Passage, mode: str = EXISTENCE) -> str:
     )
 
 
-async def _ask(client, model: str, prompt: str, temperature: float) -> str:
+async def _ask(client, model: str, prompt: str, temperature: float,
+               max_tokens: int | None = None) -> str:
+    """One call. `max_tokens` per call, because servers differ.
+
+    vLLM counts prompt + completion against the context limit, so a budget sized
+    for a reasoning model's 16k window makes an 8k server reject the request
+    outright: "requested 8471 tokens (4471 in the messages, 4000 in the
+    completion)". The budget belongs to the endpoint, not to the module.
+    """
     response = await client.chat.completions.create(
         model=model,
         messages=[{"role": "user", "content": prompt}],
         temperature=temperature,
-        max_completion_tokens=MAX_COMPLETION_TOKENS,
+        max_completion_tokens=max_tokens or MAX_COMPLETION_TOKENS,
     )
     return (response.choices[0].message.content or "").strip()
 
