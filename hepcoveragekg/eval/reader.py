@@ -45,6 +45,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import re
 from collections import Counter
 from dataclasses import asdict, dataclass, field
@@ -57,7 +58,18 @@ logger = logging.getLogger(__name__)
 
 # A yes/no plus one quoted sentence. Generous enough for a long quote, tight
 # enough that a model cannot wander into an essay.
-MAX_COMPLETION_TOKENS = 500
+#
+# A REASONING model needs far more: QwQ and friends emit their chain of thought
+# as ordinary output tokens before the answer, so 500 truncates the thinking and
+# the reply never reaches its JSON. Raise it via READER_MAX_TOKENS when serving
+# one -- the symptom otherwise is a 100% unparseable rate that looks like the
+# model cannot follow the format.
+MAX_COMPLETION_TOKENS = int(os.environ.get("READER_MAX_TOKENS", "500"))
+
+# A reasoning model wraps its thinking in <think>...</think>. vLLM strips this
+# only when served with --reasoning-parser; without it the tags arrive inline and
+# the JSON hides behind them, so the extractor below tolerates both.
+_THINK_RE = re.compile(r"<think>.*?</think>", re.S)
 
 # In-flight requests. Matches the aliases layer's default so a shared endpoint
 # is safe out of the box; DIAS raises it via LLM_CONCURRENCY.
@@ -605,7 +617,15 @@ def parse_reply(raw: str, mode: str = EXISTENCE) -> tuple[bool | None, str, str]
     """
     if not raw:
         return None, "", ""
-    match = re.search(r"\{.*\}", raw, re.S)
+    raw = _THINK_RE.sub(" ", raw)
+    # A reasoning model's chain of thought routinely contains braces and even
+    # draft JSON. Take the LAST balanced object, which is the answer it settled
+    # on, rather than the first thing that looks like one.
+    match = None
+    for match in re.finditer(r"\{[^{}]*\}", raw, re.S):
+        pass
+    if match is None:
+        match = re.search(r"\{.*\}", raw, re.S)
     if not match:
         return None, "", ""
     try:

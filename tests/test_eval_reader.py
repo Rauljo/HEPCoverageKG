@@ -706,3 +706,36 @@ def test_single_paper_questions_need_no_rephrasing():
     """They already name their paper, so they are already per-paper."""
     for r in S.single_paper_questions():
         assert r["provenance"]["paper_scope"]
+
+
+# --- reasoning models -----------------------------------------------------------
+
+
+def test_thinking_blocks_are_stripped_before_the_json_is_found():
+    """A reasoning model emits its chain of thought as ordinary output tokens.
+    Served without --reasoning-parser the <think> block arrives inline, and it
+    routinely contains braces and draft JSON."""
+    raw = ('<think>Could be {"answer":"no"} but the sentence does mention it</think>\n'
+           '{"reasoning":"the text states it directly","quote":"a real sentence here","answer":"yes"}')
+    answer, quote, _ = R.parse_reply(raw)
+    assert answer is True
+    assert quote == "a real sentence here"
+
+
+def test_the_LAST_json_object_wins_not_the_first():
+    """A model that reconsiders mid-thought leaves an abandoned draft behind.
+    The answer it settled on is the last one."""
+    raw = '{"answer":"no","quote":"","why":"first thought"} then {"answer":"yes","quote":"q","why":"settled"}'
+    assert R.parse_reply(raw)[0] is True
+
+
+def test_completion_budget_is_configurable_for_reasoning_models(monkeypatch):
+    """500 tokens truncates a reasoning model mid-thought, so the reply never
+    reaches its JSON -- which presents as a 100% unparseable rate and looks like
+    the model cannot follow the format."""
+    import importlib
+    monkeypatch.setenv("READER_MAX_TOKENS", "4000")
+    reloaded = importlib.reload(R)
+    assert reloaded.MAX_COMPLETION_TOKENS == 4000
+    monkeypatch.delenv("READER_MAX_TOKENS")
+    importlib.reload(reloaded)
