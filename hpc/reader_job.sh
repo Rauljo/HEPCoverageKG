@@ -41,9 +41,20 @@ cd "$REPO"
 # a broken venv rather than a missing module.
 module load Python/3.9.6-GCCcore-11.2.0
 
-# .env FIRST, then the overrides. The other way round silently reverted the
-# model name mid-run and cost 436 wasted calls (D-049).
+# .env FIRST, then the overrides RE-APPLIED. Sourcing .env alone is not enough:
+# `sbatch --export=ALL,LLM_MODEL_NAME=...` puts the override in the environment
+# BEFORE this script runs, and `set -a; . .env` then overwrites it with whatever
+# .env says. That is D-049 happening again -- the first run of this job was
+# configured for Qwen-72B while the server served Mistral-24B, purely because
+# .env still named the old model.
+#
+# So capture what was passed in, source .env for everything unset, then put the
+# explicit values back on top. The endpoint check below is the backstop.
+_OVERRIDE_MODEL="${LLM_MODEL_NAME:-}"
+_OVERRIDE_URL="${LLM_BASE_URL:-}"
 set -a; [ -f .env ] && . ./.env; set +a
+[ -n "$_OVERRIDE_MODEL" ] && LLM_MODEL_NAME="$_OVERRIDE_MODEL"
+[ -n "$_OVERRIDE_URL" ] && LLM_BASE_URL="$_OVERRIDE_URL"
 
 SCOPE="${READER_SCOPE:-sweep}"
 REPEATS="${READER_REPEATS:-3}"
