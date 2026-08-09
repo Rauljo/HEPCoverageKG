@@ -136,6 +136,10 @@ class Verdict:
     # whole answer.
     answer_text: str = ""
     section: str = ""
+    # Which reading window this came from. Verdicts are pooled per window, never
+    # across windows, so this must identify the window uniquely -- `section`
+    # alone does not, because a long section is split into several windows.
+    window: int = 0
     escalated: bool = False        # reached only after the section pass found nothing
     raw: str = ""
 
@@ -173,27 +177,62 @@ class Consensus:
         unparseably has no opinion, and must not be counted as one."""
         return [v for v in self.verdicts if v.answer is not None]
 
+    def _by_window(self) -> list[list[Verdict]]:
+        """Usable verdicts grouped by the window they came from.
+
+        THE distinction this class got wrong. Repeats within one window are
+        samples of the SAME question and should agree -- disagreement there is
+        genuine uncertainty. Verdicts from DIFFERENT windows answer different
+        questions: window 5 holds the ABCD sentence, window 12 is the detector
+        description, and "not in this passage" is the correct answer for 22 of
+        23 windows. Pooling them makes unanimity impossible EXACTLY WHEN the
+        answer is found, so the successful reads were the ones marked unusable:
+
+            2004.01678  3 supported verdicts, verified quote  -> reported None
+            2011.07812  3 supported verdicts, verified quote  -> reported None
+
+        while papers where nothing was found agreed trivially and reported a
+        confident False. The logic was inverted -- finding the answer is what
+        made the result unusable.
+        """
+        groups: dict[tuple, list[Verdict]] = {}
+        for v in self.usable:
+            groups.setdefault((v.window, v.section), []).append(v)
+        return list(groups.values())
+
     @property
     def unanimous(self) -> bool:
-        return len(set(v.supported for v in self.usable)) == 1
+        """Every window that has an opinion is internally consistent."""
+        return all(len(set(v.supported for v in g)) == 1 for g in self._by_window())
 
     @property
     def answer(self) -> bool | None:
-        """Unanimous -> the answer. Split, or nothing usable -> None.
+        """Did any window find it?
 
-        None means "a human must look", and it covers two different situations
-        that must not be flattened into False:
+        True   some window's samples agree that it is there, with a real quote.
+        False  every window agreed it is not, and at least one call was usable.
+        None   a window's samples disagreed, or nothing usable came back.
 
-          the samples disagreed        -> genuinely uncertain
-          every call failed            -> we never asked successfully
-
-        An earlier version derived this from `supported`, which is False for an
-        errored verdict as much as for a real negative. A dead endpoint then
-        reported "this paper does not do X" for all 60 papers — evidence of
-        absence manufactured from an outage.
+        None means "a human must look", and covers two situations that must not
+        be flattened into False: the samples genuinely disagreed, or we never
+        successfully asked. A dead endpoint reporting "this paper does not do X"
+        for all 60 papers is evidence of absence manufactured from an outage.
         """
-        usable = self.usable
-        return usable[0].supported if usable and self.unanimous else None
+        groups = self._by_window()
+        if not groups:
+            return None
+        found, split = False, False
+        for g in groups:
+            verdicts = set(v.supported for v in g)
+            if verdicts == {True}:
+                found = True
+            elif len(verdicts) > 1:
+                split = True
+        # A confident find outranks an unrelated window's wobble: the evidence
+        # exists and is quoted. Only report uncertainty when nothing was found.
+        if found:
+            return True
+        return None if split else False
 
     @property
     def best_quote(self) -> str:
@@ -442,14 +481,15 @@ async def _ask(client, model: str, prompt: str, temperature: float) -> str:
 
 async def read_passage(conn, client, model, qid: str, question: str, passage: Passage,
                        temperature: float, escalated: bool = False,
-                       mode: str = EXISTENCE) -> Verdict:
+                       mode: str = EXISTENCE, window: int = 0) -> Verdict:
     """One question against one window. Verifies the quote before returning."""
     try:
         raw = await _ask(client, model, _read_prompt(question, passage, mode), temperature)
     except Exception as exc:                       # noqa: BLE001 - recorded, not raised
         logger.warning("reader call failed on %s/%s: %s", passage.paper_id, qid, exc)
         return Verdict(passage.paper_id, qid, None, section=passage.section,
-                       escalated=escalated, raw=f"ERROR: {type(exc).__name__}: {exc}")
+                       window=window, escalated=escalated,
+                       raw=f"ERROR: {type(exc).__name__}: {exc}")
 
     answer, quote, extra = parse_reply(raw, mode)
     verified = bool(answer) and verify_quote(conn, passage.paper_id, quote)
@@ -458,7 +498,7 @@ async def read_passage(conn, client, model, qid: str, question: str, passage: Pa
         quote_verified=verified,
         reasoning="" if mode == EXTRACTION else extra,
         answer_text=extra if mode == EXTRACTION else "",
-        section=passage.section, escalated=escalated, raw=raw,
+        section=passage.section, window=window, escalated=escalated, raw=raw,
     )
 
 
@@ -481,10 +521,11 @@ async def read_paper(conn, client, model, qid: str, question: str, paper_id: str
     async def sweep_windows(patterns: tuple[str, ...], escalated: bool) -> bool:
         """Read every window matching `patterns`. True if anything was supported."""
         windows = chunks(passages(conn, paper_id, patterns or None))
-        for window in windows:
+        for index, window in enumerate(windows):
             batch = [
                 await read_passage(conn, client, model, qid, question, window,
-                                   temperature, escalated=escalated, mode=mode)
+                                   temperature, escalated=escalated, mode=mode,
+                                   window=index)
                 for _ in range(repeats)
             ]
             verdicts.extend(batch)
@@ -682,3 +723,59 @@ async def run(conn, questions: list[dict], papers_for, out_path: Path | str,
     out_path.with_suffix(".meta.json").write_text(
         json.dumps(meta, indent=2), encoding="utf-8")
     return meta
+
+
+def rescore(path: Path | str, out_path: Path | str | None = None) -> dict:
+    """Recompute per-paper answers from a run's stored verdicts.
+
+    Every consensus rule here is derived from `verdicts`, which are the raw
+    model replies -- so a scoring change costs a file read, not 22,000 LLM
+    calls. That distinction was learned the expensive way on the query harness,
+    where a metric change meant re-running everything.
+
+    Needed immediately: the first sweep pooled verdicts across windows, so any
+    paper where the answer WAS found came out as "split" and was counted as not
+    found. The reads were good; only the arithmetic over them was wrong.
+
+    Records written before `window` existed fall back to grouping by section,
+    which is the same thing except where one section spanned several windows.
+    """
+    path = Path(path)
+    out_path = Path(out_path) if out_path else path.with_suffix(".rescored.jsonl")
+    stats: Counter = Counter()
+    rows = []
+
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        record = json.loads(line)
+        verdicts = [
+            Verdict(
+                paper_id=v.get("paper_id", record["paper_id"]),
+                qid=v.get("qid", record["qid"]),
+                answer=v.get("answer"),
+                quote=v.get("quote", ""),
+                quote_verified=v.get("quote_verified", False),
+                answer_text=v.get("answer_text", ""),
+                section=v.get("section", ""),
+                window=v.get("window", 0),
+                escalated=v.get("escalated", False),
+                raw=v.get("raw", ""),
+            )
+            for v in record.get("verdicts", [])
+        ]
+        c = Consensus(record["paper_id"], record["qid"], verdicts)
+        was, now = record.get("answer"), c.answer
+        stats["reads"] += 1
+        stats["changed"] += was != now
+        stats[{True: "yes", False: "no", None: "split"}[now]] += 1
+        rows.append({**record, "answer": now, "unanimous": c.unanimous,
+                     "quote": c.best_quote,
+                     "answers": sorted({v.answer_text for v in verdicts
+                                        if v.supported and v.answer_text}),
+                     "previous_answer": was})
+
+    with out_path.open("w", encoding="utf-8") as handle:
+        for row in rows:
+            handle.write(json.dumps(row, ensure_ascii=False) + "\n")
+    return {"out": str(out_path), **{k: int(v) for k, v in stats.items()}}

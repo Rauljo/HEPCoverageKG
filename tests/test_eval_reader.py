@@ -15,7 +15,9 @@ implementation (a model dropping LaTeX from an otherwise verbatim quote).
 """
 from __future__ import annotations
 
+import json
 import sqlite3
+from pathlib import Path
 
 import pytest
 
@@ -523,3 +525,70 @@ def test_run_reports_a_call_error_rate(conn, monkeypatch, tmp_path):
     assert meta["call_errors"] > 0
     assert meta["call_error_rate"] == 1.0
     assert meta["call_usable_rate"] == 0.0
+
+
+# --- consensus is per WINDOW, never pooled across windows ----------------------
+
+
+def _wv(window, supported, answer=True):
+    return R.Verdict("p1", "q", answer, quote="x" * 40, quote_verified=supported,
+                     window=window, section=f"s{window}")
+
+
+def test_finding_the_answer_in_one_window_is_a_yes():
+    """The bug that made the first sweep useless. A 23-window paper holds the
+    answer in one window; the other 22 correctly say "not in this passage".
+    Pooling them made unanimity impossible EXACTLY when the answer was found, so
+    every successful read came back as "split" and was counted as not found --
+    while papers where nothing was found agreed trivially and reported a
+    confident False. Finding the answer was what made the result unusable."""
+    verdicts = [_wv(0, True), _wv(0, True), _wv(0, True)]        # the hit
+    verdicts += [_wv(w, False, answer=False) for w in range(1, 23) for _ in range(3)]
+    c = R.Consensus("p1", "q", verdicts)
+    assert c.answer is True
+    assert c.best_quote
+
+
+def test_all_windows_agreeing_it_is_absent_is_a_no():
+    verdicts = [_wv(w, False, answer=False) for w in range(5) for _ in range(3)]
+    assert R.Consensus("p1", "q", verdicts).answer is False
+
+
+def test_disagreement_WITHIN_a_window_is_a_split():
+    """Repeats of the same window are samples of the same question, so
+    disagreement there is real uncertainty and must reach a human."""
+    verdicts = [_wv(0, True), _wv(0, False, answer=False), _wv(0, True)]
+    c = R.Consensus("p1", "q", verdicts)
+    assert c.answer is None and not c.unanimous
+
+
+def test_a_confident_find_outranks_an_unrelated_window_wobbling():
+    """Window 3 found it and quoted it; window 7's samples disagreed about an
+    unrelated passage. The evidence still exists."""
+    verdicts = [_wv(3, True) for _ in range(3)]
+    verdicts += [_wv(7, True), _wv(7, False, answer=False), _wv(7, False, answer=False)]
+    assert R.Consensus("p1", "q", verdicts).answer is True
+
+
+def test_rescore_recovers_answers_from_stored_verdicts(tmp_path):
+    """Scoring changes must cost a file read, not 22,000 LLM calls."""
+    rec = {
+        "qid": "gf-02", "paper_id": "2004.01678", "answer": None, "unanimous": False,
+        "quote": "", "verdicts": [
+            {"answer": True, "quote": "A modified ABCD estimate of the total background",
+             "quote_verified": True, "window": 0, "section": "Background"},
+            {"answer": True, "quote": "A modified ABCD estimate of the total background",
+             "quote_verified": True, "window": 0, "section": "Background"},
+            {"answer": False, "quote": "", "quote_verified": False,
+             "window": 1, "section": "Detector"},
+        ],
+    }
+    src = tmp_path / "run.jsonl"
+    src.write_text(json.dumps(rec) + "\n")
+
+    info = R.rescore(src)
+    assert info["changed"] == 1 and info["yes"] == 1
+    out = json.loads(Path(info["out"]).read_text().splitlines()[0])
+    assert out["answer"] is True
+    assert out["previous_answer"] is None
+    assert "ABCD" in out["quote"]
