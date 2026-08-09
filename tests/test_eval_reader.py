@@ -481,3 +481,45 @@ def test_one_failed_sample_does_not_veto_the_others():
     c = R.Consensus("p1", "q", [good, R.Verdict("p1", "q", None), good])
     assert len(c.usable) == 2
     assert c.answer is True
+
+
+# --- the failure that reported itself as healthy -------------------------------
+
+
+def test_windows_fit_the_served_context():
+    """The first real run lost ~55% of its calls to
+        400 - This model's maximum context length is 8192 tokens
+    because CHUNK_CHARS was set from an ASSUMED 4 chars/token. Measured on this
+    corpus with the served tokenizer: 3.46. This pins the arithmetic so the
+    window can never again be sized by guesswork."""
+    served_context = 8192
+    budget = (R.CHUNK_CHARS / R.CHARS_PER_TOKEN) + R.MAX_COMPLETION_TOKENS + 500
+    assert budget < served_context, (
+        f"a full window needs ~{budget:.0f} tokens against a {served_context} ceiling")
+    # and with real headroom, not just barely
+    assert budget < 0.8 * served_context
+
+
+def test_an_api_error_is_not_an_unparseable_reply_is_not_a_no():
+    """Three different things the first run collapsed into one. `failed: 0` was
+    reported while 55% of calls were 400ing, because `failed` only counted reads
+    where EVERY sample died."""
+    err = R.Verdict("p1", "q", None, raw="ERROR: BadRequestError: context length")
+    junk = R.Verdict("p1", "q", None, raw="I could not find it, sorry.")
+    no = R.Verdict("p1", "q", False, raw='{"answer":"no"}')
+
+    assert err.errored and not junk.errored and not no.errored
+    assert not err.supported and not junk.supported and not no.supported
+    # and none of the three is a supported yes
+    assert R.Consensus("p1", "q", [err, err]).answer is None
+    assert R.Consensus("p1", "q", [no, no]).answer is False
+
+
+def test_run_reports_a_call_error_rate(conn, monkeypatch, tmp_path):
+    """A run that limps home on a minority of its calls must SAY so in the meta,
+    not present a clean set of negatives."""
+    meta, lines, _ = _run(conn, monkeypatch, [RuntimeError("boom")], ABCD_Q,
+                          lambda q: ["p1"], tmp_path, repeats=2, cascade=False)
+    assert meta["call_errors"] > 0
+    assert meta["call_error_rate"] == 1.0
+    assert meta["call_usable_rate"] == 0.0

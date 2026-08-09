@@ -138,21 +138,35 @@ if [ "${READER_SMOKE:-0}" = "1" ]; then
 import json, sys
 rows = [json.loads(l) for l in open(sys.argv[1])]
 verdicts = [v for r in rows for v in r["verdicts"]]
+errors = [v for v in verdicts if v["answer"] is None and v["raw"].startswith("ERROR:")]
+unparsed = [v for v in verdicts if v["answer"] is None and v not in errors]
 parsed = [v for v in verdicts if v["answer"] is not None]
 yes = [v for v in verdicts if v["answer"]]
 verified = [v for v in yes if v["quote_verified"]]
+n = max(len(verdicts), 1)
 print(f"  reads          {len(rows)}")
-print(f"  verdicts       {len(verdicts)}")
-print(f"  parsed         {len(parsed)}  ({len(parsed)/max(len(verdicts),1):.0%})")
+print(f"  calls          {len(verdicts)}")
+print(f"  API errors     {len(errors)}  ({len(errors)/n:.0%})")
+print(f"  unparseable    {len(unparsed)}  ({len(unparsed)/n:.0%})")
+print(f"  usable         {len(parsed)}  ({len(parsed)/n:.0%})")
 print(f"  said yes       {len(yes)}")
 print(f"  quote verified {len(verified)}  of {len(yes)} yes-answers")
+for v in errors[:2]:
+    print(f"  first error: {v['raw'][:160]}")
 fail = []
 if not verdicts:
     fail.append("no verdicts at all")
-if len(parsed) < 0.5 * len(verdicts):
-    fail.append("more than half the replies did not parse")
+# API errors are the check that was missing. The first run lost 55% of its
+# calls to context overflow and still reported "SMOKE OK", because the gate
+# only looked at whether the SURVIVING replies parsed. Overflow is systematic:
+# it kills the biggest windows, which are the ones holding the answers.
+if len(errors) > 0.05 * len(verdicts):
+    fail.append(f"{len(errors)/n:.0%} of calls returned an API error -- check the "
+                "window size against the served context length")
+if len(parsed) < 0.7 * len(verdicts):
+    fail.append("under 70% of calls produced a usable answer")
 if yes and not verified:
-    fail.append("every yes had an unverifiable quote — the model is paraphrasing, not copying")
+    fail.append("every yes had an unverifiable quote -- the model is paraphrasing, not copying")
 if fail:
     print("SMOKE FAILED: " + "; ".join(fail))
     sys.exit(1)

@@ -71,10 +71,29 @@ ABORT_AFTER_CONSECUTIVE_ERRORS = 20
 _DROP_KINDS = ("bibliography",)
 _DROP_SECTIONS = ("%Collaboration%", "Acknowledg%", "References%")
 
-# Reading windows. Sized for a 32k context with room for the prompt and answer;
-# chunks never straddle a section boundary, so a section stays one coherent unit.
-CHUNK_CHARS = 24_000
-CHUNK_OVERLAP = 2_000
+# Reading windows, sized from a MEASURED token ratio rather than a guess.
+#
+# The first real run lost roughly half its calls to
+#     400 - This model's maximum context length is 8192 tokens
+# because CHUNK_CHARS was set from an assumed 4 chars/token. Measured on this
+# corpus with the served model's own tokenizer: **3.46 chars/token** -- physics
+# prose is dense with LaTeX (`$\mathup{{{t}}}$`) and markup tokenises badly.
+# 24,000 chars is therefore ~6,900 tokens, and prompt + window + completion sat
+# right on the ceiling.
+#
+# Worse than the loss itself: the failures were SYSTEMATIC, not random. The
+# biggest windows are the ones that overflow, and the biggest windows are the
+# content-rich sections most likely to hold an answer. So the run did not just
+# lose half its data, it lost the half that mattered, and reported the result as
+# a confident "not found".
+#
+# Budget, against the 8192 the server actually serves:
+#     8192 - 500 completion - ~450 prompt = ~7,240 usable
+#     at 3.46 chars/token, and leaving real headroom for a denser-than-average
+#     section: 12,000 chars ~= 3,470 tokens. Half the ceiling, deliberately.
+CHARS_PER_TOKEN = 3.46          # measured, Mistral-Small-24B on this corpus
+CHUNK_CHARS = 12_000
+CHUNK_OVERLAP = 1_500
 
 # Which prompt a question gets. Existence questions ("which analyses do X?")
 # sweep the corpus and only need yes/no; the questions that name a paper ask
@@ -124,6 +143,17 @@ class Verdict:
     def supported(self) -> bool:
         """A yes counts only when its citation is real."""
         return bool(self.answer) and self.quote_verified
+
+    @property
+    def errored(self) -> bool:
+        """The call itself failed -- no opinion was ever obtained.
+
+        Distinct from an unparseable reply, and BOTH are distinct from a "no".
+        The first run reported `failed: 0` while 55% of its calls were returning
+        400s, because `failed` only counted reads where EVERY sample died. A
+        systematic context-overflow looked like a clean set of negatives.
+        """
+        return self.answer is None and self.raw.startswith("ERROR:")
 
 
 @dataclass
@@ -603,6 +633,13 @@ async def run(conn, questions: list[dict], papers_for, out_path: Path | str,
             stats["split"] += c.answer is None and not failed
             stats["failed"] += failed
             stats["escalated"] += any(v.escalated for v in c.verdicts)
+            # Per-CALL health, not per-read. A read that limps home on one usable
+            # sample out of three is not a healthy read, and the old counters
+            # could not say so.
+            stats["calls"] += len(c.verdicts)
+            stats["call_errors"] += sum(1 for v in c.verdicts if v.errored)
+            stats["call_unparsed"] += sum(
+                1 for v in c.verdicts if v.answer is None and not v.errored)
 
             handle.write(json.dumps({
                 "qid": c.qid,
@@ -631,8 +668,17 @@ async def run(conn, questions: list[dict], papers_for, out_path: Path | str,
 
     # Written after the file is closed. Doing this inside the open block is what
     # corrupted the last circuit-breaker output (D-049).
+    calls = int(stats["calls"]) or 1
     meta = {"model": model, "repeats": repeats, "temperature": temperature,
-            "cascade": cascade, "mode": mode, **{k: int(v) for k, v in stats.items()}}
+            "cascade": cascade, "mode": mode,
+            **{k: int(v) for k, v in stats.items()},
+            "call_error_rate": round(stats["call_errors"] / calls, 3),
+            "call_usable_rate": round(
+                (calls - stats["call_errors"] - stats["call_unparsed"]) / calls, 3)}
+    if meta["call_error_rate"] > 0.05:
+        logger.error("%.0f%% of calls FAILED -- this result is not trustworthy. "
+                     "Check the window size against the served context length.",
+                     100 * meta["call_error_rate"])
     out_path.with_suffix(".meta.json").write_text(
         json.dumps(meta, indent=2), encoding="utf-8")
     return meta
