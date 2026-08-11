@@ -287,6 +287,17 @@ def _cmd_reader(args) -> int:
         print(f"-> {info['out']}")
         return 0
 
+    if args.recheck:
+        # Stage 2: only the papers stage 1 rejected, with the stronger model.
+        info = asyncio.run(R.recheck(
+            conn, args.recheck, records, concurrency=args.concurrency))
+        print(f"recheck with {info['model']}")
+        print(f"  rechecked  {info['rechecked']} (stage-1 no/split)")
+        print(f"  untouched  {info['untouched']} (already yes)")
+        print(f"  RECOVERED  {info['recovered']}")
+        print(f"-> {info['out']}")
+        return 0
+
     if args.check_support:
         # The second pass: a verified quote proves the sentence is in the paper,
         # not that it answers the question. Measured on gf-08, half the cited
@@ -296,8 +307,20 @@ def _cmd_reader(args) -> int:
         # sentence cannot name which of 60 papers do something.
         judged = [{"qid": r["qid"], "text": r.get("per_paper") or r["text"]}
                   for r in records]
+        client = model = None
+        if args.judge_url:
+            # A judge on a DIFFERENT model from the reader: a model marking its
+            # own homework is the self-preference problem, and both servers are
+            # already running.
+            from openai import AsyncOpenAI
+            import os as _os
+            client = AsyncOpenAI(base_url=args.judge_url,
+                                 api_key=_os.environ.get("LLM_API_KEY", "dummy"),
+                                 timeout=900)
+            model = args.judge_model
         info = asyncio.run(R.verify_supports(
-            args.check_support, judged, concurrency=args.concurrency))
+            args.check_support, judged, concurrency=args.concurrency,
+            client=client, model=model, max_tokens=args.judge_max_tokens))
         print(f"checked {info['checked']} yes-answers")
         print(f"  upheld     {info.get('upheld', 0)}")
         print(f"  downgraded {info.get('downgraded', 0)}")
@@ -497,6 +520,14 @@ def build_parser() -> argparse.ArgumentParser:
                           help="re-check every YES: does the cited quote actually answer "
                                "the question? A verified quote proves the sentence is in "
                                "the paper, not that it was read correctly.")
+    p_reader.add_argument("--recheck", default=None, metavar="STAGE1.jsonl",
+                          help="stage 2: re-read only the papers stage 1 rejected, "
+                               "with whatever model LLM_MODEL_NAME points at")
+    p_reader.add_argument("--judge-url", default=None,
+                          help="judge on a different endpoint from the reader")
+    p_reader.add_argument("--judge-model", default=None, help="judge model id")
+    p_reader.add_argument("--judge-max-tokens", type=int, default=None,
+                          help="completion budget for the judge (raise for a reasoning model)")
     p_reader.add_argument("--dry-run", action="store_true",
                           help="print the plan and the read count, call nothing")
     p_reader.set_defaults(func=_cmd_reader)

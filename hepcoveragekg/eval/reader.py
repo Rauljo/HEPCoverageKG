@@ -874,7 +874,8 @@ the verdict last:
 
 
 async def check_support(client, model, question: str, quote: str,
-                        claimed: str = "", temperature: float = 0.0) -> tuple[bool | None, str]:
+                        claimed: str = "", temperature: float = 0.0,
+                        max_tokens: int | None = None) -> tuple[bool | None, str]:
     """(supports, why). None when the call or the reply failed.
 
     Temperature 0: this is an adjudication, not a sample. Disagreement between
@@ -884,7 +885,7 @@ async def check_support(client, model, question: str, quote: str,
     claim = f'The reader answered: "{claimed}"\n\n' if claimed else ""
     prompt = SUPPORT_PROMPT.format(question=question, quote=quote, claim=claim)
     try:
-        raw = await _ask(client, model, prompt, temperature)
+        raw = await _ask(client, model, prompt, temperature, max_tokens=max_tokens)
     except Exception as exc:                       # noqa: BLE001
         logger.warning("support check failed: %s", exc)
         return None, f"ERROR: {type(exc).__name__}"
@@ -905,7 +906,9 @@ async def check_support(client, model, question: str, quote: str,
 
 async def verify_supports(rescored_path: Path | str, questions: list[dict],
                           out_path: Path | str | None = None,
-                          *, concurrency: int | None = None) -> dict:
+                          *, concurrency: int | None = None,
+                          client=None, model: str | None = None,
+                          max_tokens: int | None = None) -> dict:
     """Re-check every YES in a rescored run, and write the surviving answers.
 
     A yes that fails here is downgraded to `false_support` rather than deleted:
@@ -915,7 +918,11 @@ async def verify_supports(rescored_path: Path | str, questions: list[dict],
     rescored_path = Path(rescored_path)
     out_path = Path(out_path) if out_path else rescored_path.with_suffix(".supported.jsonl")
     text = {q["qid"]: q["text"] for q in questions}
-    client, model = _client()
+    # A different endpoint from the reader when one is supplied: a model marking
+    # its own homework is the self-preference problem (MT-Bench), and avoiding it
+    # here costs nothing because both servers are already up.
+    if client is None:
+        client, model = _client()
     gate = asyncio.Semaphore(concurrency or DEFAULT_CONCURRENCY)
 
     rows = [json.loads(l) for l in rescored_path.read_text(encoding="utf-8").splitlines() if l.strip()]
@@ -926,9 +933,10 @@ async def verify_supports(rescored_path: Path | str, questions: list[dict],
             answers = row.get("answers") or []
             ok, why = await check_support(
                 client, model, text.get(row["qid"], row["qid"]), row["quote"],
-                answers[0] if answers else "")
+                answers[0] if answers else "", max_tokens=max_tokens)
         row["quote_supports"] = ok
         row["support_why"] = why
+        row["judged_by"] = model
         if ok is False:
             row["answer"] = False
             row["downgraded"] = "quote does not answer the question"
@@ -951,3 +959,85 @@ async def verify_supports(rescored_path: Path | str, questions: list[dict],
     return {"out": str(out_path), "checked": checked,
             **{k: int(v) for k, v in stats.items()},
             "precision": round(stats["upheld"] / checked, 3) if checked else None}
+
+
+# --------------------------------------------------------------------------
+# The cascade: cheap model for coverage, strong model for its misses, judge for
+# everything either of them claims.
+# --------------------------------------------------------------------------
+#
+# Each stage is aimed at a MEASURED failure of the stage before it.
+#
+#   1. a fast literal model reads everything. It under-finds: it read
+#      "A jet pair is tagged as a Higgs boson candidate if the NN score..."
+#      and answered no.
+#   2. a reasoning model re-reads only what stage 1 rejected -- that is exactly
+#      where its misses are, and it is 3-10x slower, so pointing it at the whole
+#      corpus would cost 8-17 hours to re-derive answers already in hand.
+#   3. a judge checks every YES from either model.
+#
+# Stage 3 is not optional, and the reason is arithmetic rather than distrust.
+# Aggregation is OR-over-windows: one window with a verified quote flips the
+# paper. 2504.13081 has 14 windows; QwQ answered "no" on 13 and yes on one,
+# citing "the Higgs boson transverse mass must be greater than 60 GeV" -- a cut
+# on a Higgs quantity, not a reconstructed Higgs object. At a per-window false
+# positive rate p over N windows the paper flips with probability 1-(1-p)^N,
+# which for p=0.07 and N=14 is 64%. A better reader RAISES this, because it
+# finds more per window. The judge is what makes OR-over-windows safe.
+#
+# The judge should not be the model that produced the answer. Self-preference in
+# LLM judging is well documented (MT-Bench), and it is free to avoid here.
+
+def _pending(rows: list[dict]) -> list[dict]:
+    """Reads a second opinion could still change: negatives and splits.
+
+    A confident YES is not re-read -- stage 3 handles those. A NO is where a
+    literal reader's misses live.
+    """
+    return [r for r in rows if r.get("answer") is not True]
+
+
+async def recheck(conn, rescored_path: Path | str, questions: list[dict],
+                  out_path: Path | str | None = None, *,
+                  repeats: int = 1, temperature: float = 0.0,
+                  concurrency: int | None = None,
+                  max_tokens: int | None = None) -> dict:
+    """Stage 2: re-read only the papers stage 1 did not find, with this model.
+
+    `repeats=1` by default: this is a recall pass, and the uncertainty that
+    repeats measure is handled by the judge downstream. Spending three samples
+    per window on a reasoning model to re-derive a negative is not worth it.
+    """
+    rescored_path = Path(rescored_path)
+    out_path = Path(out_path) if out_path else rescored_path.with_suffix(".rechecked.jsonl")
+    text = {q["qid"]: (q.get("per_paper") or q["text"]) for q in questions}
+    client, model = _client()
+    gate = asyncio.Semaphore(concurrency or DEFAULT_CONCURRENCY)
+
+    rows = [json.loads(l) for l in rescored_path.read_text(encoding="utf-8").splitlines() if l.strip()]
+    todo = _pending(rows)
+    logger.info("recheck: %d of %d reads pending, model=%s", len(todo), len(rows), model)
+
+    async def one(row: dict) -> None:
+        async with gate:
+            c = await read_paper(conn, client, model, row["qid"],
+                                 text.get(row["qid"], row["qid"]), row["paper_id"],
+                                 repeats=repeats, temperature=temperature,
+                                 cascade=False, mode=EXISTENCE)
+        row["recheck_answer"] = c.answer
+        row["recheck_model"] = model
+        if c.answer is True:
+            # Recovered by the stronger reader. Marked, never silently merged --
+            # which model found a fact is part of the finding.
+            row["answer"] = True
+            row["quote"] = c.best_quote
+            row["recovered_by"] = model
+
+    await asyncio.gather(*(one(r) for r in todo))
+
+    stats = Counter(recovered=sum(1 for r in todo if r.get("recovered_by")),
+                    rechecked=len(todo), untouched=len(rows) - len(todo))
+    with out_path.open("w", encoding="utf-8") as handle:
+        for r in rows:
+            handle.write(json.dumps(r, ensure_ascii=False) + "\n")
+    return {"out": str(out_path), "model": model, **{k: int(v) for k, v in stats.items()}}
