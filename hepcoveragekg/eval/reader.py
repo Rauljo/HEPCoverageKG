@@ -1018,26 +1018,60 @@ async def recheck(conn, rescored_path: Path | str, questions: list[dict],
     todo = _pending(rows)
     logger.info("recheck: %d of %d reads pending, model=%s", len(todo), len(rows), model)
 
+    # RESUME. A recheck is hours long and the server it depends on has a wall
+    # clock; an earlier version gathered everything and wrote once at the end, so
+    # a server timing out 15 minutes short would have discarded 4,215 completed
+    # calls. Progress is appended as it happens and re-read on restart.
+    progress = out_path.with_suffix(".progress.jsonl")
+    done: dict[tuple, dict] = {}
+    if progress.exists():
+        for line in progress.read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                rec = json.loads(line)
+                done[(rec["qid"], rec["paper_id"])] = rec
+        logger.info("resuming: %d reads already done", len(done))
+    todo = [r for r in todo if (r["qid"], r["paper_id"]) not in done]
+
+    handle = progress.open("a", encoding="utf-8")
+    lock = asyncio.Lock()
+
     async def one(row: dict) -> None:
         async with gate:
             c = await read_paper(conn, client, model, row["qid"],
                                  text.get(row["qid"], row["qid"]), row["paper_id"],
                                  repeats=repeats, temperature=temperature,
                                  cascade=False, mode=EXISTENCE)
-        row["recheck_answer"] = c.answer
-        row["recheck_model"] = model
-        if c.answer is True:
+        rec = {"qid": row["qid"], "paper_id": row["paper_id"],
+               "recheck_answer": c.answer, "recheck_model": model,
+               "quote": c.best_quote}
+        async with lock:
+            handle.write(json.dumps(rec, ensure_ascii=False) + "\n")
+            handle.flush()
+        done[(row["qid"], row["paper_id"])] = rec
+
+    try:
+        await asyncio.gather(*(one(r) for r in todo))
+    finally:
+        handle.close()
+
+    recovered = 0
+    for r in rows:
+        rec = done.get((r["qid"], r["paper_id"]))
+        if not rec:
+            continue
+        r["recheck_answer"] = rec["recheck_answer"]
+        r["recheck_model"] = rec["recheck_model"]
+        if rec["recheck_answer"] is True:
             # Recovered by the stronger reader. Marked, never silently merged --
             # which model found a fact is part of the finding.
-            row["answer"] = True
-            row["quote"] = c.best_quote
-            row["recovered_by"] = model
+            r["answer"] = True
+            r["quote"] = rec["quote"]
+            r["recovered_by"] = rec["recheck_model"]
+            recovered += 1
 
-    await asyncio.gather(*(one(r) for r in todo))
-
-    stats = Counter(recovered=sum(1 for r in todo if r.get("recovered_by")),
-                    rechecked=len(todo), untouched=len(rows) - len(todo))
-    with out_path.open("w", encoding="utf-8") as handle:
+    stats = Counter(recovered=recovered, rechecked=len(done),
+                    untouched=len(rows) - len(done))
+    with out_path.open("w", encoding="utf-8") as h:
         for r in rows:
-            handle.write(json.dumps(r, ensure_ascii=False) + "\n")
+            h.write(json.dumps(r, ensure_ascii=False) + "\n")
     return {"out": str(out_path), "model": model, **{k: int(v) for k, v in stats.items()}}
