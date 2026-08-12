@@ -142,6 +142,26 @@ for bus in ${ALLOCATED}; do
         fi
     done
 done
+# The bus-id blocklist above only knows the card D-040 named. A SECOND card has
+# since gone bad the same way -- compute-gpu-0-1 GPU 2, 1413 aggregate
+# uncorrected ECC errors -- and Slurm reports the node healthy, so it keeps
+# handing it out. A blocklist needs updating after each failure; the error
+# counter is the actual symptom, so read that instead and let the list stay as
+# the belt to this braces.
+#
+# Volatile counters reset on driver reload, aggregate ones do not. Only the
+# aggregate can be trusted for "has this card ever failed".
+for gpu in ${VISIBLE//,/ }; do
+    errs=$(nvidia-smi -i "$gpu" \
+             --query-gpu=ecc.errors.uncorrected.aggregate.total \
+             --format=csv,noheader,nounits 2>/dev/null || echo unknown)
+    echo "  gpu ${gpu}: uncorrected ECC (aggregate) = ${errs}"
+    if [ "$errs" != "0" ] && [ "$errs" != "unknown" ] && [ "$errs" != "N/A" ]; then
+        echo "REFUSING TO START: gpu ${gpu} has ${errs} uncorrected ECC errors."
+        echo "  It loads a model happily and dies on the first real inference."
+        exit 75   # EX_TEMPFAIL: transient, worth retrying onto another card
+    fi
+done
 echo "GPU health check passed"
 echo "----------------------"
 

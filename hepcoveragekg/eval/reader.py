@@ -974,6 +974,14 @@ async def check_support(client, model, question: str, quote: str,
 # handful the prompt becomes a haystack and the judge starts weighing quantity.
 MAX_JUDGE_QUOTES = 4
 
+# A merged row is different in kind: it is a deliberate union of two models
+# sweeping every window, gathered precisely so the judge could weigh a
+# multi-part claim against all of it. Capping that at 4 would reintroduce the
+# failure the merge exists to fix -- a three-part question decided on a third of
+# its evidence. 16 sentences is roughly 1k tokens, cheap against the haystack
+# risk, and the cap only bites on the noisiest papers.
+MAX_MERGED_JUDGE_QUOTES = 16
+
 
 def _evidence_for_judge(row: dict) -> str:
     """Every distinct verified quote the reader found, not just the first.
@@ -990,6 +998,14 @@ def _evidence_for_judge(row: dict) -> str:
     quotes = row.get("quotes")
     if quotes:
         return "\n".join(f"- ({c}) {q}" for c, q in quotes.items())
+
+    # A merged row has no verdicts of its own -- it is the union of several
+    # readers' pooled quotes. Falling through to the `row["quote"]` default here
+    # would hand the judge one sentence out of the whole gathered set, which is
+    # the failure the merge exists to prevent.
+    pooled = row.get("all_quotes")
+    if pooled and not row.get("verdicts"):
+        return "\n".join(f"- {q}" for q in pooled[:MAX_MERGED_JUDGE_QUOTES])
 
     seen: list[str] = []
     for v in row.get("verdicts", []):

@@ -968,3 +968,27 @@ def test_merge_marks_a_pair_with_no_evidence_as_false(tmp_path):
     R.merge_gathered([a], out)
     row = json.loads(out.read_text().splitlines()[0])
     assert row["answer"] is False and row["all_quotes"] == []
+
+
+def test_judge_sees_every_gathered_quote_not_just_the_first():
+    """The merge is pointless if the judge only reads one of the union.
+
+    A merged row carries no verdicts of its own, so the old code fell through to
+    the single-`quote` default -- a three-part claim decided on a third of its
+    evidence, which is the exact failure the merge was built to fix."""
+    row = {"qid": "gf-11", "paper_id": "p1", "verdicts": [],
+           "quote": "the algorithm is CSVv2",
+           "all_quotes": ["the algorithm is CSVv2",
+                          "a medium operating point is used",
+                          "the efficiency is 70%"]}
+    evidence = R._evidence_for_judge(row)
+    assert evidence.count("\n") == 2
+    for q in row["all_quotes"]:
+        assert q in evidence
+
+
+def test_merged_evidence_is_capped_but_far_above_the_sweep_cap():
+    row = {"verdicts": [], "quote": "q0",
+           "all_quotes": [f"sentence number {i}" for i in range(40)]}
+    lines = R._evidence_for_judge(row).splitlines()
+    assert len(lines) == R.MAX_MERGED_JUDGE_QUOTES > R.MAX_JUDGE_QUOTES
