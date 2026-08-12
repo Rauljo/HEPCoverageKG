@@ -55,7 +55,28 @@ def paper_scope(text: str) -> Optional[list[str]]:
 SUPERVISOR_QUESTIONS: list[dict] = [
     # --- Tier 1: facet-index lookups. Should need zero LLM calls. -----------
     {
-        "qid": "gf-01", "per_paper": 'Is this analysis a SEARCH (rather than a measurement) whose event selection uses b-tagged jets AND missing transverse momentum?', "tier": 1, "shape": "set",
+        "qid": "gf-01", "per_paper": 'Is this analysis a SEARCH (rather than a measurement) whose event selection uses b-tagged jets AND missing transverse momentum?',
+        # THREE requirements, asked separately and combined by us.
+        #
+        # gf-01 scored 2/18 while every SINGLE-condition question scored well
+        # (gf-04 9/10, gf-02 6/6, gf-03 3/4). The reader sees one ~12,000-char
+        # window at a time, and a window almost never establishes all three
+        # things at once -- so the honest per-window answer is "no", and the
+        # paper comes back no. The evidence was there all along: for 2004.14060,
+        # asking about b-tagging alone surfaces "The standard b-tagging algorithm
+        # is employed for track-jets and the selection requirement is...", which
+        # the combined query never returned.
+        #
+        # So the AND is computed by us, over the whole paper, instead of being
+        # asked of a model that can only see a twentieth of it.
+        "conditions": [
+            "Is this paper a SEARCH for new physics, rather than a measurement of "
+            "a Standard Model quantity?",
+            "Does the event selection use b-tagged jets (jets identified as "
+            "containing a b-hadron)?",
+            "Does the event selection require missing transverse momentum "
+            "(MET / ETmiss / pTmiss)?",
+        ], "tier": 1, "shape": "set",
         "text": "Which searches select b-jets and missing transverse momentum?",
         "gabriel_gold": {"kind": "set", "value": 18, "papers": [
             "2004.14060", "2006.05880", "2010.14293", "2012.03799", "2012.08600",
@@ -238,6 +259,8 @@ def build_records(split: str = "test") -> list[dict]:
             # around a corpus-wide question does not work; decomposing it does.
             # Hand-written and recorded beside the original so both are auditable.
             "per_paper": q.get("per_paper"),
+            # Sub-questions for a multi-condition question; the AND is ours.
+            "conditions": q.get("conditions"),
             "provenance": {
                 "tier": q["tier"],
                 "question_as_asked": q["text"],

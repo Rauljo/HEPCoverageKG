@@ -1075,3 +1075,78 @@ async def recheck(conn, rescored_path: Path | str, questions: list[dict],
         for r in rows:
             h.write(json.dumps(r, ensure_ascii=False) + "\n")
     return {"out": str(out_path), "model": model, **{k: int(v) for k, v in stats.items()}}
+
+
+async def read_conditions(conn, client, model, qid: str, conditions: list[str],
+                          paper_id: str, *, repeats: int = 2,
+                          temperature: float = 0.3,
+                          max_tokens: int | None = None) -> dict:
+    """A multi-condition question, asked one condition at a time.
+
+    The AND is computed HERE, over the whole paper, rather than asked of a model
+    that can see one window at a time. gf-01 asks for a search AND b-tagged jets
+    AND missing transverse momentum; no single window establishes all three, so
+    the honest per-window answer is "no" and the paper came back no -- 2 of 18,
+    while every single-condition question scored well.
+
+    Each condition is searched over the whole paper independently and counts as
+    met if ANY window shows it with a verified quote. A condition never found is
+    what makes the paper a no, and it is recorded, so a failure says WHICH part
+    was missing instead of just "no".
+    """
+    met: dict[str, dict] = {}
+    for index, condition in enumerate(conditions):
+        c = await read_paper(conn, client, model, f"{qid}.c{index}", condition,
+                             paper_id, repeats=repeats, temperature=temperature,
+                             cascade=False, mode=EXISTENCE)
+        met[condition] = {"answer": c.answer, "quote": c.best_quote,
+                          "unanimous": c.unanimous}
+
+    answers = [v["answer"] for v in met.values()]
+    if all(a is True for a in answers):
+        overall = True
+    elif any(a is False for a in answers):
+        overall = False          # one condition definitely absent -> the AND fails
+    else:
+        overall = None           # nothing definitely absent, something unresolved
+    return {
+        "qid": qid, "paper_id": paper_id, "answer": overall,
+        "conditions": met,
+        "missing": [c for c, v in met.items() if v["answer"] is not True],
+        "quote": next((v["quote"] for v in met.values() if v["quote"]), ""),
+    }
+
+
+async def run_conditions(conn, question: dict, papers: list[str],
+                         out_path: Path | str, *, repeats: int = 2,
+                         temperature: float = 0.3,
+                         concurrency: int | None = None,
+                         max_tokens: int | None = None) -> dict:
+    """Stream a multi-condition question over a list of papers."""
+    out_path = Path(out_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    client, model = _client()
+    gate = asyncio.Semaphore(concurrency or DEFAULT_CONCURRENCY)
+    conditions = question["conditions"]
+    stats: Counter = Counter()
+
+    async def one(paper_id: str) -> dict:
+        async with gate:
+            return await read_conditions(conn, client, model, question["qid"],
+                                         conditions, paper_id, repeats=repeats,
+                                         temperature=temperature, max_tokens=max_tokens)
+
+    # Appended as they complete: a run that dies keeps everything up to that
+    # point, which is the lesson this module has now learned twice (D-049).
+    with out_path.open("w", encoding="utf-8") as handle:
+        for coro in asyncio.as_completed([one(p) for p in papers]):
+            row = await coro
+            stats["papers"] += 1
+            stats[{True: "yes", False: "no", None: "unresolved"}[row["answer"]]] += 1
+            handle.write(json.dumps(row, ensure_ascii=False) + "\n")
+            handle.flush()
+
+    meta = {"model": model, "qid": question["qid"], "conditions": len(conditions),
+            "repeats": repeats, **{k: int(v) for k, v in stats.items()}}
+    out_path.with_suffix(".meta.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
+    return meta

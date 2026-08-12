@@ -287,6 +287,31 @@ def _cmd_reader(args) -> int:
         print(f"-> {info['out']}")
         return 0
 
+    if args.conditions:
+        # A multi-condition question, asked one condition at a time with the AND
+        # computed over the whole paper rather than per window.
+        q = next((r for r in records if r["qid"] == args.conditions), None)
+        if q is None or not q.get("conditions"):
+            print(f"{args.conditions} has no `conditions` defined"); return 1
+        papers = q["provenance"]["paper_scope"] or all_papers
+        if args.limit_papers:
+            papers = papers[:args.limit_papers]
+        if args.only_papers:
+            wanted = set(args.only_papers.split(","))
+            papers = [p for p in papers if p in wanted]
+        print(f"{q['qid']}: {len(q['conditions'])} conditions x {len(papers)} papers")
+        for i, cond in enumerate(q["conditions"], 1):
+            print(f"   {i}. {cond}")
+        if args.dry_run:
+            print("\n--dry-run: nothing called"); return 0
+        meta = asyncio.run(R.run_conditions(
+            conn, q, papers, args.out, repeats=args.repeats,
+            temperature=args.temperature, concurrency=args.concurrency))
+        for k, v in meta.items():
+            print(f"  {k}: {v}")
+        print(f"-> {args.out}")
+        return 0
+
     if args.recheck:
         # Stage 2: only the papers stage 1 rejected, with the stronger model.
         info = asyncio.run(R.recheck(
@@ -520,6 +545,11 @@ def build_parser() -> argparse.ArgumentParser:
                           help="re-check every YES: does the cited quote actually answer "
                                "the question? A verified quote proves the sentence is in "
                                "the paper, not that it was read correctly.")
+    p_reader.add_argument("--conditions", default=None, metavar="QID",
+                          help="ask a multi-condition question one condition at a "
+                               "time, combining them over the whole paper")
+    p_reader.add_argument("--only-papers", default=None,
+                          help="comma-separated arXiv ids, for a targeted diagnostic")
     p_reader.add_argument("--recheck", default=None, metavar="STAGE1.jsonl",
                           help="stage 2: re-read only the papers stage 1 rejected, "
                                "with whatever model LLM_MODEL_NAME points at")

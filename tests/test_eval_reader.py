@@ -739,3 +739,47 @@ def test_completion_budget_is_configurable_for_reasoning_models(monkeypatch):
     assert reloaded.MAX_COMPLETION_TOKENS == 4000
     monkeypatch.delenv("READER_MAX_TOKENS")
     importlib.reload(reloaded)
+
+
+# --- multi-condition questions --------------------------------------------------
+
+
+def test_the_AND_is_computed_over_the_paper_not_per_window():
+    """gf-01 scored 2/18 while every single-condition question scored well.
+    A ~12,000-char window almost never establishes 'a search' AND 'b-tagged jets'
+    AND 'missing transverse momentum' at once, so the honest per-window answer is
+    no and the paper came back no -- even though each condition was separately
+    present somewhere in the text."""
+    q = next(r for r in S.build_records() if r["qid"] == "gf-01")
+    assert q["conditions"] and len(q["conditions"]) == 3
+    for c in q["conditions"]:
+        assert " AND " not in c, f"a condition must ask ONE thing: {c}"
+
+
+def test_a_missing_condition_is_named_not_just_counted(conn, monkeypatch, tmp_path):
+    """A failure should say WHICH part was absent, so 'no' is debuggable."""
+    import asyncio
+
+    replies = {
+        "search": '{"reasoning":"it is a search","quote":"The ABCD method is used to estimate the multijet contribution","answer":"yes"}',
+        "b-tag": '{"reasoning":"nothing here","quote":"","answer":"no"}',
+    }
+
+    class _Stub:
+        def __init__(s): s.chat = s; s.completions = s
+        async def create(s, **kw):
+            prompt = kw["messages"][0]["content"]
+            body = replies["b-tag"] if "b-tagged" in prompt else replies["search"]
+            class M: content = body
+            class C: message = M()
+            class R_: choices = [C()]
+            return R_()
+
+    from hepcoveragekg.eval import reader as RR
+    client = _Stub()
+    out = asyncio.run(RR.read_conditions(
+        conn, client, "stub", "gf-01",
+        ["Is this a search?", "Does it use b-tagged jets?"], "p1", repeats=1))
+    assert out["answer"] is False
+    assert out["missing"] == ["Does it use b-tagged jets?"]
+    assert out["conditions"]["Is this a search?"]["answer"] is True
