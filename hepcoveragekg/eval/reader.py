@@ -632,25 +632,27 @@ about what is usually true.
 QUESTION
 {question}
 
-MANY QUESTIONS ASK FOR SEVERAL THINGS AT ONCE - an algorithm AND its working \
-point AND its performance; a list of regions AND the role each one plays. Answer \
-EVERY part the text supports, not the first one you find. A partial answer that \
-looks complete is worse than one that says which parts are missing.
+Your job here is to COLLECT EVIDENCE, not to decide whether the question is \
+fully answered.
 
-Quote a sentence for each part, copied EXACTLY from the text - not paraphrased, \
-not reconstructed from memory. A quote that does not appear verbatim will be \
-discarded and that part of your answer will not count.
+Many questions ask for several things at once - an algorithm AND its working \
+point AND its performance; a list of regions AND the role each one plays. Return \
+every sentence that bears on ANY part of the question, even one that covers only \
+a fragment of it. A sentence giving just the algorithm is worth returning. A \
+later step decides whether the parts add up to an answer, and it can only do \
+that with what you hand it.
 
-If the text below does not answer it, set "found" to false. That is the useful \
-answer here, not a failure - do not guess to be helpful, and do not answer from \
-your own knowledge of physics.
+Copy each sentence EXACTLY from the text - not paraphrased, not reconstructed \
+from memory. A sentence that does not appear verbatim is discarded.
+
+Set "found" to false only when the text bears on none of it. Do not guess to be \
+helpful, and do not answer from your own knowledge of physics.
 
 Reply as JSON, nothing else. Fill the fields IN ORDER -- the reasoning first,
 the verdict last:
-{{"reasoning": "<what the question asks for, and which of those parts this text \
-does and does not establish>", "quotes": ["<exact sentence>", "<another, if a \
-different part of the answer needs it>"], "answer": "<everything the text \
-supports, covering as many parts of the question as it can>", "found": true|false}}
+{{"reasoning": "<which parts of the question, if any, this text touches on>", \
+"quotes": ["<exact sentence>", "<another>"], "answer": "<what these sentences \
+say, as far as they go>", "found": true|false}}
 
 PAPER TEXT ({paper_id}, section: {section})
 ---
