@@ -825,3 +825,38 @@ def test_a_multi_condition_claim_is_judged_on_ALL_its_quotes():
     assert "b-tagged jets are required" in prompt
     assert "large missing transverse momentum" in prompt
     assert "it is a search for new physics" in prompt, "all three must reach the judge"
+
+
+def test_the_judge_sees_every_distinct_quote_the_reader_found():
+    """Measured on the sweep: 34 of 140 reads produced more than one verified
+    quote, and 16 DOWNGRADED reads had other verified quotes the judge never saw.
+    best_quote returned the first and the rest were dropped, so a read could be
+    rejected on its weakest evidence while its strongest sat unused."""
+    row = {"quote": "the first one", "verdicts": [
+        {"quote": "the first one", "quote_verified": True},
+        {"quote": "a genuinely different sentence establishing the claim", "quote_verified": True},
+        {"quote": "unverified, must not appear", "quote_verified": False}]}
+    out = R._evidence_for_judge(row)
+    assert "the first one" in out
+    assert "a genuinely different sentence" in out
+    assert "unverified" not in out
+
+
+def test_repetition_is_not_corroboration():
+    """The same sentence recovered by two samples is one piece of evidence, and
+    listing it twice would let the judge weigh quantity instead of content."""
+    q = "one sentence found by every sample"
+    row = {"quote": q, "verdicts": [{"quote": q, "quote_verified": True}] * 3}
+    assert R._evidence_for_judge(row).count(q) == 1
+
+
+def test_a_quote_contained_in_another_is_dropped():
+    row = {"quote": "", "verdicts": [
+        {"quote": "b-tagged jets are required by the selection", "quote_verified": True},
+        {"quote": "b-tagged jets are required", "quote_verified": True}]}
+    assert R._evidence_for_judge(row).count("b-tagged jets are required") == 1
+
+
+def test_a_single_quote_is_not_dressed_up_as_a_list():
+    row = {"quote": "only one", "verdicts": [{"quote": "only one", "quote_verified": True}]}
+    assert R._evidence_for_judge(row) == "only one"

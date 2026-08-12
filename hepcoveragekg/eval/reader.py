@@ -907,6 +907,44 @@ async def check_support(client, model, question: str, quote: str,
     return value, str(data.get("why") or "")
 
 
+# How many quotes the judge is shown. More is better up to a point -- past a
+# handful the prompt becomes a haystack and the judge starts weighing quantity.
+MAX_JUDGE_QUOTES = 4
+
+
+def _evidence_for_judge(row: dict) -> str:
+    """Every distinct verified quote the reader found, not just the first.
+
+    Measured on the sweep: 34 of 140 reads produced more than one verified quote,
+    and **16 downgraded reads had other verified quotes the judge never saw**.
+    `Consensus.best_quote` returns the first supported one and the rest were
+    dropped on the way to the judge, so a read could be rejected on its weakest
+    evidence while its strongest sat unused.
+
+    A multi-condition row keeps its condition labels, because which part of the
+    claim a sentence establishes is exactly what the judge needs to weigh.
+    """
+    quotes = row.get("quotes")
+    if quotes:
+        return "\n".join(f"- ({c}) {q}" for c, q in quotes.items())
+
+    seen: list[str] = []
+    for v in row.get("verdicts", []):
+        q = (v.get("quote") or "").strip()
+        if not v.get("quote_verified") or not q:
+            continue
+        # Skip near-duplicates: the same sentence recovered by two samples, or
+        # one quote wholly inside another. Repetition is not corroboration.
+        if any(q in kept or kept in q or q[:80] == kept[:80] for kept in seen):
+            continue
+        seen.append(q)
+        if len(seen) >= MAX_JUDGE_QUOTES:
+            break
+    if not seen and row.get("quote"):
+        seen = [row["quote"]]
+    return "\n".join(f"- {q}" for q in seen) if len(seen) > 1 else (seen[0] if seen else "")
+
+
 async def verify_supports(rescored_path: Path | str, questions: list[dict],
                           out_path: Path | str | None = None,
                           *, concurrency: int | None = None,
@@ -936,9 +974,7 @@ async def verify_supports(rescored_path: Path | str, questions: list[dict],
             answers = row.get("answers") or []
             # A multi-condition row carries one quote per condition. Judge the
             # whole set against the whole question, because that is the claim.
-            quotes = row.get("quotes")
-            evidence = ("\n".join(f"- ({c}) {q}" for c, q in quotes.items())
-                        if quotes else row["quote"])
+            evidence = _evidence_for_judge(row)
             ok, why = await check_support(
                 client, model, text.get(row["qid"], row["qid"]), evidence,
                 answers[0] if answers else "", max_tokens=max_tokens)
