@@ -330,8 +330,7 @@ def _cmd_reader(args) -> int:
         # The judge is given the same per-paper phrasing the reader was, or it
         # repeats the reader's own failure: refusing a good quote because one
         # sentence cannot name which of 60 papers do something.
-        judged = [{"qid": r["qid"], "text": r.get("per_paper") or r["text"]}
-                  for r in records]
+        judged = R.judge_records(records)
         client = model = None
         if args.judge_url:
             # A judge on a DIFFERENT model from the reader: a model marking its

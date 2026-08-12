@@ -1120,3 +1120,17 @@ def test_the_conditions_path_keeps_its_raw_replies():
     import inspect
     src = inspect.getsource(R.read_conditions)
     assert '"verdicts": [asdict(v) for v in c.verdicts]' in src
+
+
+def test_the_judge_list_the_CLI_builds_still_routes_extraction_questions():
+    """The bug this exists to catch: the CLI trimmed questions to {qid, text},
+    verify_supports routed on provenance.paper_scope, and the set was therefore
+    always empty -- so the value judge never ran on a single real row while its
+    unit test passed, because that test called verify_supports directly."""
+    judged = R.judge_records(S.build_records())
+    by_qid = {q["qid"]: q for q in judged}
+    assert by_qid["gf-10"]["provenance"]["paper_scope"], "a paper-scoped question"
+    assert not by_qid["gf-02"]["provenance"]["paper_scope"], "a corpus question"
+    routed = {q["qid"] for q in judged if (q.get("provenance") or {}).get("paper_scope")}
+    assert "gf-10" in routed and "gf-11" in routed
+    assert "gf-02" not in routed

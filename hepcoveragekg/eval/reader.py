@@ -1220,6 +1220,28 @@ def _evidence_for_judge(row: dict) -> str:
     return "\n".join(f"- {q}" for q in seen) if len(seen) > 1 else (seen[0] if seen else "")
 
 
+def judge_records(records: list[dict]) -> list[dict]:
+    """The trimmed question list the support judge is given.
+
+    Lives here rather than in the CLI because the trimming is load-bearing and
+    got it wrong once: the CLI built `{"qid", "text"}` only, `verify_supports`
+    decided existence-vs-extraction from `provenance.paper_scope`, and with
+    provenance stripped that set was ALWAYS EMPTY -- so every extraction
+    question was judged by the existence judge and the value check never ran on
+    a single real row. The unit test passed throughout, because it called
+    `verify_supports` directly with full records and never went through the
+    shape the pipeline actually uses.
+
+    The judge gets the same per-paper phrasing the reader got, or it repeats the
+    reader's own failure: refusing a good quote because one sentence cannot name
+    which of 60 papers do something.
+    """
+    return [{"qid": r["qid"],
+             "text": r.get("per_paper") or r["text"],
+             "provenance": {"paper_scope": (r.get("provenance") or {}).get("paper_scope")}}
+            for r in records]
+
+
 async def verify_supports(rescored_path: Path | str, questions: list[dict],
                           out_path: Path | str | None = None,
                           *, concurrency: int | None = None,
