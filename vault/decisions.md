@@ -981,3 +981,74 @@ three** GPUs regardless of the allocation, so "pick the first healthy index" wou
 CUDA_VISIBLE_DEVICES at a card another user's job owned. The choice is now made only from Slurm's own
 CUDA_VISIBLE_DEVICES — narrow the allocation, never widen it. **Report the card to the sysadmins**;
 it will keep eating jobs and the failure always presents as the user's bug.
+
+## D-058
+### 2026-08-11/12 — The conjunction problem: one fault wearing five costumes
+
+Most of Gabriel's questions ask for **several things at once**. gf-01 wants a *search* AND
+*b-tagged jets* AND *missing transverse momentum*. gf-11 wants a b-tagging *algorithm* AND its
+*working point* AND its *performance*. The harness was built around single-fact existence questions
+and mishandled conjunctions at **five separate places**, two of which presented as *passes* rather
+than failures — which is why it took this long to see that they were the same fault.
+
+**Form 1 — the reader sees one window at a time.** No single 12,000-char window states that a paper
+is a search *and* uses b-jets *and* uses MET. Asked the whole conjunction per window, the reader says
+no everywhere. gf-01 scored **2/18**.
+*Fix:* ask one condition at a time, compute the AND ourselves over the whole paper.
+
+**Form 2 — the judge is handed one sentence and the whole question.** With the conditions confirmed
+separately, `Consensus.best_quote` flattened them to the FIRST quote on the way to the support judge,
+which then rejected papers for not proving in one sentence what three sentences had established. It
+narrated itself doing it: *"The sentence mentions a search (not a measurement) and explicitly includes
+missing transverse momentum..."* → downgraded. **Four papers with all three conditions confirmed were
+thrown away this way.**
+*Fix:* the judge sees every distinct verified quote, condition-labelled. Precision **38% → 62%**,
+gf-01 **4/18 → 6/18**. Measured on the sweep, 16 downgraded reads had other verified quotes the judge
+never saw — so this was silently costing us everywhere, not just on gf-01.
+
+**Form 3 — the extractor stops at the first hit.** `sweep_windows` returned as soon as one sample was
+supported. Sound for existence ("does this paper do X" — one confirmation settles it), **unsound for
+extraction**: the parts of an answer sit in different sections by construction. gf-11 returned the
+b-tagging algorithm and never looked for the working point or the performance — both of which were in
+the **same window it had just read**.
+*Fix:* `mode == EXTRACTION` keeps reading every window.
+
+**Form 4 — a third of an answer scores as a pass.** gf-11 was recorded True on the algorithm alone.
+This is the dangerous form: it inflates the score *and* hides the defect, and it is why the
+single-paper questions looked healthier than they were. gf-06 is probably the same shape.
+*Fix:* still open — scoring a partial extraction needs a per-part gold, not a boolean.
+
+**Form 5 — telling the recall stage to care about completeness makes it hand back nothing.** The
+extraction prompt said *"a partial answer that looks complete is worse than one that says which parts
+are missing"*. Reasonable-sounding, and catastrophic: gf-11 and gf-14 went from a verified quote each
+to **zero found across 32 and 54 calls**. A model asked to judge sufficiency withholds the fragments
+it judges insufficient.
+*Fix:* the gather prompt now says the opposite — *"Your job here is to COLLECT EVIDENCE, not to decide
+whether the question is fully answered... A later step decides whether the parts add up, and it can
+only do that with what you hand it."*
+
+**The generalisation.** Every one of these is the same mistake: **deciding sufficiency at a stage that
+cannot see all the evidence.** The window can't, the single-quote judge can't, the early-stopping
+sweep can't, the recall model shouldn't. The architecture that follows is the one the harness already
+uses one level up — **gather wide, decide once, at the only point where everything is visible.**
+
+**Consequence for the single-paper questions.** gf-06 and gf-10..gf-15 had been running one model,
+one pass, no judge, while every sweep question got 24B → QwQ → judge. That asymmetry was never a
+decision — it is an accident of the order things were built in, and it is the best available
+explanation for why those seven have been the flakiest results in the set. They now run the same
+cascade: both models gather every window with `--no-cascade`, the results are **unioned** (recall is a
+union, not a vote — the two models fail in opposite directions per D-057, so requiring agreement
+discards exactly what the second model was added to find), and QwQ judges the whole union at once.
+`MAX_MERGED_JUDGE_QUOTES = 16` against 4 for the sweep, because a union assembled by two models over
+every window is a different object from a handful of verified quotes.
+
+### D-058 addendum — both servers from one three-GPU allocation
+Two one-GPU jobs **cannot** both draw a healthy card on compute-gpu-0-1. Confirmed today: the bad
+card of D-040 and the ECC card of D-057 are **the same GPU** — bus `00000000:CA:00.0`, index 2,
+**1413 aggregate uncorrected ECC errors**. With three cards and one dead, any job holding a spare
+forces the next job onto it; job 48365 was submitted alongside a two-GPU QwQ job, drew CA:00.0, and
+refused to start — correctly and uselessly. `hpc/serve_both.sh` takes all three and serves the 24B and
+QwQ on the two clean ones, holding the dead card unused. That costs nobody anything: no job can
+compute on it anyway. The health gate now reads the **aggregate** ECC counter rather than a bus-id
+blocklist — volatile counters reset on driver reload, so the card that killed two jobs yesterday reads
+clean today on the volatile column, and a blocklist only knows about failures that already happened.
