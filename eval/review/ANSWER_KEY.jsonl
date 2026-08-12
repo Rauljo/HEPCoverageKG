@@ -130,3 +130,10 @@
 {"row": 130, "qid": "gf-01-condition", "paper_id": "2010.14293", "machine_said_yes": false, "judge_upheld": null, "found_by": "none"}
 {"row": 131, "qid": "gf-01-condition", "paper_id": "2510.07527", "machine_said_yes": false, "judge_upheld": null, "found_by": "none"}
 {"row": 132, "qid": "gf-01-condition", "paper_id": "2201.11585", "machine_said_yes": false, "judge_upheld": null, "found_by": "none"}
+{"row": 133, "qid": "gf-06", "paper_id": "2006.05880", "machine_said_yes": true, "judge_upheld": null, "found_by": "single-paper run"}
+{"row": 134, "qid": "gf-10", "paper_id": "2001.06899", "machine_said_yes": false, "judge_upheld": null, "found_by": "single-paper run"}
+{"row": 135, "qid": "gf-11", "paper_id": "2001.06899", "machine_said_yes": true, "judge_upheld": null, "found_by": "single-paper run"}
+{"row": 136, "qid": "gf-12", "paper_id": "2006.05880", "machine_said_yes": false, "judge_upheld": null, "found_by": "single-paper run"}
+{"row": 137, "qid": "gf-13", "paper_id": "2001.06899", "machine_said_yes": false, "judge_upheld": null, "found_by": "single-paper run"}
+{"row": 138, "qid": "gf-14", "paper_id": "2006.05880", "machine_said_yes": true, "judge_upheld": null, "found_by": "single-paper run"}
+{"row": 139, "qid": "gf-15", "paper_id": "2006.05880", "machine_said_yes": false, "judge_upheld": null, "found_by": "single-paper run"}

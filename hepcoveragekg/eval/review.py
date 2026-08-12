@@ -260,7 +260,16 @@ def write_html(items: list[dict], path: Path | str, title: str) -> Path:
     for qid in sorted(by_q):
         group = by_q[qid]
         parts.append(f"<h2>{escape(qid)} — {len(group)} items</h2>")
-        parts.append(f"<div class='q'>{escape(group[0]['question'])}</div>")
+        # Print the question ONCE only when every item in the group shares it.
+        # gf-01's condition items do not -- 10 items spanning 3 different
+        # conditions -- and printing the first as a heading would have had the
+        # reviewer judge 8 of them against the wrong question entirely.
+        shared = len({i["question"] for i in group}) == 1
+        if shared:
+            parts.append(f"<div class='q'>{escape(group[0]['question'])}</div>")
+        else:
+            parts.append("<div class='q'><i>each item below asks its own "
+                         "question — read it per item</i></div>")
         for i in group:
             if i["quote"]:
                 quote = f"<div class='quote'>{escape(i['quote'])}</div>"
@@ -291,9 +300,12 @@ def write_html(items: list[dict], path: Path | str, title: str) -> Path:
                           "<div class='verdict v-no'><b>found no evidence in this paper"
                           "</b><br>The sentences above are the closest matches we could "
                           "retrieve, not something the model chose.</div></details>")
+            per_item = ("" if shared else
+                        f"<div class='q'>{escape(i['question'])}</div>")
             parts.append(
                 f"<div class='item'><span class='row'>#{i['row']}</span> "
-                f"<span class='paper'>{escape(i['paper_id'])}</span>{quote}{reveal}</div>")
+                f"<span class='paper'>{escape(i['paper_id'])}</span>"
+                f"{per_item}{quote}{reveal}</div>")
     path.write_text("\n".join(parts), encoding="utf-8")
     return path
 
@@ -335,4 +347,51 @@ def condition_items(rows: list[dict], gold: set, conn=None,
             break                     # one condition per paper: the first failure
         if len(items) >= limit:
             break
+    return items
+
+
+def single_paper_items(rows: list[dict], questions: list[dict],
+                       conn=None) -> list[dict]:
+    """The questions that name their own paper -- Tiers 3 and 4.
+
+    These never reached the sheet, and they are the items most worth a
+    supervisor's attention, because three of them contradict his own document.
+    He marks Q12, Q13 and Q14 "not in the graph"; the answers sit in stored
+    evidence quotes, and our reader independently found Q14's:
+
+        "extending beyond the previous limits on the stop mass from Ref. [89]
+         by up to 160 GeV"
+
+    which is a DIFFERENT sentence from the one his gold points at. Whether that
+    counts is his call, not ours -- but it cannot be settled by either pipeline,
+    because both were built from the same extraction.
+
+    Where the reader found nothing, candidates are retrieved as elsewhere. A
+    "no" here is the interesting case for exactly the disputed three.
+    """
+    by_qid = {q["qid"]: q for q in questions}
+    items = []
+    for r in sorted(rows, key=lambda x: x["qid"]):
+        q = by_qid.get(r["qid"])
+        if q is None:
+            continue
+        disputed = bool(q["provenance"].get("premise_disputed"))
+        text = q["text"]
+        if disputed:
+            text += ("   [his gold says this is NOT in the graph -- is it in the "
+                     "paper?]")
+        answers = r.get("answers") or []
+        quote = r.get("quote") or ""
+        items.append({
+            "qid": r["qid"], "question": text, "paper_id": r["paper_id"],
+            "quote": quote,
+            "candidates": ([] if quote else
+                           (candidate_sentences(conn, r["paper_id"], q["text"])
+                            if conn is not None else [])),
+            "_machine": bool(quote),
+            "_judge": None,
+            "_why": (f"our reader answered: {answers[0]}" if answers else
+                     "our reader found nothing"),
+            "_by": "single-paper run",
+        })
     return items
