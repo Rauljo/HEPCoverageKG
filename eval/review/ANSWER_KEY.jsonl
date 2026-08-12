@@ -19,7 +19,7 @@
 {"row": 19, "qid": "gf-03", "paper_id": "2011.07812", "machine_said_yes": true, "judge_upheld": true, "found_by": "stage-1"}
 {"row": 20, "qid": "gf-03", "paper_id": "2102.01444", "machine_said_yes": true, "judge_upheld": true, "found_by": "stage-1"}
 {"row": 21, "qid": "gf-04", "paper_id": "2401.05299", "machine_said_yes": true, "judge_upheld": true, "found_by": "stage-1"}
-{"row": 22, "qid": "gf-04", "paper_id": "2110.11231", "machine_said_yes": true, "judge_upheld": true, "found_by": "Qwen/QwQ-32B-AWQ"}
+{"row": 22, "qid": "gf-04", "paper_id": "2110.11231", "machine_said_yes": true, "judge_upheld": false, "found_by": "Qwen/QwQ-32B-AWQ"}
 {"row": 23, "qid": "gf-04", "paper_id": "2504.13081", "machine_said_yes": true, "judge_upheld": true, "found_by": "Qwen/QwQ-32B-AWQ"}
 {"row": 24, "qid": "gf-04", "paper_id": "2208.12095", "machine_said_yes": true, "judge_upheld": true, "found_by": "Qwen/QwQ-32B-AWQ"}
 {"row": 25, "qid": "gf-04", "paper_id": "2001.06899", "machine_said_yes": true, "judge_upheld": true, "found_by": "stage-1"}
@@ -27,25 +27,25 @@
 {"row": 27, "qid": "gf-04", "paper_id": "2103.04956", "machine_said_yes": true, "judge_upheld": true, "found_by": "stage-1"}
 {"row": 28, "qid": "gf-04", "paper_id": "2402.08486", "machine_said_yes": true, "judge_upheld": true, "found_by": "Qwen/QwQ-32B-AWQ"}
 {"row": 29, "qid": "gf-04", "paper_id": "2111.08340", "machine_said_yes": false, "judge_upheld": null, "found_by": "none"}
-{"row": 30, "qid": "gf-04", "paper_id": "2404.06204", "machine_said_yes": false, "judge_upheld": null, "found_by": "none"}
+{"row": 30, "qid": "gf-04", "paper_id": "2110.11231", "machine_said_yes": false, "judge_upheld": null, "found_by": "none"}
 {"row": 31, "qid": "gf-04", "paper_id": "2308.02285", "machine_said_yes": true, "judge_upheld": true, "found_by": "Qwen/QwQ-32B-AWQ"}
 {"row": 32, "qid": "gf-04", "paper_id": "2207.12246", "machine_said_yes": true, "judge_upheld": true, "found_by": "Qwen/QwQ-32B-AWQ"}
 {"row": 33, "qid": "gf-04", "paper_id": "2511.11853", "machine_said_yes": true, "judge_upheld": true, "found_by": "Qwen/QwQ-32B-AWQ"}
-{"row": 34, "qid": "gf-04", "paper_id": "2404.06204", "machine_said_yes": true, "judge_upheld": false, "found_by": "stage-1"}
+{"row": 34, "qid": "gf-04", "paper_id": "2404.06204", "machine_said_yes": true, "judge_upheld": true, "found_by": "stage-1"}
 {"row": 35, "qid": "gf-04", "paper_id": "2206.09466", "machine_said_yes": true, "judge_upheld": true, "found_by": "Qwen/QwQ-32B-AWQ"}
 {"row": 36, "qid": "gf-04", "paper_id": "2309.14442", "machine_said_yes": true, "judge_upheld": true, "found_by": "stage-1"}
 {"row": 37, "qid": "gf-04", "paper_id": "2405.18661", "machine_said_yes": true, "judge_upheld": true, "found_by": "Qwen/QwQ-32B-AWQ"}
-{"row": 38, "qid": "gf-04", "paper_id": "2112.00895", "machine_said_yes": true, "judge_upheld": true, "found_by": "Qwen/QwQ-32B-AWQ"}
+{"row": 38, "qid": "gf-04", "paper_id": "2112.00895", "machine_said_yes": true, "judge_upheld": false, "found_by": "Qwen/QwQ-32B-AWQ"}
 {"row": 39, "qid": "gf-04", "paper_id": "2604.27044", "machine_said_yes": true, "judge_upheld": true, "found_by": "stage-1"}
 {"row": 40, "qid": "gf-04", "paper_id": "2604.21670", "machine_said_yes": true, "judge_upheld": true, "found_by": "Qwen/QwQ-32B-AWQ"}
 {"row": 41, "qid": "gf-05", "paper_id": "2205.05120", "machine_said_yes": true, "judge_upheld": true, "found_by": "stage-1"}
 {"row": 42, "qid": "gf-05", "paper_id": "2006.05880", "machine_said_yes": true, "judge_upheld": true, "found_by": "stage-1"}
 {"row": 43, "qid": "gf-05", "paper_id": "2605.14245", "machine_said_yes": true, "judge_upheld": true, "found_by": "stage-1"}
 {"row": 44, "qid": "gf-05", "paper_id": "2510.07527", "machine_said_yes": true, "judge_upheld": true, "found_by": "stage-1"}
-{"row": 45, "qid": "gf-05", "paper_id": "2106.14246", "machine_said_yes": true, "judge_upheld": true, "found_by": "Qwen/QwQ-32B-AWQ"}
-{"row": 46, "qid": "gf-05", "paper_id": "2109.13808", "machine_said_yes": true, "judge_upheld": false, "found_by": "stage-1"}
+{"row": 45, "qid": "gf-05", "paper_id": "2106.14246", "machine_said_yes": true, "judge_upheld": false, "found_by": "Qwen/QwQ-32B-AWQ"}
+{"row": 46, "qid": "gf-05", "paper_id": "2109.13808", "machine_said_yes": true, "judge_upheld": true, "found_by": "stage-1"}
 {"row": 47, "qid": "gf-05", "paper_id": "2103.06956", "machine_said_yes": true, "judge_upheld": true, "found_by": "stage-1"}
-{"row": 48, "qid": "gf-05", "paper_id": "2405.18661", "machine_said_yes": true, "judge_upheld": false, "found_by": "stage-1"}
+{"row": 48, "qid": "gf-05", "paper_id": "2405.18661", "machine_said_yes": true, "judge_upheld": true, "found_by": "stage-1"}
 {"row": 49, "qid": "gf-05", "paper_id": "2407.10549", "machine_said_yes": true, "judge_upheld": true, "found_by": "stage-1"}
 {"row": 50, "qid": "gf-05", "paper_id": "2112.03161", "machine_said_yes": true, "judge_upheld": false, "found_by": "stage-1"}
 {"row": 51, "qid": "gf-05", "paper_id": "2602.18611", "machine_said_yes": true, "judge_upheld": true, "found_by": "stage-1"}
@@ -76,7 +76,7 @@
 {"row": 76, "qid": "gf-07", "paper_id": "2508.13900", "machine_said_yes": true, "judge_upheld": false, "found_by": "stage-1"}
 {"row": 77, "qid": "gf-07", "paper_id": "2010.14293", "machine_said_yes": true, "judge_upheld": false, "found_by": "stage-1"}
 {"row": 78, "qid": "gf-07", "paper_id": "2012.03799", "machine_said_yes": true, "judge_upheld": true, "found_by": "stage-1"}
-{"row": 79, "qid": "gf-07", "paper_id": "2401.05299", "machine_said_yes": true, "judge_upheld": true, "found_by": "stage-1"}
+{"row": 79, "qid": "gf-07", "paper_id": "2401.05299", "machine_said_yes": true, "judge_upheld": false, "found_by": "stage-1"}
 {"row": 80, "qid": "gf-07", "paper_id": "2004.14060", "machine_said_yes": true, "judge_upheld": false, "found_by": "stage-1"}
 {"row": 81, "qid": "gf-07", "paper_id": "2312.04450", "machine_said_yes": true, "judge_upheld": false, "found_by": "stage-1"}
 {"row": 82, "qid": "gf-07", "paper_id": "2008.05928", "machine_said_yes": true, "judge_upheld": false, "found_by": "stage-1"}
@@ -92,22 +92,22 @@
 {"row": 92, "qid": "gf-07", "paper_id": "2111.08340", "machine_said_yes": true, "judge_upheld": false, "found_by": "stage-1"}
 {"row": 93, "qid": "gf-07", "paper_id": "2102.01444", "machine_said_yes": true, "judge_upheld": true, "found_by": "stage-1"}
 {"row": 94, "qid": "gf-08", "paper_id": "2004.01678", "machine_said_yes": true, "judge_upheld": false, "found_by": "stage-1"}
-{"row": 95, "qid": "gf-08", "paper_id": "2102.01444", "machine_said_yes": true, "judge_upheld": false, "found_by": "Qwen/QwQ-32B-AWQ"}
-{"row": 96, "qid": "gf-08", "paper_id": "2206.09466", "machine_said_yes": true, "judge_upheld": true, "found_by": "Qwen/QwQ-32B-AWQ"}
+{"row": 95, "qid": "gf-08", "paper_id": "2102.01444", "machine_said_yes": true, "judge_upheld": true, "found_by": "Qwen/QwQ-32B-AWQ"}
+{"row": 96, "qid": "gf-08", "paper_id": "2206.09466", "machine_said_yes": true, "judge_upheld": false, "found_by": "Qwen/QwQ-32B-AWQ"}
 {"row": 97, "qid": "gf-08", "paper_id": "2106.14246", "machine_said_yes": true, "judge_upheld": true, "found_by": "Qwen/QwQ-32B-AWQ"}
 {"row": 98, "qid": "gf-08", "paper_id": "2503.19420", "machine_said_yes": true, "judge_upheld": true, "found_by": "Qwen/QwQ-32B-AWQ"}
-{"row": 99, "qid": "gf-08", "paper_id": "2208.12095", "machine_said_yes": true, "judge_upheld": true, "found_by": "stage-1"}
+{"row": 99, "qid": "gf-08", "paper_id": "2208.12095", "machine_said_yes": true, "judge_upheld": false, "found_by": "stage-1"}
 {"row": 100, "qid": "gf-08", "paper_id": "2303.15340", "machine_said_yes": true, "judge_upheld": true, "found_by": "Qwen/QwQ-32B-AWQ"}
 {"row": 101, "qid": "gf-08", "paper_id": "2511.11853", "machine_said_yes": true, "judge_upheld": false, "found_by": "stage-1"}
 {"row": 102, "qid": "gf-08", "paper_id": "2408.03744", "machine_said_yes": true, "judge_upheld": true, "found_by": "stage-1"}
 {"row": 103, "qid": "gf-08", "paper_id": "2401.05299", "machine_said_yes": true, "judge_upheld": true, "found_by": "stage-1"}
-{"row": 104, "qid": "gf-08", "paper_id": "2508.13900", "machine_said_yes": true, "judge_upheld": true, "found_by": "Qwen/QwQ-32B-AWQ"}
+{"row": 104, "qid": "gf-08", "paper_id": "2508.13900", "machine_said_yes": true, "judge_upheld": false, "found_by": "Qwen/QwQ-32B-AWQ"}
 {"row": 105, "qid": "gf-08", "paper_id": "2504.13081", "machine_said_yes": false, "judge_upheld": null, "found_by": "none"}
-{"row": 106, "qid": "gf-08", "paper_id": "2404.06204", "machine_said_yes": true, "judge_upheld": true, "found_by": "stage-1"}
+{"row": 106, "qid": "gf-08", "paper_id": "2404.06204", "machine_said_yes": true, "judge_upheld": false, "found_by": "stage-1"}
 {"row": 107, "qid": "gf-08", "paper_id": "2201.11585", "machine_said_yes": true, "judge_upheld": true, "found_by": "Qwen/QwQ-32B-AWQ"}
 {"row": 108, "qid": "gf-08", "paper_id": "2006.05880", "machine_said_yes": true, "judge_upheld": true, "found_by": "Qwen/QwQ-32B-AWQ"}
 {"row": 109, "qid": "gf-08", "paper_id": "2001.06899", "machine_said_yes": true, "judge_upheld": true, "found_by": "stage-1"}
-{"row": 110, "qid": "gf-08", "paper_id": "2007.02873", "machine_said_yes": true, "judge_upheld": false, "found_by": "Qwen/QwQ-32B-AWQ"}
+{"row": 110, "qid": "gf-08", "paper_id": "2007.02873", "machine_said_yes": true, "judge_upheld": true, "found_by": "Qwen/QwQ-32B-AWQ"}
 {"row": 111, "qid": "gf-08", "paper_id": "2309.14442", "machine_said_yes": true, "judge_upheld": true, "found_by": "stage-1"}
 {"row": 112, "qid": "gf-08", "paper_id": "2209.07327", "machine_said_yes": true, "judge_upheld": true, "found_by": "Qwen/QwQ-32B-AWQ"}
 {"row": 113, "qid": "gf-08", "paper_id": "2011.07812", "machine_said_yes": true, "judge_upheld": true, "found_by": "stage-1"}
@@ -115,7 +115,7 @@
 {"row": 115, "qid": "gf-08", "paper_id": "2506.13565", "machine_said_yes": true, "judge_upheld": true, "found_by": "stage-1"}
 {"row": 116, "qid": "gf-08", "paper_id": "2009.14537", "machine_said_yes": true, "judge_upheld": false, "found_by": "stage-1"}
 {"row": 117, "qid": "gf-08", "paper_id": "2401.07090", "machine_said_yes": true, "judge_upheld": true, "found_by": "Qwen/QwQ-32B-AWQ"}
-{"row": 118, "qid": "gf-08", "paper_id": "2509.22535", "machine_said_yes": true, "judge_upheld": true, "found_by": "Qwen/QwQ-32B-AWQ"}
+{"row": 118, "qid": "gf-08", "paper_id": "2509.22535", "machine_said_yes": true, "judge_upheld": false, "found_by": "Qwen/QwQ-32B-AWQ"}
 {"row": 119, "qid": "gf-08", "paper_id": "2103.04956", "machine_said_yes": true, "judge_upheld": true, "found_by": "Qwen/QwQ-32B-AWQ"}
 {"row": 120, "qid": "gf-08", "paper_id": "2308.02285", "machine_said_yes": true, "judge_upheld": false, "found_by": "Qwen/QwQ-32B-AWQ"}
 {"row": 121, "qid": "gf-08", "paper_id": "2405.18661", "machine_said_yes": true, "judge_upheld": true, "found_by": "stage-1"}
@@ -125,15 +125,16 @@
 {"row": 125, "qid": "gf-01-condition", "paper_id": "2006.05880", "machine_said_yes": false, "judge_upheld": null, "found_by": "none"}
 {"row": 126, "qid": "gf-01-condition", "paper_id": "2106.14246", "machine_said_yes": false, "judge_upheld": null, "found_by": "none"}
 {"row": 127, "qid": "gf-01-condition", "paper_id": "2508.13900", "machine_said_yes": false, "judge_upheld": null, "found_by": "none"}
-{"row": 128, "qid": "gf-01-condition", "paper_id": "2307.01094", "machine_said_yes": false, "judge_upheld": null, "found_by": "none"}
-{"row": 129, "qid": "gf-01-condition", "paper_id": "2511.11853", "machine_said_yes": false, "judge_upheld": null, "found_by": "none"}
-{"row": 130, "qid": "gf-01-condition", "paper_id": "2010.14293", "machine_said_yes": false, "judge_upheld": null, "found_by": "none"}
-{"row": 131, "qid": "gf-01-condition", "paper_id": "2510.07527", "machine_said_yes": false, "judge_upheld": null, "found_by": "none"}
-{"row": 132, "qid": "gf-01-condition", "paper_id": "2201.11585", "machine_said_yes": false, "judge_upheld": null, "found_by": "none"}
-{"row": 133, "qid": "gf-06", "paper_id": "2006.05880", "machine_said_yes": true, "judge_upheld": null, "found_by": "single-paper run"}
-{"row": 134, "qid": "gf-10", "paper_id": "2001.06899", "machine_said_yes": false, "judge_upheld": null, "found_by": "single-paper run"}
-{"row": 135, "qid": "gf-11", "paper_id": "2001.06899", "machine_said_yes": true, "judge_upheld": null, "found_by": "single-paper run"}
-{"row": 136, "qid": "gf-12", "paper_id": "2006.05880", "machine_said_yes": false, "judge_upheld": null, "found_by": "single-paper run"}
-{"row": 137, "qid": "gf-13", "paper_id": "2001.06899", "machine_said_yes": false, "judge_upheld": null, "found_by": "single-paper run"}
-{"row": 138, "qid": "gf-14", "paper_id": "2006.05880", "machine_said_yes": true, "judge_upheld": null, "found_by": "single-paper run"}
-{"row": 139, "qid": "gf-15", "paper_id": "2006.05880", "machine_said_yes": false, "judge_upheld": null, "found_by": "single-paper run"}
+{"row": 128, "qid": "gf-01-condition", "paper_id": "2506.13565", "machine_said_yes": false, "judge_upheld": null, "found_by": "none"}
+{"row": 129, "qid": "gf-01-condition", "paper_id": "2307.01094", "machine_said_yes": false, "judge_upheld": null, "found_by": "none"}
+{"row": 130, "qid": "gf-01-condition", "paper_id": "2511.11853", "machine_said_yes": false, "judge_upheld": null, "found_by": "none"}
+{"row": 131, "qid": "gf-01-condition", "paper_id": "2010.14293", "machine_said_yes": false, "judge_upheld": null, "found_by": "none"}
+{"row": 132, "qid": "gf-01-condition", "paper_id": "2510.07527", "machine_said_yes": false, "judge_upheld": null, "found_by": "none"}
+{"row": 133, "qid": "gf-01-condition", "paper_id": "2201.11585", "machine_said_yes": false, "judge_upheld": null, "found_by": "none"}
+{"row": 134, "qid": "gf-06", "paper_id": "2006.05880", "machine_said_yes": true, "judge_upheld": null, "found_by": "single-paper run"}
+{"row": 135, "qid": "gf-10", "paper_id": "2001.06899", "machine_said_yes": false, "judge_upheld": null, "found_by": "single-paper run"}
+{"row": 136, "qid": "gf-11", "paper_id": "2001.06899", "machine_said_yes": true, "judge_upheld": null, "found_by": "single-paper run"}
+{"row": 137, "qid": "gf-12", "paper_id": "2006.05880", "machine_said_yes": false, "judge_upheld": null, "found_by": "single-paper run"}
+{"row": 138, "qid": "gf-13", "paper_id": "2001.06899", "machine_said_yes": false, "judge_upheld": null, "found_by": "single-paper run"}
+{"row": 139, "qid": "gf-14", "paper_id": "2006.05880", "machine_said_yes": true, "judge_upheld": null, "found_by": "single-paper run"}
+{"row": 140, "qid": "gf-15", "paper_id": "2006.05880", "machine_said_yes": false, "judge_upheld": null, "found_by": "single-paper run"}
