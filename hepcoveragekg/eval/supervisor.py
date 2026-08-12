@@ -57,8 +57,16 @@ SUPERVISOR_QUESTIONS: list[dict] = [
     {
         "qid": "gf-01", "per_paper": 'Is this analysis a SEARCH (rather than a measurement) whose event selection uses b-tagged jets AND missing transverse momentum?', "tier": 1, "shape": "set",
         "text": "Which searches select b-jets and missing transverse momentum?",
-        "gabriel_gold": {"kind": "count", "value": 18},
-        "gold_note": "objects superset of {BJet, MET}, category=search",
+        "gabriel_gold": {"kind": "set", "value": 18, "papers": [
+            "2004.14060", "2006.05880", "2010.14293", "2012.03799", "2012.08600",
+            "2102.01444", "2106.01676", "2106.14246", "2201.11585", "2202.08676",
+            "2211.08028", "2302.05225", "2307.01094", "2403.01556", "2506.13565",
+            "2508.13900", "2510.07527", "2511.11853"]},
+        "gold_note": ("his doc names 8 and then '...'. The remaining 10 are DERIVED, not "
+                      "guessed: his gold is one filter over analysis_facets.jsonl "
+                      "(objects superset {BJet,MET}, category=search), and we reproduce "
+                      "all 60 cards exactly (D-052). The derived set is 18 -- his stated "
+                      "count -- and contains all 8 he named."),
     },
     {
         "qid": "gf-02", "per_paper": 'Does this analysis estimate a background using an ABCD method, or an ABCD-style sideband or matrix method over independent regions?', "tier": 1, "shape": "set",
@@ -76,8 +84,13 @@ SUPERVISOR_QUESTIONS: list[dict] = [
     {
         "qid": "gf-04", "per_paper": 'Does this analysis unfold its measured distributions -- that is, correct them back to particle level or truth level?', "tier": 1, "shape": "set",
         "text": "Which measurements unfold their distributions?",
-        "gabriel_gold": {"kind": "count", "value": 10},
-        "gold_note": "'10 papers incl. ...' — his list is explicitly partial",
+        "gabriel_gold": {"kind": "set", "value": 10, "papers": [
+            "2001.06899", "2110.11231", "2207.12246", "2208.12095", "2308.02285",
+            "2309.14442", "2312.04450", "2401.05299", "2402.08486", "2404.06204"]},
+        "gold_note": ("his doc says '10 papers incl.' and names 6. The other 4 are "
+                      "DERIVED the same way (statistical_methods contains Unfolding, "
+                      "category=measurement); the derived set is 10 and contains all 6 "
+                      "he named."),
     },
     {
         "qid": "gf-05", "per_paper": 'Does this analysis RECONSTRUCT a Higgs-boson candidate as a physical object it selects on (not merely study Higgs production or decay)?', "tier": 1, "shape": "set",
