@@ -151,6 +151,7 @@ def build(rows: list[dict], questions: list[dict], *,
             "qid": r["qid"], "question": text.get(r["qid"], r["qid"]),
             "paper_id": r["paper_id"], "quote": r["quote"],
             "_machine": True, "_judge": r.get("quote_supports"),
+            "_why": r.get("support_why", ""),
             "_by": r.get("recovered_by") or "stage-1",
         })
     for r in sampled:
@@ -161,7 +162,8 @@ def build(rows: list[dict], questions: list[dict], *,
             "qid": r["qid"], "question": text.get(r["qid"], r["qid"]),
             "paper_id": r["paper_id"], "quote": "",
             "candidates": cands,
-            "_machine": False, "_judge": None, "_by": "none",
+            "_machine": False, "_judge": None, "_why": "",
+            "_by": "none",
         })
 
     # Grouped by question so the reviewer holds one concept in mind at a time,
@@ -230,11 +232,27 @@ def write_html(items: list[dict], path: Path | str, title: str) -> Path:
         ".item{margin:1.1em 0;padding:.7em 0;border-bottom:1px solid #e5e5e5}"
         ".row{font-weight:700;color:#666}.paper{font-family:ui-monospace,monospace;color:#555}"
         ".quote{margin:.4em 0 0 0;padding:.5em .8em;background:#fafafa;border-left:3px solid #bbb}"
-        ".none{color:#888;font-style:italic}</style>",
+        ".none{color:#888;font-style:italic}"
+        "details{margin-top:.5em}"
+        "details summary{cursor:pointer;color:#777;font-size:.88em;user-select:none}"
+        "details summary:hover{color:#333}"
+        "details[open] summary{color:#333;font-weight:600}"
+        ".verdict{margin-top:.45em;padding:.55em .8em;background:#f7f7f9;"
+        "border-left:3px solid #999;font-size:.92em}"
+        ".v-yes{border-left-color:#2e7d32}.v-no{border-left-color:#c62828}"
+        "@media (prefers-color-scheme:dark){body{background:#151517;color:#e8e8e8}"
+        ".q{background:#232326;border-left-color:#888}"
+        ".quote{background:#1d1d20;border-left-color:#555}"
+        ".verdict{background:#1d1d20}.item{border-bottom-color:#333}"
+        "h2{border-bottom-color:#555}}</style>",
         f"<h1>{escape(title)}</h1>",
         "<p>For each item: <b>does the sentence show that this paper does the thing "
         "described?</b> Answer yes / no / unsure in the spreadsheet, against the row "
         "number.</p>",
+        "<p>Each item has a collapsed line at the bottom: <b>open it only after you "
+        "have written your own answer</b>. It shows what our model concluded and why, "
+        "so you can see where we disagree — but reading it first would turn your "
+        "answer into a copy of ours.</p>",
         "<p>Some items say <b>we found no evidence</b>. For those we list the closest "
         "sentences we did find — if none of them shows it, answer no; if one plainly "
         "does, we missed it, which is just as useful to know.</p>",
@@ -254,8 +272,27 @@ def write_html(items: list[dict], path: Path | str, title: str) -> Path:
             else:
                 quote = ("<div class='quote none'>We found no evidence, and nothing "
                          "in this paper looked close.</div>")
+            # Behind a <details> so it cannot be read by accident. Opening it
+            # before deciding would make the reviewer's verdict a copy of ours,
+            # which is the one thing this exercise cannot afford.
+            if i["_machine"]:
+                verdict = "supports the claim" if i["_judge"] else "does NOT support the claim"
+                klass = "v-yes" if i["_judge"] else "v-no"
+                why = escape(i["_why"]) if i["_why"] else "(no reason recorded)"
+                reveal = (
+                    "<details><summary>open only after you have decided — "
+                    "what our model said</summary>"
+                    f"<div class='verdict {klass}'><b>{verdict}</b><br>{why}"
+                    f"<br><span style='color:#888'>found by: {escape(i['_by'])}</span>"
+                    "</div></details>")
+            else:
+                reveal = ("<details><summary>open only after you have decided — "
+                          "what our model said</summary>"
+                          "<div class='verdict v-no'><b>found no evidence in this paper"
+                          "</b><br>The sentences above are the closest matches we could "
+                          "retrieve, not something the model chose.</div></details>")
             parts.append(
                 f"<div class='item'><span class='row'>#{i['row']}</span> "
-                f"<span class='paper'>{escape(i['paper_id'])}</span>{quote}</div>")
+                f"<span class='paper'>{escape(i['paper_id'])}</span>{quote}{reveal}</div>")
     path.write_text("\n".join(parts), encoding="utf-8")
     return path
