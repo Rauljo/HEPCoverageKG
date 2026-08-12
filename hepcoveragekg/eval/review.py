@@ -42,7 +42,8 @@ than then so such can may might will would analysis paper study
 rather whose merely simply also each their they there when what how any not""".split())
 
 
-def candidate_sentences(conn, paper_id: str, question: str, top: int = 3) -> list[str]:
+def candidate_sentences(conn, paper_id: str, question: str, top: int = 3,
+                        embed: bool = True) -> list[str]:
     """The sentences most worth showing for a paper where NOTHING was found.
 
     A miss cannot be reviewed without something to look at. Asking "does this
@@ -50,54 +51,48 @@ def candidate_sentences(conn, paper_id: str, question: str, top: int = 3) -> lis
     minutes an item instead of twenty seconds, which is the difference between a
     review that happens and one that does not.
 
-    So the reviewer is shown what we DID find and rejected. If none of it is
-    evidence, the fact is probably absent; if one of them plainly is, the reader
-    missed it and we have located the failure exactly.
+    Uses the SAME hybrid retrieval as the query layer: BM25 for the words, dense
+    embeddings for the meaning, fused by reciprocal rank. The first version of
+    this scored raw word overlap, which is precisely the failure the dense half
+    exists to fix -- measured elsewhere in this project at 0.893 on named
+    concepts against 0.335 on described ones. A question phrased as "correct them
+    back to particle level" shares almost no vocabulary with "the data are
+    unfolded", and word counting cannot bridge that.
 
-    Word overlap, not a model: the point is to surface what a reader would have
-    had to judge, not to make the judgement again.
+    Reuses retrieve.Index rather than reimplementing it, with sentences standing
+    in for surface forms. `conn` is not passed to `search`, because canonical
+    cluster deduplication is meaningless here -- these are sentences, not
+    entities.
     """
     import re as _re
-    from hepcoveragekg.eval.reader import passages
 
-    # Strip parentheticals before extracting words. In the per-paper rewrites a
-    # parenthetical is always a clarification or a CONTRAST -- "(rather than a
-    # measurement)", "(not merely study Higgs production)" -- so its words are
-    # the opposite of what should be scored. Leaving them in made gf-01 rank
-    # sentences about measurements, which is precisely backwards.
-    stem = _re.sub(r"\([^)]*\)", " ", question)
-    stem = _re.split(r"\s--\s|\bthat is\b", stem)[0]
-    words = {w for w in _re.findall(r"[a-z]{3,}", stem.lower()) if w not in _STOP}
-    if not words:
-        return []
-    best: list[tuple[float, str]] = []
+    from hepcoveragekg.eval.reader import passages
+    from hepcoveragekg.query import retrieve
+
+    sentences: list[str] = []
     for p in passages(conn, paper_id):
         for sentence in _re.split(r"(?<=[.!?])\s+", p.text):
-            sentence = sentence.strip()
-            if not (60 <= len(sentence) <= 400):
-                continue
-            tokens = set(_re.findall(r"[a-z]{3,}", sentence.lower()))
-            hit = words & tokens
-            if not hit:
-                continue
-            best.append((len(hit) / len(words), sentence))
-    # ALWAYS return something. A threshold of "at least two words matched" left 7
-    # papers with no candidates at all, and an item showing nothing asks the
-    # reviewer to read the whole paper -- the exact cost this is here to avoid.
-    # A weak match is still judgeable in seconds: if the best three sentences in
-    # the paper are plainly irrelevant, that is itself the answer, and now it is
-    # an answer backed by having looked rather than by having nothing to look at.
-    best.sort(key=lambda x: -x[0])
-    seen, out = set(), []
-    for _, sentence in best:
-        key = sentence[:60]
-        if key in seen:
-            continue
-        seen.add(key)
-        out.append(sentence)
-        if len(out) >= top:
-            break
-    return out
+            sentence = " ".join(sentence.split())
+            if 60 <= len(sentence) <= 400:
+                sentences.append(sentence)
+    if not sentences:
+        return []
+
+    index = retrieve.Index()
+    index.entity_ids = [str(i) for i in range(len(sentences))]
+    index.texts = sentences
+    index.kinds = [""] * len(sentences)
+    index._tokens = [retrieve.tokenize(t) for t in sentences]
+    index._prepare_sparse()
+    if embed:
+        try:
+            from hepcoveragekg.aliases import semantics
+            index.embeddings = semantics.embed(sentences)
+        except Exception:            # no model here -> BM25 alone, still useful
+            index.embeddings = None
+
+    hits = retrieve.search(index, question, conn=None, limit=top)
+    return [h.label for h in hits]
 
 
 def build(rows: list[dict], questions: list[dict], *,
