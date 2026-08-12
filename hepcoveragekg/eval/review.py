@@ -296,3 +296,43 @@ def write_html(items: list[dict], path: Path | str, title: str) -> Path:
                 f"<span class='paper'>{escape(i['paper_id'])}</span>{quote}{reveal}</div>")
     path.write_text("\n".join(parts), encoding="utf-8")
     return path
+
+
+def condition_items(rows: list[dict], gold: set, conn=None,
+                    limit: int = 16) -> list[dict]:
+    """Review items at the CONDITION level, for a multi-condition question.
+
+    gf-01 asks three things at once and scores 4/18. Splitting it helped barely
+    (2/18 -> 4/18), and the per-condition tally says why:
+
+        "is this a SEARCH?"      20 yes / 31 no /  9 split
+        "uses b-tagged jets?"    25 yes / 24 no / 11 split
+        "requires MET?"          16 yes / 39 no /  5 split
+
+    Every condition fails on most papers, so the conjunction was a symptom, not
+    the cause. Only 16 of 60 papers judged to require missing transverse momentum
+    is not credible for a corpus of LHC searches.
+
+    Asking a reviewer "is this a search AND b-jets AND MET?" cannot separate
+    those. Asking "does this paper require missing transverse momentum?" can, and
+    it is a question a physicist answers in seconds. So for a paper in the gold
+    that we missed, we surface the ONE condition that failed.
+    """
+    items = []
+    for r in rows:
+        if r["paper_id"] not in gold or r.get("answer") is True:
+            continue
+        for cond in r.get("missing", []):
+            cands = (candidate_sentences(conn, r["paper_id"], cond)
+                     if conn is not None else [])
+            items.append({
+                "qid": f"{r['qid']}-condition", "question": cond,
+                "paper_id": r["paper_id"], "quote": "",
+                "candidates": cands,
+                "_machine": False, "_judge": None, "_why": "",
+                "_by": "none",
+            })
+            break                     # one condition per paper: the first failure
+        if len(items) >= limit:
+            break
+    return items
