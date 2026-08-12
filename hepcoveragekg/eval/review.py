@@ -78,9 +78,15 @@ def candidate_sentences(conn, paper_id: str, question: str, top: int = 3) -> lis
                 continue
             tokens = set(_re.findall(r"[a-z]{3,}", sentence.lower()))
             hit = words & tokens
-            if len(hit) < 2:
+            if not hit:
                 continue
             best.append((len(hit) / len(words), sentence))
+    # ALWAYS return something. A threshold of "at least two words matched" left 7
+    # papers with no candidates at all, and an item showing nothing asks the
+    # reviewer to read the whole paper -- the exact cost this is here to avoid.
+    # A weak match is still judgeable in seconds: if the best three sentences in
+    # the paper are plainly irrelevant, that is itself the answer, and now it is
+    # an answer backed by having looked rather than by having nothing to look at.
     best.sort(key=lambda x: -x[0])
     seen, out = set(), []
     for _, sentence in best:
