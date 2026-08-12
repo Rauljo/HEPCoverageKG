@@ -370,18 +370,20 @@ def test_extraction_mode_returns_the_answer_not_just_yes():
     """gf-12 asks "what is the observed 95% CL limit on the stop mass". A yes/no
     reply throws away the number that makes it an answer — and the number is
     exactly what gets compared against his gold and against the graph."""
-    found, quote, answer = R.parse_reply(
+    found, quotes, answer = R.parse_reply(
         '{"found": true, "answer": "875 GeV", "quote": "Masses of the stop2 up to 875 GeV '
         'are excluded at 95% CL"}', mode=R.EXTRACTION)
     assert found is True
     assert answer == "875 GeV"
-    assert "875 GeV" in quote
+    # a list now -- a question asking for several things is answered by several
+    # sentences -- but a singular "quote" from an older reply still parses
+    assert isinstance(quotes, list) and "875 GeV" in quotes[0]
 
 
 def test_extraction_not_found_is_a_real_answer():
-    found, quote, answer = R.parse_reply(
+    found, quotes, answer = R.parse_reply(
         '{"found": false, "answer": "", "quote": ""}', mode=R.EXTRACTION)
-    assert found is False and not answer and not quote
+    assert found is False and not answer and not quotes
 
 
 def test_extraction_tolerates_a_stringly_typed_found_flag():
@@ -881,3 +883,56 @@ def test_an_unjudged_item_is_not_rendered_as_a_rejection(tmp_path):
     html = out.read_text()
     assert "not checked by our judge" in html
     assert html.count("does NOT support the claim") == 1, "only the truly rejected one"
+
+
+def test_extraction_keeps_every_verified_sentence():
+    """gf-11 asks for an algorithm AND a working point AND its performance. It
+    returned the algorithm alone and stopped -- and the other two were in the
+    SAME window it had just read."""
+    found, quotes, answer = R.parse_reply(
+        '{"reasoning":"three parts","quotes":["the algorithm is CSVv2",'
+        '"a medium operating point is used","efficiencies are 10 and 60 percent"],'
+        '"answer":"CSVv2, medium, 10/60%","found":true}', mode=R.EXTRACTION)
+    assert found is True and len(quotes) == 3
+
+
+def test_a_fabricated_quote_does_not_discard_the_real_ones_beside_it(conn):
+    """Each cited sentence is checked on its own."""
+    import asyncio
+
+    reply = ('{"reasoning":"two parts","quotes":["The ABCD method is used to estimate '
+             'the multijet contribution from four non-overlapping regions",'
+             '"a completely invented sentence about neural networks"],'
+             '"answer":"ABCD","found":true}')
+
+    class _Stub:
+        def __init__(s): s.chat = s; s.completions = s
+        async def create(s, **kw):
+            class M: content = reply
+            class C: message = M()
+            class R_: choices = [C()]
+            return R_()
+
+    v = asyncio.run(R.read_passage(conn, _Stub(), "m", "q", "question?",
+                                   R.Passage("p1", "s", "t"), 0.0, mode=R.EXTRACTION))
+    assert v.quote_verified
+    assert len(v.quotes) == 1
+    assert "ABCD method" in v.quotes[0]
+
+
+def test_extraction_does_not_stop_at_the_first_window(conn, monkeypatch, tmp_path):
+    """EXISTENCE stops on a hit -- one confirmation settles it. EXTRACTION must
+    not: the answer's parts can be spread across the paper."""
+    reply = ('{"reasoning":"r","quotes":["The ABCD method is used to estimate the '
+             'multijet contribution from four non-overlapping regions"],'
+             '"answer":"ABCD","found":true}')
+    q = [{"qid": "x", "text": "what method?"}]
+    _, _, client = _run(conn, monkeypatch, [reply], q, lambda _: ["p1"], tmp_path,
+                        repeats=1, cascade=False, mode=R.EXTRACTION)
+    calls_extraction = len(client.calls)
+
+    _, _, client2 = _run(conn, monkeypatch, [reply.replace('"quotes"', '"quote_x"')
+                                             .replace('"found":true', '"answer":"yes"')],
+                         q, lambda _: ["p1"], tmp_path, repeats=1, cascade=False)
+    assert calls_extraction >= len(client2.calls), (
+        "extraction must read at least as many windows as existence")

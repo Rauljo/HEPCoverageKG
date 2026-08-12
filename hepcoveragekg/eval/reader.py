@@ -153,6 +153,11 @@ class Verdict:
     answer: bool | None            # None = the model declined / unparseable
     quote: str = ""
     quote_verified: bool = False
+    # EXTRACTION can return several sentences: a question asking for an
+    # algorithm AND its working point AND its performance is answered by three,
+    # and accepting one as complete is how gf-11 recorded a third of the answer
+    # as a pass. `quote` stays the first VERIFIED one, for callers that want one.
+    quotes: list = field(default_factory=list)
     reasoning: str = ""
     # EXTRACTION mode only: the answer read out of the text. Empty in EXISTENCE
     # mode, where the question is "does this paper do X" and the quote IS the
@@ -263,6 +268,21 @@ class Consensus:
             if v.supported:
                 return v.quote
         return ""
+
+    @property
+    def all_quotes(self) -> list:
+        """Every verified sentence, across windows, in order and deduplicated.
+
+        An extraction answer can need several sentences from several windows --
+        the algorithm here, the working point there. Returning only the first
+        reports a fraction of the answer as the whole of it.
+        """
+        out: list = []
+        for v in self.verdicts:
+            for q in (v.quotes or ([v.quote] if v.supported and v.quote else [])):
+                if q and not any(q in k or k in q for k in out):
+                    out.append(q)
+        return out
 
 
 # --------------------------------------------------------------------------
@@ -525,9 +545,18 @@ async def read_passage(conn, client, model, qid: str, question: str, passage: Pa
                        raw=f"ERROR: {type(exc).__name__}: {exc}")
 
     answer, quote, extra = parse_reply(raw, mode)
-    verified = bool(answer) and verify_quote(conn, passage.paper_id, quote)
+    if isinstance(quote, list):
+        # Every cited sentence is checked; a fabricated one is dropped without
+        # discarding the real ones beside it.
+        good = [q for q in quote if verify_quote(conn, passage.paper_id, q)]
+        quotes, quote = good, (good[0] if good else (quote[0] if quote else ""))
+        verified = bool(answer) and bool(good)
+    else:
+        quotes = [quote] if quote else []
+        verified = bool(answer) and verify_quote(conn, passage.paper_id, quote)
     return Verdict(
         paper_id=passage.paper_id, qid=qid, answer=answer, quote=quote,
+        quotes=quotes if verified else [],
         quote_verified=verified,
         reasoning="" if mode == EXTRACTION else extra,
         answer_text=extra if mode == EXTRACTION else "",
@@ -553,6 +582,7 @@ async def read_paper(conn, client, model, qid: str, question: str, paper_id: str
 
     async def sweep_windows(patterns: tuple[str, ...], escalated: bool) -> bool:
         """Read every window matching `patterns`. True if anything was supported."""
+        found_any = False
         windows = chunks(passages(conn, paper_id, patterns or None))
         for index, window in enumerate(windows):
             batch = [
@@ -563,8 +593,17 @@ async def read_paper(conn, client, model, qid: str, question: str, paper_id: str
             ]
             verdicts.extend(batch)
             if any(v.supported for v in batch):
-                return True                         # found it; no need to read on
-        return False
+                # EXISTENCE: one confirmation settles "does this paper do X",
+                # and reading on is waste.
+                # EXTRACTION: it does not. The answer may have several parts
+                # spread across the paper, and stopping here is how gf-11
+                # returned the b-tagging algorithm and never looked for the
+                # working point or the performance -- both of which were in the
+                # SAME window it had just read.
+                if mode == EXISTENCE:
+                    return True
+                found_any = True
+        return found_any
 
     # The routed pass, when there is somewhere to route to. A question the router
     # has no pattern for goes straight to the full read rather than reading
@@ -593,10 +632,14 @@ about what is usually true.
 QUESTION
 {question}
 
-If the text below answers the question, give the answer and quote the sentence \
-it comes from, copied EXACTLY from the text - not paraphrased, not reconstructed \
-from memory. A quote that does not appear verbatim will be discarded and your \
-answer will not count.
+MANY QUESTIONS ASK FOR SEVERAL THINGS AT ONCE - an algorithm AND its working \
+point AND its performance; a list of regions AND the role each one plays. Answer \
+EVERY part the text supports, not the first one you find. A partial answer that \
+looks complete is worse than one that says which parts are missing.
+
+Quote a sentence for each part, copied EXACTLY from the text - not paraphrased, \
+not reconstructed from memory. A quote that does not appear verbatim will be \
+discarded and that part of your answer will not count.
 
 If the text below does not answer it, set "found" to false. That is the useful \
 answer here, not a failure - do not guess to be helpful, and do not answer from \
@@ -604,8 +647,10 @@ your own knowledge of physics.
 
 Reply as JSON, nothing else. Fill the fields IN ORDER -- the reasoning first,
 the verdict last:
-{{"reasoning": "<what the text does and does not say about this, one or two sentences>", \
-"quote": "<exact sentence, or empty>", "answer": "<the answer, or empty>", "found": true|false}}
+{{"reasoning": "<what the question asks for, and which of those parts this text \
+does and does not establish>", "quotes": ["<exact sentence>", "<another, if a \
+different part of the answer needs it>"], "answer": "<everything the text \
+supports, covering as many parts of the question as it can>", "found": true|false}}
 
 PAPER TEXT ({paper_id}, section: {section})
 ---
@@ -647,7 +692,17 @@ def parse_reply(raw: str, mode: str = EXISTENCE) -> tuple[bool | None, str, str]
             found = found.strip().lower() in ("true", "yes")
         if not isinstance(found, bool):
             return None, "", ""
-        return found, str(data.get("quote") or ""), str(data.get("answer") or "")
+        # `quotes` is a list now; `quote` is still accepted so an older reply, or
+        # a model that ignores the plural, still parses.
+        raw_quotes = data.get("quotes")
+        if isinstance(raw_quotes, str):
+            raw_quotes = [raw_quotes]
+        if not isinstance(raw_quotes, list):
+            raw_quotes = []
+        quotes = [str(q) for q in raw_quotes if str(q).strip()]
+        if not quotes and data.get("quote"):
+            quotes = [str(data["quote"])]
+        return found, quotes, str(data.get("answer") or "")
 
     answer = str(data.get("answer", "")).strip().lower()
     if answer not in ("yes", "no"):
@@ -730,6 +785,9 @@ async def run(conn, questions: list[dict], papers_for, out_path: Path | str,
                 "answer": c.answer,
                 "unanimous": c.unanimous,
                 "quote": c.best_quote,
+                # Every verified sentence, so a multi-part answer is not reported
+                # by its first fragment.
+                "all_quotes": c.all_quotes,
                 # EXTRACTION only. Kept as every distinct wording rather than one
                 # winner: three samples that agree on the VALUE but differ in
                 # phrasing are agreement, and collapsing them early would hide
@@ -813,6 +871,9 @@ def rescore(path: Path | str, out_path: Path | str | None = None) -> dict:
         stats[{True: "yes", False: "no", None: "split"}[now]] += 1
         rows.append({**record, "answer": now, "unanimous": c.unanimous,
                      "quote": c.best_quote,
+                # Every verified sentence, so a multi-part answer is not reported
+                # by its first fragment.
+                "all_quotes": c.all_quotes,
                      "answers": sorted({v.answer_text for v in verdicts
                                         if v.supported and v.answer_text}),
                      "previous_answer": was})
