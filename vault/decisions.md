@@ -1052,3 +1052,87 @@ QwQ on the two clean ones, holding the dead card unused. That costs nobody anyth
 compute on it anyway. The health gate now reads the **aggregate** ECC counter rather than a bus-id
 blocklist — volatile counters reset on driver reload, so the card that killed two jobs yesterday reads
 clean today on the volatile column, and a blocklist only knows about failures that already happened.
+
+## D-059
+### 2026-08-12 — Two parser faults, three bad comparisons, and what the numbers actually say
+
+**The faults.** `parse_reply` discarded 20% of the single-paper run's calls and 2.5% of the
+sweep's. 124 of 149, and 475 of 483, were **complete, well-formed answers**.
+
+1. The JSON extractor took the last **brace-free** object, `\{[^{}]*\}`, on the theory that an
+   object with no nesting is the whole object. True of the object, false of its contents: a quote
+   carrying `${\approx}4.8$` contains `{\approx}`, which is brace-free, comes last, and is not JSON.
+   The greedy fallback beneath it never ran — it was guarded on finding *no* match rather than on
+   failing to parse the one it found.
+2. The 24B copies LaTeX into JSON strings verbatim, `"$\mathup{{{t}}}$"`, and `\m` is not a JSON
+   escape. Repaired by doubling only the backslashes that do not begin a real escape, valid pairs
+   consumed first so the pass is idempotent, and applied only after strict parsing fails.
+
+What remains is genuine truncation: 20 of 366 on the 24B, where 500 completion tokens no longer fit
+a reply asked for *every* relevant sentence. A truncated reply is still rejected — recovery must not
+become invention.
+
+**The loss was one-directional, and that is the mechanism, not a coincidence.**
+```
+sweep, recovered from storage:   YES: 475     NO: 0
+```
+A "no" reply carries no quote, so there is no LaTeX to choke on and it always parsed. Only a "yes"
+quotes the paper. The bug could therefore only ever delete evidence, never invent it — pure recall
+loss, reported downstream as "the paper does not say".
+
+**Three comparisons I got wrong before getting one right.** Worth recording in full, because the
+error was mine each time and the same shape each time: changing more than one thing and then
+measuring.
+
+- Compared the reparsed sweep against the **rechecked** baseline. That baseline has an extra QwQ
+  escalation stage the reparsed run never had. Different pipelines, not different parsers.
+- Compared against the right stage, but the two files were **judged by different models** — the 24B
+  on 08-09, QwQ now. On 2004.04545 the evidence string was byte-identical and the verdicts differ:
+  the 24B said *"mentions the use of b-tagged jets, which is part of the event selection"* and
+  passed it; QwQ said *"explicitly mentions b-tagged jets ... but it does not mention missing
+  transverse momentum"* and failed it. **QwQ is right.** The apparent regression was a better judge.
+- Re-ran gf-01 at `repeats=3` where its baseline used `2`, then read the drop as a result.
+
+**`repeats` is not a free knob.** Consensus requires the repeats *within a window* to agree, so a
+third sample can only ever make a yes harder to reach. Raising it silently tightens the threshold.
+That belongs in the writeup as a property of the measurement, not a default buried in a job script.
+
+**The controlled numbers.** Same stage, same judge, same settings, parser the only difference:
+
+| | sweep (60 papers) | gf-01 conditions | single-paper |
+|---|---|---|---|
+| before | 15 gold | 6/18 | gf-10, gf-11: **0 evidence in 60 calls each** |
+| after | **16 gold**, +12 false positives | **8/18, 0 false positives** | gf-11 fully correct |
+
+So the fix is close to score-neutral on the corpus sweep and *worsens precision there* — gf-08 went
+from 7 found to 16, every extra one wrong. It is decisive on the two places where the answer is
+LaTeX-dense: gf-01's conjunction, where a lost YES on any single condition fails the whole paper,
+and the single-paper extraction questions.
+
+**The conclusion that matters: recall is no longer the bottleneck. The judge is.** Every question
+except gf-02 gained candidates and converted none of them. gf-05 stands at 1 hit against 18 false
+positives. The next measurement worth making is not "can the reader find it" but "can anything
+separate a probative sentence from a merely relevant one" — which is exactly what Gabriel's hand
+labels would give a ground truth for.
+
+### D-059 addendum — a fix that never ran, and a test that could not see it
+The value judge (`check_extraction`, judging an extraction question on its VALUE rather than its
+topic) was written, tested, deployed, and **never executed on a single real row**. The CLI trimmed
+each question to `{qid, text}` before handing it to the judge; `verify_supports` routed on
+`provenance.paper_scope`; with provenance stripped that set was always empty. Its unit test passed
+throughout, because the test called `verify_supports` directly with full supervisor records and
+never went through the shape the pipeline actually uses. **A test that builds its own input cannot
+catch a caller that builds a different one.** The trimming now lives in `reader.judge_records`,
+beside the code that depends on it, and the regression test asserts on the list the CLI really
+passes.
+
+### D-059 addendum — a server job that did not hold its GPUs
+`wait -n` is unsupported by the bash on these nodes; under `set -e` that took `serve_both.sh` down
+**31 seconds after launch** while both vLLM processes carried on serving as orphans. Slurm marked
+the job FAILED and reported compute-gpu-0-1 **idle with all three A100s free** — so it would have
+handed those cards to the next user, whose job would have met 75GB of our model on each. Nothing
+downstream noticed, because the servers kept answering; that is exactly why it ran unseen for two
+hours. Found only because the *replacement* server job vanished from the queue. Fixed with a
+portable supervisor loop plus a pre-flight reap of our own stale processes. Related: `chmod +x` is
+itself a tracked change and was rejecting every `git pull` on the cluster; `core.fileMode` is now
+off there.
