@@ -1266,3 +1266,61 @@ async def run_conditions(conn, question: dict, papers: list[str],
             "repeats": repeats, **{k: int(v) for k, v in stats.items()}}
     out_path.with_suffix(".meta.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
     return meta
+
+
+def merge_gathered(paths: list, out_path: Path | str) -> dict:
+    """Union what several readers gathered for the same (question, paper).
+
+    Recall is a union, not a vote. The 24B and QwQ fail differently -- the 24B
+    needs a concept named in the paper's own words, QwQ will reason its way to a
+    weaker connection -- so a sentence either of them surfaces is a sentence the
+    judge should see. Requiring both to agree here would discard exactly the
+    evidence the second model was added to recover.
+
+    The judge, downstream, is what stops the union from being credulous.
+    """
+    merged: dict[tuple, dict] = {}
+    for path in paths:
+        path = Path(path)
+        if not path.exists():
+            logger.warning("merge: %s missing, skipped", path)
+            continue
+        model = "?"
+        meta = path.with_suffix(".meta.json")
+        if meta.exists():
+            model = json.loads(meta.read_text()).get("model", "?")
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            row = json.loads(line)
+            key = (row["qid"], row["paper_id"])
+            slot = merged.setdefault(key, {
+                "qid": row["qid"], "paper_id": row["paper_id"],
+                "quotes_by_model": {}, "answers_by_model": {}, "verdicts": [],
+            })
+            quotes = row.get("all_quotes") or ([row["quote"]] if row.get("quote") else [])
+            if quotes:
+                slot["quotes_by_model"][model] = quotes
+            if row.get("answers"):
+                slot["answers_by_model"][model] = row["answers"]
+
+    out_path = Path(out_path)
+    with out_path.open("w", encoding="utf-8") as handle:
+        for slot in merged.values():
+            pooled: list[str] = []
+            for quotes in slot["quotes_by_model"].values():
+                for q in quotes:
+                    if q and not any(q in k or k in q for k in pooled):
+                        pooled.append(q)
+            # A flat list, deliberately unlabelled. Which model found a sentence
+            # does not change whether it answers the question, and tagging the
+            # source would invite the judge to weigh provenance over content.
+            slot["all_quotes"] = pooled
+            slot["quote"] = pooled[0] if pooled else ""
+            slot["answer"] = True if pooled else False
+            slot["answers"] = sorted({a for v in slot["answers_by_model"].values() for a in v})
+            handle.write(json.dumps(slot, ensure_ascii=False) + "\n")
+
+    return {"out": str(out_path), "pairs": len(merged),
+            "with_evidence": sum(1 for s in merged.values() if s["all_quotes"]),
+            "quotes_total": sum(len(s["all_quotes"]) for s in merged.values())}

@@ -936,3 +936,35 @@ def test_extraction_does_not_stop_at_the_first_window(conn, monkeypatch, tmp_pat
                          q, lambda _: ["p1"], tmp_path, repeats=1, cascade=False)
     assert calls_extraction >= len(client2.calls), (
         "extraction must read at least as many windows as existence")
+
+
+def test_merge_unions_what_both_readers_gathered(tmp_path):
+    """Recall is a union, not a vote. The 24B needs a concept named in the
+    paper's own words; QwQ will reason to a weaker connection. Requiring both to
+    agree would discard exactly the evidence the second model was added to
+    recover -- the judge downstream is what stops the union being credulous."""
+    a = tmp_path / "a.jsonl"; b = tmp_path / "b.jsonl"
+    a.write_text(json.dumps({"qid": "gf-11", "paper_id": "p1",
+                             "all_quotes": ["the algorithm is CSVv2"],
+                             "answers": ["CSVv2"]}) + "\n")
+    b.write_text(json.dumps({"qid": "gf-11", "paper_id": "p1",
+                             "all_quotes": ["a medium operating point is used",
+                                            "the algorithm is CSVv2"],
+                             "answers": ["CSVv2 medium"]}) + "\n")
+    out = tmp_path / "m.jsonl"
+    info = R.merge_gathered([a, b], out)
+    assert info["pairs"] == 1
+    row = json.loads(out.read_text().splitlines()[0])
+    assert len(row["all_quotes"]) == 2, "the duplicate collapses, the new one survives"
+    assert any("medium operating point" in q for q in row["all_quotes"])
+    assert row["answer"] is True
+
+
+def test_merge_marks_a_pair_with_no_evidence_as_false(tmp_path):
+    a = tmp_path / "a.jsonl"
+    a.write_text(json.dumps({"qid": "gf-10", "paper_id": "p1",
+                             "all_quotes": [], "answers": []}) + "\n")
+    out = tmp_path / "m.jsonl"
+    R.merge_gathered([a], out)
+    row = json.loads(out.read_text().splitlines()[0])
+    assert row["answer"] is False and row["all_quotes"] == []
