@@ -38,7 +38,8 @@ DEFAULT_NEGATIVE_SAMPLE = 30
 # drop the words every physics sentence contains, not to build a linguistics.
 _STOP = set("""the a an of in on for to and or is are was were be been this that
 these those it its as by with from at we our using used use does do it's which
-than then so such can may might will would analysis paper study""".split())
+than then so such can may might will would analysis paper study
+rather whose merely simply also each their they there when what how any not""".split())
 
 
 def candidate_sentences(conn, paper_id: str, question: str, top: int = 3) -> list[str]:
@@ -59,7 +60,14 @@ def candidate_sentences(conn, paper_id: str, question: str, top: int = 3) -> lis
     import re as _re
     from hepcoveragekg.eval.reader import passages
 
-    words = {w for w in _re.findall(r"[a-z]{3,}", question.lower()) if w not in _STOP}
+    # Strip parentheticals before extracting words. In the per-paper rewrites a
+    # parenthetical is always a clarification or a CONTRAST -- "(rather than a
+    # measurement)", "(not merely study Higgs production)" -- so its words are
+    # the opposite of what should be scored. Leaving them in made gf-01 rank
+    # sentences about measurements, which is precisely backwards.
+    stem = _re.sub(r"\([^)]*\)", " ", question)
+    stem = _re.split(r"\s--\s|\bthat is\b", stem)[0]
+    words = {w for w in _re.findall(r"[a-z]{3,}", stem.lower()) if w not in _STOP}
     if not words:
         return []
     best: list[tuple[float, str]] = []
