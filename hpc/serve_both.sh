@@ -70,6 +70,15 @@ if [ "${#HEALTHY[@]}" -lt 2 ]; then
 fi
 echo "serving on GPUs ${HEALTHY[0]} and ${HEALTHY[1]}"
 
+# Reap anything of OURS left over from a previous crash. Only our own user's
+# processes are ever touched. Without this a restart finds the ports still held
+# by an orphan, the new server dies on bind, and the job looks like a GPU fault.
+echo "--- clearing our own stale servers, if any ---"
+pkill -u "$(id -u)" -f "vllm serve" 2>/dev/null && sleep 20 || echo "  none found"
+
+PID_SMALL=""
+PID_THINK=""
+
 serve () {   # gpu, model, port, extra args...
     local gpu="$1" model="$2" port="$3"; shift 3
     CUDA_VISIBLE_DEVICES="$gpu" apptainer exec --nv "$IMG" \
@@ -84,15 +93,28 @@ serve () {   # gpu, model, port, extra args...
 # 8192 for the 24B: a 12,000-char window is ~3,470 tokens at the measured 3.46
 # chars/token, so the prompt and a 500-token reply fit with room to spare.
 serve "${HEALTHY[0]}" "$SMALL" 8000 --max-model-len 8192
+PID_SMALL=$!
 
 # 16384 for QwQ: its reasoning is emitted as ordinary output tokens, so the same
 # window plus a long chain of thought needs the headroom or every reply
 # truncates mid-thought and reads as unparseable.
 serve "${HEALTHY[1]}" "$THINK" 8001 --max-model-len 16384 \
       --enable-reasoning --reasoning-parser deepseek_r1
+PID_THINK=$!
 
 # If either server dies, the reservation is worthless -- fail loudly instead of
 # leaving the survivor up and a client blocking on a port that will never open.
-wait -n
+#
+# NOT `wait -n`. The bash on these nodes predates it:
+#     wait: -n: invalid option
+# and under `set -e` that took the script down 31 seconds after launch, while
+# the two vLLM processes carried on serving as ORPHANS. Slurm marked the job
+# FAILED and reported the node idle with all three GPUs free -- so it would have
+# handed those cards to the next user, whose job would have hit 75GB of someone
+# else's model. The clients never noticed, which is exactly why it went unseen.
+while kill -0 "$PID_SMALL" 2>/dev/null && kill -0 "$PID_THINK" 2>/dev/null; do
+    sleep 30
+done
 echo "!!! one of the two servers exited; bringing the job down"
+kill "$PID_SMALL" "$PID_THINK" 2>/dev/null || true
 exit 1
