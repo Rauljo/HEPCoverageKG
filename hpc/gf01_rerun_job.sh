@@ -58,7 +58,7 @@ wait_for "$A_URL" "$A_MODEL"
 echo "=== gf-01 CONDITIONS: ${A_MODEL} ==="
 LLM_BASE_URL="$A_URL" LLM_MODEL_NAME="$A_MODEL" READER_MAX_TOKENS=500 \
   .venv/bin/python -m hepcoveragekg.cli reader --conditions gf-01 --out "$OUT" \
-  --repeats 3 --concurrency "${LLM_CONCURRENCY:-16}"
+  --repeats "${READER_REPEATS:-2}" --concurrency "${LLM_CONCURRENCY:-16}"
 
 wait_for "$B_URL" "$B_MODEL"
 echo "=== JUDGE (QwQ, on the whole condition set) ==="
