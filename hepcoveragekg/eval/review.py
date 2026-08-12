@@ -272,7 +272,19 @@ def write_html(items: list[dict], path: Path | str, title: str) -> Path:
             parts.append("<div class='q'><i>each item below asks its own "
                          "question — read it per item</i></div>")
         for i in group:
-            if i["quote"]:
+            # A multi-part question gets its whole gathered set, not its first
+            # sentence. Showing one quote for "which algorithm AND which working
+            # point" is the same mistake D-058 found in the judge, committed
+            # against a human reviewer instead -- and he would have no way to see
+            # that the other sentences existed.
+            if i.get("quotes"):
+                inner = "".join(f"<div class='quote'>{escape(q)}</div>"
+                                for q in i["quotes"])
+                lead = ("<div class='none'>Our readers gathered "
+                        f"{len(i['quotes'])} sentences bearing on this "
+                        "question:</div>") if len(i["quotes"]) > 1 else ""
+                quote = lead + inner
+            elif i["quote"]:
                 quote = f"<div class='quote'>{escape(i['quote'])}</div>"
             elif i.get("candidates"):
                 inner = "".join(f"<div class='quote'>{escape(c)}</div>"
@@ -391,17 +403,24 @@ def single_paper_items(rows: list[dict], questions: list[dict],
             text += ("   [his gold says this is NOT in the graph -- is it in the "
                      "paper?]")
         answers = r.get("answers") or []
-        quote = r.get("quote") or ""
+        # `all_quotes` is what the two-model gather produced; `quote` is the old
+        # single-model shape. Prefer the union -- these questions ask for several
+        # things at once, and one sentence almost never carries all of them.
+        gathered = [x for x in (r.get("all_quotes") or []) if x]
+        quote = r.get("quote") or (gathered[0] if gathered else "")
+        judged = r.get("quote_supports")
         items.append({
             "qid": r["qid"], "question": text, "paper_id": r["paper_id"],
             "quote": quote,
+            "quotes": gathered if len(gathered) > 1 else [],
             "candidates": ([] if quote else
                            (candidate_sentences(conn, r["paper_id"], q["text"])
                             if conn is not None else [])),
             "_machine": bool(quote),
-            "_judge": None,
-            "_why": (f"our reader answered: {answers[0]}" if answers else
-                     "our reader found nothing"),
+            "_judge": judged if isinstance(judged, bool) else None,
+            "_why": (r.get("support_why") or
+                     (f"our reader answered: {answers[0]}" if answers else
+                      "our reader found nothing")),
             "_by": "single-paper run",
         })
     return items
