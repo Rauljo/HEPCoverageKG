@@ -240,6 +240,7 @@ def write_html(items: list[dict], path: Path | str, title: str) -> Path:
         ".verdict{margin-top:.45em;padding:.55em .8em;background:#f7f7f9;"
         "border-left:3px solid #999;font-size:.92em}"
         ".v-yes{border-left-color:#2e7d32}.v-no{border-left-color:#c62828}"
+        ".v-none{border-left-color:#999}"
         "@media (prefers-color-scheme:dark){body{background:#151517;color:#e8e8e8}"
         ".q{background:#232326;border-left-color:#888}"
         ".quote{background:#1d1d20;border-left-color:#555}"
@@ -285,8 +286,17 @@ def write_html(items: list[dict], path: Path | str, title: str) -> Path:
             # before deciding would make the reviewer's verdict a copy of ours,
             # which is the one thing this exercise cannot afford.
             if i["_machine"]:
-                verdict = "supports the claim" if i["_judge"] else "does NOT support the claim"
-                klass = "v-yes" if i["_judge"] else "v-no"
+                # None means NOT JUDGED, and must not render as a rejection.
+                # `if i["_judge"]` treated None as falsy, so the seven
+                # single-paper items -- which never go to the judge -- were shown
+                # as "does NOT support the claim": a verdict nobody reached,
+                # against the reader's own answer.
+                if i["_judge"] is True:
+                    verdict, klass = "supports the claim", "v-yes"
+                elif i["_judge"] is False:
+                    verdict, klass = "does NOT support the claim", "v-no"
+                else:
+                    verdict, klass = "not checked by our judge", "v-none"
                 why = escape(i["_why"]) if i["_why"] else "(no reason recorded)"
                 reveal = (
                     "<details><summary>open only after you have decided — "

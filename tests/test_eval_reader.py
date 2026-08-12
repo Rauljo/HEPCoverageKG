@@ -860,3 +860,24 @@ def test_a_quote_contained_in_another_is_dropped():
 def test_a_single_quote_is_not_dressed_up_as_a_list():
     row = {"quote": "only one", "verdicts": [{"quote": "only one", "quote_verified": True}]}
     assert R._evidence_for_judge(row) == "only one"
+
+
+def test_an_unjudged_item_is_not_rendered_as_a_rejection(tmp_path):
+    """`if item["_judge"]` treated None as falsy, so the seven single-paper items
+    -- which never go to the judge -- were shown to the reviewer as 'does NOT
+    support the claim'. A verdict nobody reached, contradicting our own reader."""
+    from hepcoveragekg.eval import review
+
+    items = [
+        {"row": 1, "qid": "gf-11", "question": "q", "paper_id": "p1",
+         "quote": "a real sentence", "_machine": True, "_judge": None,
+         "_why": "our reader answered: X", "_by": "single-paper run"},
+        {"row": 2, "qid": "gf-11", "question": "q", "paper_id": "p2",
+         "quote": "another sentence", "_machine": True, "_judge": False,
+         "_why": "off topic", "_by": "stage-1"},
+    ]
+    out = tmp_path / "r.html"
+    review.write_html(items, out, "t")
+    html = out.read_text()
+    assert "not checked by our judge" in html
+    assert html.count("does NOT support the claim") == 1, "only the truly rejected one"
