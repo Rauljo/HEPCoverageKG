@@ -566,7 +566,8 @@ async def read_passage(conn, client, model, qid: str, question: str, passage: Pa
 
 async def read_paper(conn, client, model, qid: str, question: str, paper_id: str,
                      *, repeats: int = 3, temperature: float = 0.3,
-                     cascade: bool = True, mode: str = EXISTENCE) -> Consensus:
+                     cascade: bool = True, mode: str = EXISTENCE,
+                     gate: "asyncio.Semaphore | None" = None) -> Consensus:
     """One question against one paper, section-first then whole paper.
 
     The cascade is sound because these are EXISTENCE questions: a yes with a
@@ -579,31 +580,53 @@ async def read_paper(conn, client, model, qid: str, question: str, paper_id: str
     like consensus while measuring nothing.
     """
     verdicts: list[Verdict] = []
+    # The caller owns the budget. When `run` passes its shared semaphore the
+    # limit counts CONCURRENT CALLS across the whole job; a read on its own gets
+    # a private budget so a direct caller is not accidentally serialised.
+    limiter = gate or asyncio.Semaphore(repeats)
+
+    async def call(window: Passage, index: int, escalated: bool) -> Verdict:
+        async with limiter:
+            return await read_passage(conn, client, model, qid, question, window,
+                                      temperature, escalated=escalated, mode=mode,
+                                      window=index)
 
     async def sweep_windows(patterns: tuple[str, ...], escalated: bool) -> bool:
         """Read every window matching `patterns`. True if anything was supported."""
-        found_any = False
         windows = chunks(passages(conn, paper_id, patterns or None))
-        for index, window in enumerate(windows):
-            batch = [
-                await read_passage(conn, client, model, qid, question, window,
-                                   temperature, escalated=escalated, mode=mode,
-                                   window=index)
+
+        if mode == EXTRACTION:
+            # EXTRACTION reads every window whatever it finds -- the answer may
+            # have parts spread across the paper, and stopping at the first hit
+            # is how gf-11 returned the b-tagging algorithm and never looked for
+            # the working point or the performance, both of which were in the
+            # SAME window it had just read.
+            #
+            # So there is nothing for the sequential loop to protect: no verdict
+            # can cancel a later call. Fire the whole window x repeat grid at
+            # once and let the shared semaphore bound it. Measured on the
+            # single-paper run: 366 calls took 45 minutes because seven reads
+            # each made one call at a time and the parallelism drained to one as
+            # they finished.
+            batch = await asyncio.gather(*[
+                call(window, index, escalated)
+                for index, window in enumerate(windows)
                 for _ in range(repeats)
-            ]
+            ])
+            verdicts.extend(batch)
+            return any(v.supported for v in batch)
+
+        for index, window in enumerate(windows):
+            # The repeats are independent samples of the same window, so they
+            # run together; the WINDOWS stay sequential because in EXISTENCE
+            # mode one confirmation settles "does this paper do X" and every
+            # later window is waste.
+            batch = await asyncio.gather(*[call(window, index, escalated)
+                                           for _ in range(repeats)])
             verdicts.extend(batch)
             if any(v.supported for v in batch):
-                # EXISTENCE: one confirmation settles "does this paper do X",
-                # and reading on is waste.
-                # EXTRACTION: it does not. The answer may have several parts
-                # spread across the paper, and stopping here is how gf-11
-                # returned the b-tagging algorithm and never looked for the
-                # working point or the performance -- both of which were in the
-                # SAME window it had just read.
-                if mode == EXISTENCE:
-                    return True
-                found_any = True
-        return found_any
+                return True
+        return False
 
     # The routed pass, when there is somewhere to route to. A question the router
     # has no pattern for goes straight to the full read rather than reading
@@ -660,6 +683,115 @@ PAPER TEXT ({paper_id}, section: {section})
 ---
 """
 
+# A lone backslash that does not begin one of JSON's escape sequences. LaTeX is
+# made of these -- \mathup, \overline, \approx, \hskip -- and a model quoting a
+# physics sentence copies them through verbatim.
+_BAD_ESCAPE = re.compile(r'\\\\|\\(?!["\\/bfnrtu])')
+
+
+def _repair_latex_escapes(span: str) -> str:
+    """Double the backslashes JSON would choke on, leaving real escapes alone.
+
+    `{"quotes": ["... $\\mathup{{{t}}}$ ..."]}` is what the 24B returns when asked
+    to quote a sentence from a CMS paper, and it is not valid JSON: `\\m` is not
+    an escape sequence. The reply is otherwise perfect -- correct object, correct
+    keys, the right sentence -- so discarding it loses a real answer to a
+    quoting convention.
+
+    The alternation matters. Matching a lone backslash alone would walk into the
+    SECOND character of an already-correct `\\\\mathup` and double that, breaking
+    the replies that were right to begin with; consuming valid pairs first makes
+    the pass idempotent.
+
+    Applied only after strict parsing fails, so a well-formed reply is never
+    touched.
+    """
+    # The lookahead is zero-width, so a lone-backslash match consumed exactly one
+    # character and the replacement is exactly two.
+    return _BAD_ESCAPE.sub(lambda m: m.group(0) if m.group(0) == "\\\\" else "\\\\",
+                           span)
+
+
+def _json_spans(raw: str):
+    """Yield every balanced top-level {...} span, in order.
+
+    Brace counting that knows about JSON strings. It has to: physics answers are
+    full of LaTeX, and the braces in `$\\mathup{{{t}}}$` or `${\\approx}4.8$`
+    live INSIDE a string value where they mean nothing to the JSON grammar.
+    """
+    depth = 0
+    start = None
+    in_string = False
+    escaped = False
+    for i, ch in enumerate(raw):
+        if in_string:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == '"':
+                in_string = False
+            continue
+        if ch == '"':
+            in_string = True
+        elif ch == "{":
+            if depth == 0:
+                start = i
+            depth += 1
+        elif ch == "}" and depth:
+            depth -= 1
+            if depth == 0 and start is not None:
+                yield raw[start:i + 1]
+                start = None
+
+
+def _last_json_object(raw: str) -> dict | None:
+    """The last well-formed JSON object in a reply, or None.
+
+    THE LAST, because a reasoning model's chain of thought routinely contains
+    draft JSON before the answer it settles on.
+
+    The previous implementation looked for the last BRACE-FREE object,
+    `\\{[^{}]*\\}`, on the theory that a JSON object with no nesting is the whole
+    object. That is true of the object and false of its contents: a quote
+    carrying `${\\approx}4.8$` contains `{\\approx}`, which is brace-free, comes
+    last, and is not JSON -- so the reply was discarded whole. The greedy
+    fallback below it never ran, because it was guarded on finding NO match at
+    all rather than on failing to parse the one it found.
+
+    Measured on the single-paper run: 51 of 366 calls from the 24B (14%) and 98
+    of 366 from QwQ (27%) were thrown away this way, every one of them a
+    complete, well-formed reply. And the loss was SYSTEMATIC in the worst
+    direction -- it selected for replies quoting LaTeX, which is to say replies
+    quoting the cut values, masses and efficiencies these questions ask for.
+    Same shape as the window-size bug: not noise, but a filter aimed at the
+    content that mattered.
+    """
+    best = None
+    for span in _json_spans(raw):
+        value = None
+        for candidate in (span, _repair_latex_escapes(span)):
+            try:
+                value = json.loads(candidate)
+                break
+            except ValueError:
+                continue
+        if isinstance(value, dict):
+            best = value
+    if best is not None:
+        return best
+    # Nothing balanced parsed: fall back to the widest thing that looks like an
+    # object, which recovers a reply truncated inside a nested structure.
+    match = re.search(r"\{.*\}", raw, re.S)
+    if match:
+        try:
+            value = json.loads(match.group(0))
+        except ValueError:
+            return None
+        return value if isinstance(value, dict) else None
+    return None
+
+
 def parse_reply(raw: str, mode: str = EXISTENCE) -> tuple[bool | None, str, str]:
     """(answer, quote, text) from a model reply. Unparseable -> (None, '', '').
 
@@ -673,19 +805,8 @@ def parse_reply(raw: str, mode: str = EXISTENCE) -> tuple[bool | None, str, str]
     if not raw:
         return None, "", ""
     raw = _THINK_RE.sub(" ", raw)
-    # A reasoning model's chain of thought routinely contains braces and even
-    # draft JSON. Take the LAST balanced object, which is the answer it settled
-    # on, rather than the first thing that looks like one.
-    match = None
-    for match in re.finditer(r"\{[^{}]*\}", raw, re.S):
-        pass
-    if match is None:
-        match = re.search(r"\{.*\}", raw, re.S)
-    if not match:
-        return None, "", ""
-    try:
-        data = json.loads(match.group(0))
-    except ValueError:
+    data = _last_json_object(raw)
+    if data is None:
         return None, "", ""
 
     if mode == EXTRACTION:
@@ -757,10 +878,15 @@ async def run(conn, questions: list[dict], papers_for, out_path: Path | str,
     stats: Counter = Counter()
 
     async def one(q: dict, paper_id: str) -> Consensus:
-        async with gate:
-            return await read_paper(conn, client, model, q["qid"], q["text"], paper_id,
-                                    repeats=repeats, temperature=temperature,
-                                    cascade=cascade, mode=mode)
+        # The gate is handed DOWN rather than held here. Holding it around a
+        # whole read made `concurrency` mean "reads in flight", so a job with
+        # seven reads could never exceed seven concurrent calls and dropped to
+        # one as they finished. Bounding calls instead puts the same ceiling on
+        # the server -- a serial read in flight is exactly one call in flight --
+        # while keeping the pipe full to the end.
+        return await read_paper(conn, client, model, q["qid"], q["text"], paper_id,
+                                repeats=repeats, temperature=temperature,
+                                cascade=cascade, mode=mode, gate=gate)
 
     with out_path.open("w", encoding="utf-8") as handle:
         for coro in asyncio.as_completed([one(q, p) for q, p in jobs]):
@@ -1340,3 +1466,80 @@ def merge_gathered(paths: list, out_path: Path | str) -> dict:
     return {"out": str(out_path), "pairs": len(merged),
             "with_evidence": sum(1 for s in merged.values() if s["all_quotes"]),
             "quotes_total": sum(len(s["all_quotes"]) for s in merged.values())}
+
+
+def reparse(path: Path | str, out_path: Path | str | None = None,
+            conn=None, *, mode: str = EXTRACTION) -> dict:
+    """Re-read every stored reply with the current parser. No LLM calls.
+
+    Worth having as a first-class operation, not a one-off script. Every raw
+    reply is kept on the verdict precisely so a parser fix can be applied to
+    work already paid for -- and this fix recovered 124 of 149 discarded calls
+    across two 366-call runs, which is 40 GPU-minutes of QwQ that would
+    otherwise have been re-spent to learn the same thing twice.
+
+    Quotes are re-verified against the paper when a connection is given, because
+    a recovered quote that was never checked is not evidence.
+    """
+    path = Path(path)
+    out_path = Path(out_path) if out_path else path.with_suffix(".reparsed.jsonl")
+    stats: Counter = Counter()
+
+    with out_path.open("w", encoding="utf-8") as handle:
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            row = json.loads(line)
+            verdicts: list[Verdict] = []
+            for raw_v in row.get("verdicts") or []:
+                stats["calls"] += 1
+                before = raw_v.get("answer")
+                raw = raw_v.get("raw") or ""
+                if raw.startswith("ERROR"):
+                    stats["hard_errors"] += 1
+                    verdicts.append(Verdict(**raw_v))
+                    continue
+                answer, quotes, text = parse_reply(raw, mode)
+                if answer is None:
+                    stats["still_unparsed"] += before is None
+                    verdicts.append(Verdict(**raw_v))
+                    continue
+                if before is None:
+                    stats["recovered"] += 1
+                if isinstance(quotes, str):
+                    quotes = [quotes] if quotes else []
+                verified = [q for q in quotes
+                            if len(q) >= MIN_QUOTE_CHARS
+                            and (conn is None
+                                 or verify_quote(conn, row["paper_id"], q))]
+                raw_v = dict(raw_v)
+                raw_v.update({
+                    "answer": answer,
+                    "quotes": verified,
+                    "quote": verified[0] if verified else "",
+                    "quote_verified": bool(verified),
+                    "answer_text": text if mode == EXTRACTION else "",
+                    "reasoning": "" if mode == EXTRACTION else raw_v.get("reasoning", ""),
+                })
+                verdicts.append(Verdict(**raw_v))
+
+            c = Consensus(row["paper_id"], row["qid"], verdicts)
+            row.update({
+                "answer": c.answer,
+                "unanimous": c.unanimous,
+                "quote": c.best_quote,
+                "all_quotes": c.all_quotes,
+                "answers": sorted({v.answer_text for v in verdicts
+                                   if v.supported and v.answer_text}),
+                "votes": {str(k): v for k, v in c.votes.items()},
+                "verdicts": [asdict(v) for v in verdicts],
+            })
+            handle.write(json.dumps(row, ensure_ascii=False) + "\n")
+            stats["reads"] += 1
+
+    # Every counter, always, even at zero. A caller checking `info["recovered"]`
+    # should not have to know that a Counter omits the keys nothing touched.
+    info = {k: int(stats[k]) for k in
+            ("reads", "calls", "recovered", "still_unparsed", "hard_errors")}
+    info["out"] = str(out_path)
+    return info

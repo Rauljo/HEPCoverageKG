@@ -992,3 +992,69 @@ def test_merged_evidence_is_capped_but_far_above_the_sweep_cap():
            "all_quotes": [f"sentence number {i}" for i in range(40)]}
     lines = R._evidence_for_judge(row).splitlines()
     assert len(lines) == R.MAX_MERGED_JUDGE_QUOTES > R.MAX_JUDGE_QUOTES
+
+
+# Both of these are VERBATIM from run 48367 -- replies the old parser discarded.
+# Between them they cost 124 of 366 calls on the QwQ arm and 31 on the 24B arm.
+
+REPLY_LATEX_UNESCAPED = (
+    '```json\n{"reasoning": "The text discusses the MET cut.", '
+    '"quotes": ["Its magnitude, $p_{\\mathrm{T}}^{\\text{miss}}$ , is required to be '
+    'less than 40  GeV , which results in a signal efficiency of ${\\approx}80\\%$ '
+    'with the $\\mathup{{{t}}}$ rejection factor of ${\\approx}4.8$ ."], '
+    '"answer": "40 GeV, ~80% efficiency.", "found": true}\n```')
+
+REPLY_WITH_DRAFT_FIRST = (
+    '<think>Let me draft: {"found": false} -- no wait, the sentence is there.</think>\n'
+    '{"reasoning": "found it", "quotes": ["The b jets are identified with the '
+    'CSVv2 algorithm at the medium working point."], '
+    '"answer": "CSVv2, medium", "found": true}')
+
+
+def test_latex_in_a_quote_no_longer_destroys_the_reply():
+    """`{\\approx}` is brace-free and comes last, so the old regex picked it as
+    'the JSON object' and threw the answer away. The loss selected for replies
+    quoting cut values and efficiencies -- the content the questions ask for."""
+    answer, quotes, text = R.parse_reply(REPLY_LATEX_UNESCAPED, R.EXTRACTION)
+    assert answer is True
+    assert len(quotes) == 1 and "40  GeV" in quotes[0]
+    assert "80%" in text
+
+
+def test_a_reasoning_model_draft_does_not_win_over_its_conclusion():
+    answer, quotes, _ = R.parse_reply(REPLY_WITH_DRAFT_FIRST, R.EXTRACTION)
+    assert answer is True, "the <think> draft said false; the conclusion said true"
+    assert "CSVv2" in quotes[0]
+
+
+def test_repairing_escapes_is_idempotent_and_never_breaks_valid_json():
+    """The naive fix walks into the second character of an already-correct
+    `\\\\mathup` and doubles that, breaking the replies that were right."""
+    valid = '{"q": "a $\\\\mathup{x}$ b"}'
+    assert json.loads(R._repair_latex_escapes(valid))["q"] == "a $\\mathup{x}$ b"
+    once = R._repair_latex_escapes('{"q": "a $\\mathup{x}$ b"}')
+    assert R._repair_latex_escapes(once) == once
+
+
+def test_a_genuinely_truncated_reply_is_still_rejected():
+    """Recovery must not turn into invention: a reply cut off mid-sentence has
+    no verdict in it, and guessing one would manufacture evidence."""
+    assert R.parse_reply('{"quotes": ["the analysis uses a $\\mathup{{{t}}}$ and',
+                         R.EXTRACTION)[0] is None
+
+
+def test_reparse_recovers_without_calling_the_model(tmp_path):
+    src = tmp_path / "run.jsonl"
+    src.write_text(json.dumps({
+        "qid": "gf-13", "paper_id": "p1", "answer": None, "quote": "",
+        "all_quotes": [], "answers": [],
+        "verdicts": [{"paper_id": "p1", "qid": "gf-13", "answer": None,
+                      "quote": "", "quote_verified": False, "quotes": [],
+                      "reasoning": "", "answer_text": "", "section": "s",
+                      "window": 0, "escalated": False,
+                      "raw": REPLY_LATEX_UNESCAPED}]}) + "\n")
+    info = R.reparse(src, tmp_path / "out.jsonl")
+    assert info["recovered"] == 1 and info["still_unparsed"] == 0
+    row = json.loads((tmp_path / "out.jsonl").read_text().splitlines()[0])
+    assert row["answer"] is True
+    assert row["all_quotes"] and "40  GeV" in row["all_quotes"][0]
