@@ -783,3 +783,45 @@ def test_a_missing_condition_is_named_not_just_counted(conn, monkeypatch, tmp_pa
     assert out["answer"] is False
     assert out["missing"] == ["Does it use b-tagged jets?"]
     assert out["conditions"]["Is this a search?"]["answer"] is True
+
+
+def test_a_multi_condition_claim_is_judged_on_ALL_its_quotes():
+    """The paper-level claim is a conjunction, so its evidence is the SET of
+    sentences. Handing the judge ONE sentence and the whole three-part question
+    guarantees rejection -- one sentence rarely shows all three. That is how four
+    gf-01 papers with every condition confirmed were downgraded to False, the
+    judge narrating the evidence as it rejected it:
+
+        "mentions a search (not a measurement) and explicitly includes missing
+         transverse momentum..."   -> downgraded
+    """
+    import asyncio
+
+    seen = {}
+
+    class _Stub:
+        def __init__(s): s.chat = s; s.completions = s
+        async def create(s, **kw):
+            seen["prompt"] = kw["messages"][0]["content"]
+            class M: content = '{"why":"together they establish it","supports":true}'
+            class C: message = M()
+            class R_: choices = [C()]
+            return R_()
+
+    row = {"qid": "gf-01", "paper_id": "p1", "answer": True,
+           "quote": "first sentence only",
+           "quotes": {"is it a search": "it is a search for new physics",
+                      "b-tagged jets": "b-tagged jets are required",
+                      "missing energy": "large missing transverse momentum is required"}}
+    import json as _json, tempfile
+    from pathlib import Path as _P
+    src = _P(tempfile.mkdtemp()) / "r.jsonl"
+    src.write_text(_json.dumps(row) + "\n")
+
+    R._client = lambda: (_Stub(), "stub")
+    asyncio.run(R.verify_supports(src, [{"qid": "gf-01", "text": "search AND b-jets AND MET?"}]))
+
+    prompt = seen["prompt"]
+    assert "b-tagged jets are required" in prompt
+    assert "large missing transverse momentum" in prompt
+    assert "it is a search for new physics" in prompt, "all three must reach the judge"

@@ -853,14 +853,17 @@ Judge ONE thing: does the sentence show that this paper does it?
 THE THING BEING LOOKED FOR
 {question}
 
-CITED SENTENCE FROM THE PAPER
+CITED SENTENCE(S) FROM THE PAPER
 {quote}
 
 {claim}The question is phrased across many papers ("which analyses ..."), but you \
 are judging ONE sentence from ONE paper. So do not ask whether the sentence names \
 which papers - it cannot. Ask only whether it shows that THIS paper does the thing.
 
-Say "yes" if the sentence shows this paper does it, even in passing.
+If several sentences are listed, judge them TOGETHER: the claim may need more
+than one, and each may establish a different part of it.
+
+Say "yes" if the sentences show this paper does it, even in passing.
 Say "no" if the sentence is merely on a related topic, describes something similar \
 but not the same, or does not establish the thing at all. A sentence about muons \
 alone does not establish a CHOICE between electrons and muons. A sentence about an \
@@ -931,8 +934,13 @@ async def verify_supports(rescored_path: Path | str, questions: list[dict],
     async def one(row: dict) -> None:
         async with gate:
             answers = row.get("answers") or []
+            # A multi-condition row carries one quote per condition. Judge the
+            # whole set against the whole question, because that is the claim.
+            quotes = row.get("quotes")
+            evidence = ("\n".join(f"- ({c}) {q}" for c, q in quotes.items())
+                        if quotes else row["quote"])
             ok, why = await check_support(
-                client, model, text.get(row["qid"], row["qid"]), row["quote"],
+                client, model, text.get(row["qid"], row["qid"]), evidence,
                 answers[0] if answers else "", max_tokens=max_tokens)
         row["quote_supports"] = ok
         row["support_why"] = why
@@ -1113,6 +1121,15 @@ async def read_conditions(conn, client, model, qid: str, conditions: list[str],
         "qid": qid, "paper_id": paper_id, "answer": overall,
         "conditions": met,
         "missing": [c for c, v in met.items() if v["answer"] is not True],
+        # EVERY condition's quote, not just the first. The paper-level claim is
+        # the conjunction, so its evidence is the SET of sentences -- handing the
+        # judge one sentence and the whole three-part question guarantees a
+        # rejection, because one sentence rarely shows all three. That is how
+        # four papers with all three conditions confirmed were downgraded to
+        # False, with the judge narrating the evidence as it rejected it:
+        #   "mentions a search (not a measurement) and explicitly includes
+        #    missing transverse momentum..."  -> downgraded
+        "quotes": {c: v["quote"] for c, v in met.items() if v["quote"]},
         "quote": next((v["quote"] for v in met.values() if v["quote"]), ""),
     }
 
