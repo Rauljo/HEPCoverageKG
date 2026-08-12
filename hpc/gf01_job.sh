@@ -14,7 +14,8 @@
 #               NOT in his gold. Recovering the 16 alone would prove nothing --
 #               a change that makes everything say yes would do that too, which
 #               is exactly the trap QwQ fell into. The 6 controls are the check.
-#   full        all 60 papers, only if the diagnostic passes.
+#   full        all 60 papers. Runs REGARDLESS -- the diagnostic explains the
+#               number, it does not withhold it.
 #
 # Runs unattended overnight, so it must fail loudly rather than quietly produce
 # a number. Every check below exists because something silently didn't.
@@ -85,17 +86,18 @@ print(f"  said yes to {fp}/{len(controls)} papers NOT in his gold")
 # Both halves matter. Recovering the misses is the point; but a change that
 # simply says yes more often would do that too, so the controls decide whether
 # the improvement is real or just a looser threshold.
+# ADVISORY, not blocking. The full 60 runs tonight regardless -- the diagnostic
+# is here to tell us WHY the number came out as it did, not to withhold it.
 if rec < len(missed) * 0.4:
-    print("GATE FAILED: the split did not recover the misses -- the shape was not the problem")
-    sys.exit(1)
-if fp > len(controls) * 0.5:
-    print("GATE FAILED: it now says yes to most controls -- looser, not better")
-    sys.exit(1)
-print("GATE PASSED")
+    print("DIAGNOSTIC: weak recovery -- the question shape may not be the problem")
+elif fp > len(controls) * 0.5:
+    print("DIAGNOSTIC: recovers the misses but also fires on controls -- looser, not better")
+else:
+    print("DIAGNOSTIC: recovers the misses without firing on the controls -- the shape was the problem")
 PY
 
 FULL="eval/reader/${STAMP}-gf01-full-${JOB}.jsonl"
-echo "=== PHASE 2: all 60 papers ==="
+echo "=== PHASE 2: all 60 papers (runs regardless of the diagnostic) ==="
 .venv/bin/python -m hepcoveragekg.cli reader --conditions gf-01 \
   --out "$FULL" --repeats "${READER_REPEATS:-2}" \
   --concurrency "${LLM_CONCURRENCY:-16}"
