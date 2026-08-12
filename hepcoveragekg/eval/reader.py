@@ -1065,6 +1065,76 @@ the verdict last:
 """
 
 
+EXTRACT_SUPPORT_PROMPT = """\
+Someone read a paper to answer the question below and wrote down an answer. \
+Check their answer against the sentences they collected from that paper.
+
+THE QUESTION
+{question}
+
+THEIR ANSWER
+{claim}
+
+SENTENCES COLLECTED FROM THE PAPER
+{quote}
+
+Judge ONE thing: do these sentences show that THEIR ANSWER is the right answer \
+to the question?
+
+This is not a question about the topic. The sentences can be about the right \
+subject and still not support the answer given. If the question asks for a \
+signal efficiency and the answer quotes a systematic uncertainty instead, that \
+is WRONG, however relevant the sentences are.
+
+If the sentences contain a better answer than the one they wrote, give it. If \
+they contain no answer to the question at all, leave it empty.
+
+Several sentences may each carry a different part of the answer - an algorithm \
+in one, its working point in another. Judge them together, and count the answer \
+as supported when the parts add up to it.
+
+Reply as JSON, nothing else. Fill the fields IN ORDER -- the reasoning first, \
+the verdict last:
+{{"why": "<what the sentences establish, and whether it is what was asked>", \
+"best_answer": "<the answer the sentences actually support, or empty>", \
+"supports": true|false}}
+"""
+
+
+async def check_extraction(client, model, question: str, quote: str,
+                           claimed: str = "", temperature: float = 0.0,
+                           max_tokens: int | None = None) -> tuple[bool | None, str, str]:
+    """(supports, why, best_answer). None when the call or the reply failed.
+
+    A SEPARATE judge from `check_support`, because the two questions are not the
+    same one. "Does this paper use b-tagging" is answered by the existence of a
+    sentence; "what signal efficiency does the cut retain" is not -- the paper
+    can plainly have such a cut, with the number sitting right there, while the
+    answer we extracted is a different number entirely.
+
+    Measured on gf-10: gold is "approximately 80%", we answered with a 1.5%
+    systematic uncertainty, the correct sentence WAS in the evidence, and the
+    existence judge said `supports: true`. Correctly, on its own terms. It was
+    being asked the wrong question.
+    """
+    prompt = EXTRACT_SUPPORT_PROMPT.format(
+        question=question, quote=quote, claim=claimed or "(no answer recorded)")
+    try:
+        raw = await _ask(client, model, prompt, temperature, max_tokens=max_tokens)
+    except Exception as exc:                       # noqa: BLE001
+        logger.warning("extraction check failed: %s", exc)
+        return None, f"ERROR: {type(exc).__name__}", ""
+    data = _last_json_object(_THINK_RE.sub(" ", raw or ""))
+    if data is None:
+        return None, "", ""
+    value = data.get("supports")
+    if isinstance(value, str):
+        value = value.strip().lower() in ("true", "yes")
+    if not isinstance(value, bool):
+        return None, "", ""
+    return value, str(data.get("why") or ""), str(data.get("best_answer") or "")
+
+
 async def check_support(client, model, question: str, quote: str,
                         claimed: str = "", temperature: float = 0.0,
                         max_tokens: int | None = None) -> tuple[bool | None, str]:
@@ -1164,6 +1234,11 @@ async def verify_supports(rescored_path: Path | str, questions: list[dict],
     rescored_path = Path(rescored_path)
     out_path = Path(out_path) if out_path else rescored_path.with_suffix(".supported.jsonl")
     text = {q["qid"]: q["text"] for q in questions}
+    # A question that names its own paper asks WHAT or WHY, and is graded on the
+    # value it returns. The same rule the reader uses to pick its prompt, so the
+    # two stages cannot disagree about what kind of question this is.
+    extraction_qids = {q["qid"] for q in questions
+                       if (q.get("provenance") or {}).get("paper_scope")}
     # A different endpoint from the reader when one is supplied: a model marking
     # its own homework is the self-preference problem (MT-Bench), and avoiding it
     # here costs nothing because both servers are already up.
@@ -1180,15 +1255,32 @@ async def verify_supports(rescored_path: Path | str, questions: list[dict],
             # A multi-condition row carries one quote per condition. Judge the
             # whole set against the whole question, because that is the claim.
             evidence = _evidence_for_judge(row)
-            ok, why = await check_support(
-                client, model, text.get(row["qid"], row["qid"]), evidence,
-                answers[0] if answers else "", max_tokens=max_tokens)
+            question = text.get(row["qid"], row["qid"])
+            best = ""
+            if row["qid"] in extraction_qids:
+                # An extraction question is graded on its VALUE. Asking the
+                # existence judge here passes an answer that is about the right
+                # topic and the wrong number.
+                ok, why, best = await check_extraction(
+                    client, model, question, evidence,
+                    answers[0] if answers else "", max_tokens=max_tokens)
+            else:
+                ok, why = await check_support(
+                    client, model, question, evidence,
+                    answers[0] if answers else "", max_tokens=max_tokens)
         row["quote_supports"] = ok
         row["support_why"] = why
         row["judged_by"] = model
+        # The correction, kept even when the answer is upheld: a judge that can
+        # name a better answer than ours has told us something worth reading
+        # whatever it concluded about the one we gave it.
+        if best:
+            row["judge_best_answer"] = best
         if ok is False:
             row["answer"] = False
-            row["downgraded"] = "quote does not answer the question"
+            row["downgraded"] = ("the evidence does not support this answer"
+                                 if row["qid"] in extraction_qids else
+                                 "quote does not answer the question")
 
     await asyncio.gather(*(one(r) for r in targets))
 
@@ -1348,8 +1440,17 @@ async def read_conditions(conn, client, model, qid: str, conditions: list[str],
         c = await read_paper(conn, client, model, f"{qid}.c{index}", condition,
                              paper_id, repeats=repeats, temperature=temperature,
                              cascade=False, mode=EXISTENCE)
-        met[condition] = {"answer": c.answer, "quote": c.best_quote,
-                          "unanimous": c.unanimous}
+        met[condition] = {
+            "answer": c.answer, "quote": c.best_quote,
+            "unanimous": c.unanimous,
+            # KEEP THE RAW REPLIES. This path threw them away, and it is the one
+            # run that could not be rescued when the JSON parser was fixed: the
+            # sweep and the single-paper runs recovered 599 discarded calls from
+            # storage at no GPU cost, while gf-01 -- 18 gold papers, the worst
+            # scoring question -- had to be read again from scratch. Raw replies
+            # are the only thing that makes a parser fix retroactive.
+            "verdicts": [asdict(v) for v in c.verdicts],
+        }
 
     answers = [v["answer"] for v in met.values()]
     if all(a is True for a in answers):

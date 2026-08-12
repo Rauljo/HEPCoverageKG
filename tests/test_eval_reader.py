@@ -15,6 +15,7 @@ implementation (a model dropping LaTeX from an otherwise verbatim quote).
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import sqlite3
 from pathlib import Path
@@ -1058,3 +1059,64 @@ def test_reparse_recovers_without_calling_the_model(tmp_path):
     row = json.loads((tmp_path / "out.jsonl").read_text().splitlines()[0])
     assert row["answer"] is True
     assert row["all_quotes"] and "40  GeV" in row["all_quotes"][0]
+
+
+def test_an_extraction_question_is_judged_on_its_value_not_its_topic(monkeypatch, tmp_path):
+    """gf-10, verbatim. Gold is "approximately 80%"; we answered with a 1.5%
+    systematic uncertainty; the correct sentence was in the evidence; and the
+    existence judge said yes -- correctly, on its own terms. It was being asked
+    the wrong question."""
+    seen = {}
+
+    async def fake_extract(client, model, question, quote, claimed="", **kw):
+        seen["prompt"] = "extraction"
+        seen["claim"] = claimed
+        return False, "that is an uncertainty, not an efficiency", "approximately 80%"
+
+    async def fake_support(*a, **kw):
+        seen["prompt"] = "existence"
+        return True, "the paper does have such a cut"
+
+    monkeypatch.setattr(R, "check_extraction", fake_extract)
+    monkeypatch.setattr(R, "check_support", fake_support)
+
+    src = tmp_path / "m.jsonl"
+    src.write_text(json.dumps({
+        "qid": "gf-10", "paper_id": "2001.06899", "answer": True,
+        "quote": "the cut retains a signal efficiency of approximately 80%",
+        "all_quotes": ["the cut retains a signal efficiency of approximately 80%"],
+        "answers": ["an uncertainty of 1.5% in the differential results"]}) + "\n")
+    qs = [q for q in S.build_records() if q["qid"] == "gf-10"]
+    asyncio.run(R.verify_supports(src, qs, client=object(), model="m"))
+
+    assert seen["prompt"] == "extraction", "a paper-scoped question must not use the existence judge"
+    row = json.loads((tmp_path / "m.supported.jsonl").read_text().splitlines()[0])
+    assert row["answer"] is False
+    assert row["judge_best_answer"] == "approximately 80%"
+    assert row["downgraded"] == "the evidence does not support this answer"
+
+
+def test_a_corpus_question_still_uses_the_existence_judge(monkeypatch, tmp_path):
+    seen = {}
+
+    async def fake_support(*a, **kw):
+        seen["prompt"] = "existence"
+        return True, "shown"
+
+    monkeypatch.setattr(R, "check_support", fake_support)
+    src = tmp_path / "s.jsonl"
+    src.write_text(json.dumps({
+        "qid": "gf-02", "paper_id": "p1", "answer": True, "quote": "x" * 40,
+        "answers": []}) + "\n")
+    qs = [q for q in S.build_records() if q["qid"] == "gf-02"]
+    asyncio.run(R.verify_supports(src, qs, client=object(), model="m"))
+    assert seen["prompt"] == "existence"
+
+
+def test_the_conditions_path_keeps_its_raw_replies():
+    """The one run that could not be rescued when the parser was fixed. The
+    sweep and single-paper runs recovered 599 discarded calls from storage;
+    gf-01 -- 18 gold papers, the worst-scoring question -- had to be re-read."""
+    import inspect
+    src = inspect.getsource(R.read_conditions)
+    assert '"verdicts": [asdict(v) for v in c.verdicts]' in src
