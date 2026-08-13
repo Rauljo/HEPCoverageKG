@@ -70,3 +70,28 @@ def test_the_sheet_says_a_paper_missing_from_his_list_is_not_our_error():
     assert "your own list does not contain" in html
     assert "not automatically our error" in html
     assert "against your list" in html
+
+
+def test_every_tsv_record_is_exactly_one_line():
+    """Excel and Sheets do not handle quoted TSV reliably. If his rows shift by
+    one, every verdict after that attaches to the wrong paper, nothing looks
+    wrong, and the ground truth is silently corrupted."""
+    items = [{"qid": "gf-01", "question": "does it\nuse b-jets?", "paper_id": "p1",
+              "quote": "a sentence\twith a tab\nand a newline", "candidates": [],
+              "_machine": True, "_judge": True, "_why": "", "_by": "s", "row": 1}]
+    with tempfile.TemporaryDirectory() as d:
+        p = RV.write_sheet(items, pathlib.Path(d) / "s.tsv")
+        raw = p.read_text(encoding="utf-8")
+    assert len(raw.strip().splitlines()) == 2, "one header line, one data line"
+    assert '"' not in raw, "no quoting needed once the fields are single-line"
+
+
+def test_the_tsv_shows_the_same_evidence_as_the_html():
+    items = [{"qid": "gf-11", "question": "algorithm and working point?",
+              "paper_id": "p1", "quote": "the algorithm is CSVv2",
+              "quotes": ["the algorithm is CSVv2", "a medium working point is used"],
+              "candidates": [], "_machine": True, "_judge": True, "_why": "",
+              "_by": "s", "row": 1}]
+    with tempfile.TemporaryDirectory() as d:
+        tsv = RV.write_sheet(items, pathlib.Path(d) / "s.tsv").read_text()
+    assert "medium working point" in tsv, "the TSV must not show one of three sentences"

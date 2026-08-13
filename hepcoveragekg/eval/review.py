@@ -179,6 +179,22 @@ def build(rows: list[dict], questions: list[dict], *,
     return out
 
 
+def _one_line(text: str) -> str:
+    """Collapse a field to a single line.
+
+    A physics sentence arrives with newlines and tabs in it, and a TSV cell
+    containing either is a liability: Python's csv quotes them and reads them
+    back perfectly, but Excel and Google Sheets do not handle quoted TSV
+    reliably, and this file is going to a reviewer who will open it in a
+    spreadsheet. If his rows shift by one, every verdict after that point
+    attaches to the wrong paper -- and nothing about the file would look wrong.
+
+    That failure would be silent and would corrupt the ground truth itself, so
+    the whitespace goes rather than the risk.
+    """
+    return " ".join((text or "").split())
+
+
 def write_sheet(items: list[dict], path: Path | str) -> Path:
     """The TSV the reviewer fills in. Two columns for them, the rest context."""
     path = Path(path)
@@ -188,7 +204,14 @@ def write_sheet(items: list[dict], path: Path | str) -> Path:
                     "sentence_cited_from_the_paper",
                     "YOUR_VERDICT_yes_no_unsure", "YOUR_NOTES"])
         for i in items:
-            if i["quote"]:
+            # The whole gathered set, matching the HTML. A multi-part question
+            # answered by three sentences must not arrive here as one of them:
+            # he fills the TSV in while reading the HTML, and the two disagreeing
+            # about what the evidence IS is the worst kind of confusion to hand
+            # someone whose answers become our gold.
+            if i.get("quotes"):
+                shown = "   ||   ".join(i["quotes"])
+            elif i["quote"]:
                 shown = i["quote"]
             elif i.get("candidates"):
                 # We found nothing. Show what we DID find and rejected, so the
@@ -197,7 +220,8 @@ def write_sheet(items: list[dict], path: Path | str) -> Path:
                          + "   ||   ".join(i["candidates"]))
             else:
                 shown = "WE FOUND NO EVIDENCE, and nothing in the paper looked close."
-            w.writerow([i["row"], i["qid"], i["paper_id"], i["question"], shown, "", ""])
+            w.writerow([i["row"], i["qid"], i["paper_id"],
+                        _one_line(i["question"]), _one_line(shown), "", ""])
     return path
 
 
