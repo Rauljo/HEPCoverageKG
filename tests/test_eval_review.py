@@ -37,3 +37,21 @@ def test_the_html_shows_every_gathered_sentence():
         html = p.read_text(encoding="utf-8")
     assert "a medium working point is used" in html
     assert "gathered 2 sentences" in html
+
+
+def test_the_sheet_never_reveals_a_verdict_before_it_is_asked_for():
+    """The sheet produces our human ground truth. If it shows what we concluded,
+    his marks become a copy of ours and the exercise measures nothing."""
+    import re
+    items = [{"qid": "gf-10", "question": "what efficiency?", "paper_id": "p1",
+              "quote": "the cut retains 80%", "quotes": ["a", "the cut retains 80%"],
+              "candidates": [], "_machine": True, "_judge": False,
+              "_why": "that is an uncertainty, not an efficiency",
+              "_by": "single-paper run", "row": 1}]
+    with tempfile.TemporaryDirectory() as d:
+        html = RV.write_html(items, pathlib.Path(d) / "s.html", "t").read_text()
+    visible = re.sub(r"<details>.*?</details>", "", html, flags=re.S)
+    for word in ("does NOT support", "supports the claim", "not checked by our judge"):
+        assert word not in visible
+    assert "that is an uncertainty" not in visible, "the judge's reason must stay hidden too"
+    assert "does NOT support" in html, "but it must be there once opened"
