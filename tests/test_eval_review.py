@@ -152,3 +152,25 @@ def test_the_app_never_claims_to_send_anything():
     assert "email it back" in flat
     assert ">Send answers back<" not in flat
     assert "__RETURN_TO__" not in flat, "the placeholder must be substituted"
+
+
+def test_the_app_declares_no_capabilities_so_it_can_be_shared():
+    """A page his supervisor cannot open is worth nothing however nicely it
+    saves files. Declaring a runtime capability blocks public sharing, so the
+    return path is plain HTML: a Blob download with an always-visible copy box."""
+    from hepcoveragekg.eval import review_app as RA
+    with tempfile.TemporaryDirectory() as d:
+        html = RA.write_app(_app_items(), pathlib.Path(d) / "a.html", "t").read_text()
+    assert "window.claude" not in html
+    assert "URL.createObjectURL" in html
+    assert "navigator.clipboard" in html
+
+
+def test_the_returned_answers_are_a_table_not_json():
+    """He is pasting this into an email. 202 rows of pretty-printed JSON is a
+    wall; a table survives a mail client and parses just as easily."""
+    from hepcoveragekg.eval import review_app as RA
+    with tempfile.TemporaryDirectory() as d:
+        html = RA.write_app(_app_items(), pathlib.Path(d) / "a.html", "t").read_text()
+    assert 'row\\tquestion_id\\tpaper\\tverdict\\tnotes' in html
+    assert "# sheet=" in html, "the version must travel with the answers"

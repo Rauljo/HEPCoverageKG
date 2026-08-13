@@ -201,11 +201,12 @@ textarea{width:100%;margin-top:.6rem;padding:.5rem .65rem;border:1px solid var(-
     <p class="warnbox"><b>This page cannot send anything on its own</b> — it has no
       connection to __RETURN_TO__'s machine. Please download the file (or copy the text)
       and email it back, otherwise the answers stay on this computer.</p>
-    <button class="primary" id="dl">Download the file</button>
-    <button id="copy">Copy to clipboard</button>
+    <button class="primary" id="copy">Copy my answers</button>
+    <button id="dl">Download as a file</button>
     <button id="close" style="float:right">Close</button>
     <p style="font-size:.85rem;color:var(--muted);margin:.9rem 0 .3rem">
-      If the download does not work, copy the text below and paste it into an email.</p>
+      Either copy this straight into an email, or download it as a file — whichever is
+      easier. Both contain exactly the same thing.</p>
     <textarea class="out" id="out" readonly></textarea>
   </div>
 </div>
@@ -399,16 +400,19 @@ document.addEventListener("keydown", ev => {
 });
 
 function payload(){
-  return JSON.stringify({
-    sheet: "__VERSION__",
-    returned_at: new Date().toISOString(),
-    answered: ITEMS.filter(i => (state[i.row] || {}).v).length,
-    total: ITEMS.length,
-    verdicts: ITEMS.filter(i => (state[i.row] || {}).v).map(i => ({
-      row: i.row, qid: i.qid, paper_id: i.paper_id,
-      verdict: state[i.row].v, note: state[i.row].note || ""
-    }))
-  }, null, 1);
+  // Tab-separated, not JSON. This text is going to be pasted into an email by a
+  // human, and 202 rows of pretty-printed JSON is a wall; a table is legible,
+  // survives a mail client mangling whitespace, and parses just as easily on
+  // our side. The header line carries the sheet version so a returned file can
+  // never be scored against the wrong build of the sheet.
+  const done = ITEMS.filter(i => (state[i.row] || {}).v);
+  const head = `# sheet=__VERSION__\tanswered=${done.length}\ttotal=${ITEMS.length}\treturned=${new Date().toISOString()}`;
+  const cols = "row\tquestion_id\tpaper\tverdict\tnotes";
+  const rows = done.map(i => [
+    i.row, i.qid, i.paper_id, state[i.row].v,
+    (state[i.row].note || "").replace(/[\t\r\n]+/g, " ")
+  ].join("\t"));
+  return [head, cols].concat(rows).join("\n");
 }
 
 const panel = document.getElementById("panel");
@@ -424,28 +428,30 @@ document.getElementById("finish").onclick = () => {
 document.getElementById("close").onclick = () => panel.classList.remove("on");
 panel.addEventListener("click", e => { if(e.target === panel) panel.classList.remove("on"); });
 
-document.getElementById("dl").onclick = async () => {
+document.getElementById("dl").onclick = () => {
+  // A plain Blob download, deliberately: declaring the downloads capability
+  // stops the page being shared, and a page his supervisor cannot open is worth
+  // nothing however nicely it saves files. Some sandboxes block this silently,
+  // which is why the copy box below is always on screen rather than a fallback
+  // he has to go looking for.
   const btn = document.getElementById("dl");
-  if(!window.claude || !window.claude.downloads){
-    btn.textContent = "Download unavailable — please copy below";
-    return;
-  }
   try{
-    await window.claude.downloads.save({
-      filename: "gabriel-verdicts.json", data: payload()
-    });
-    btn.textContent = "Saved to your Downloads — now email it to __RETURN_TO__";
+    const blob = new Blob([payload()], {type:"text/plain;charset=utf-8"});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = "review-answers.txt";
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(()=>URL.revokeObjectURL(url), 4000);
+    btn.textContent = "Saved — now email it to __RETURN_TO__";
   }catch(err){
-    btn.textContent = (err && err.code === "declined")
-      ? "Download cancelled — or copy below"
-      : "Download failed — please copy below";
+    btn.textContent = "Download blocked — please copy the text below instead";
   }
 };
 document.getElementById("copy").onclick = async () => {
   const ta = document.getElementById("out");
   try{
     await navigator.clipboard.writeText(ta.value);
-    document.getElementById("copy").textContent = "Copied";
+    document.getElementById("copy").textContent = "Copied — now paste it into an email";
   }catch(e){
     ta.select();
     document.getElementById("copy").textContent = "Press Cmd/Ctrl+C";
