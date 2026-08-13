@@ -55,3 +55,18 @@ def test_the_sheet_never_reveals_a_verdict_before_it_is_asked_for():
         assert word not in visible
     assert "that is an uncertainty" not in visible, "the judge's reason must stay hidden too"
     assert "does NOT support" in html, "but it must be there once opened"
+
+
+def test_the_sheet_says_a_paper_missing_from_his_list_is_not_our_error():
+    """His gold was computed by filtering the pilot export -- graph-agreement,
+    not physics truth. A reviewer meeting an unfamiliar paper would naturally
+    read it as our mistake, which would convert every genuine discovery into a
+    false positive and make the sheet unable to measure what it is for."""
+    items = [{"qid": "gf-05", "question": "q", "paper_id": "p1", "quote": "x" * 40,
+              "candidates": [], "_machine": True, "_judge": True, "_why": "w",
+              "_by": "stage-1", "row": 1}]
+    with tempfile.TemporaryDirectory() as d:
+        html = RV.write_html(items, pathlib.Path(d) / "s.html", "t").read_text()
+    assert "your own list does not contain" in html
+    assert "not automatically our error" in html
+    assert "against your list" in html

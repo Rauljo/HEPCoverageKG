@@ -257,6 +257,26 @@ def write_html(items: list[dict], path: Path | str, title: str) -> Path:
         "<p>Some items say <b>we found no evidence</b>. For those we list the closest "
         "sentences we did find — if none of them shows it, answer no; if one plainly "
         "does, we missed it, which is just as useful to know.</p>",
+        # THE FRAMING THAT DECIDES WHETHER THIS SHEET IS WORTH ANYTHING.
+        #
+        # His gold was computed by filtering his pilot export -- his own header
+        # says it is graph-agreement, not physics truth. So a paper our reader
+        # claims and his list does not contain is NOT a known error. It is the
+        # single most informative item in the set: either we over-found, or his
+        # export missed something, and he is the only one who can say which.
+        #
+        # Without this said plainly, a reviewer meeting an unfamiliar paper
+        # naturally reads it as our mistake and marks it down -- which would
+        # quietly convert every genuine discovery into a false positive and make
+        # the sheet incapable of measuring the thing it was built for.
+        "<p><b>Many of these will be papers your own list does not contain.</b> That "
+        "is deliberate, and it is the part we most need you on. Your answers were "
+        "computed by filtering the pilot export, so a paper we cite and you did not "
+        "list is not automatically our error — it may equally be something that "
+        "export missed. Please judge <b>the sentence against the paper</b>, not "
+        "against your list.</p>",
+        "<p>Questions are independent — stopping after any one of them still gives "
+        "us a usable measurement for the ones you finished.</p>",
     ]
     for qid in sorted(by_q):
         group = by_q[qid]
