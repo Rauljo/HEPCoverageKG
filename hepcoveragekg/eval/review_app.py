@@ -147,6 +147,8 @@ textarea{width:100%;margin-top:.6rem;padding:.5rem .65rem;border:1px solid var(-
 .card{background:var(--surface);border-radius:13px;padding:1.4rem;max-width:38rem;width:100%;
       box-shadow:0 12px 40px rgba(0,0,0,.3);max-height:88vh;overflow:auto}
 .card h3{margin:.1rem 0 .6rem}
+.warnbox{background:var(--accent-soft);border-left:3px solid var(--unsure);
+         padding:.65rem .85rem;border-radius:0 7px 7px 0;font-size:.92rem;margin:.7rem 0}
 .out{width:100%;min-height:11rem;font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace}
 @media (prefers-reduced-motion:reduce){*{transition:none!important;scroll-behavior:auto!important}}
 </style>
@@ -157,7 +159,7 @@ textarea{width:100%;margin-top:.6rem;padding:.5rem .65rem;border:1px solid var(-
     <span class="count"><span id="n">0</span><small>/__TOTAL__ answered</small></span>
     <span class="track"><span class="fill" id="fill"></span></span>
     <span class="saved" id="saved">saved in this browser</span>
-    <button class="primary" id="finish">Send answers back</button>
+    <button class="primary" id="finish">Finish &amp; get my answers file</button>
   </div>
 </header>
 
@@ -182,8 +184,9 @@ textarea{width:100%;margin-top:.6rem;padding:.5rem .65rem;border:1px solid var(-
       ours — that is the whole point of asking you.</p>
     <p><b>Nothing is lost if you stop.</b> Every click is saved in this browser as you
       go, and the questions are independent — a half-finished set is still a usable
-      measurement for the questions it covers. Press <b>Send answers back</b> whenever
-      you like.</p>
+      measurement for the questions it covers. Press <b>Finish &amp; get my answers
+      file</b> whenever you like — it hands you a small file to email back to
+      __RETURN_TO__.</p>
     <p class="keyk">Keyboard: <kbd>y</kbd> yes · <kbd>n</kbd> no · <kbd>u</kbd> unsure ·
       <kbd>j</kbd>/<kbd>k</kbd> or <kbd>↓</kbd>/<kbd>↑</kbd> move · <kbd>r</kbd> reveal ·
       <kbd>?</kbd> notes</p>
@@ -193,8 +196,11 @@ textarea{width:100%;margin-top:.6rem;padding:.5rem .65rem;border:1px solid var(-
 
 <div class="done-panel" id="panel">
   <div class="card">
-    <h3 id="panel-title">Send your answers back</h3>
+    <h3 id="panel-title">Getting your answers back to __RETURN_TO__</h3>
     <p id="panel-msg">This is everything you have marked so far.</p>
+    <p class="warnbox"><b>This page cannot send anything on its own</b> — it has no
+      connection to __RETURN_TO__'s machine. Please download the file (or copy the text)
+      and email it back, otherwise the answers stay on this computer.</p>
     <button class="primary" id="dl">Download the file</button>
     <button id="copy">Copy to clipboard</button>
     <button id="close" style="float:right">Close</button>
@@ -411,7 +417,7 @@ document.getElementById("finish").onclick = () => {
   document.getElementById("panel-msg").textContent =
     n === ITEMS.length
       ? `All ${n} answered — thank you, this is exactly what we needed.`
-      : `${n} of ${ITEMS.length} answered. Partial is genuinely useful: every question you finished is a usable measurement, and you can come back to the rest later.`;
+      : `${n} of ${ITEMS.length} answered. Partial is genuinely useful: every question you finished is a usable measurement, and you can come back to the rest later — this page remembers where you were.`;
   document.getElementById("out").value = payload();
   panel.classList.add("on");
 };
@@ -428,7 +434,7 @@ document.getElementById("dl").onclick = async () => {
     await window.claude.downloads.save({
       filename: "gabriel-verdicts.json", data: payload()
     });
-    btn.textContent = "Saved — please email it back";
+    btn.textContent = "Saved to your Downloads — now email it to __RETURN_TO__";
   }catch(err){
     btn.textContent = (err && err.code === "declined")
       ? "Download cancelled — or copy below"
@@ -460,8 +466,17 @@ def _b64(text: str) -> str:
 
 
 def write_app(items: list[dict], path: Path | str, title: str,
-              version: str = "v1") -> Path:
-    """One self-contained page: click yes/no/unsure, get one file back."""
+              version: str = "v1", return_to: str = "Raul") -> Path:
+    """One self-contained page: click yes/no/unsure, get one file back.
+
+    `return_to` is named in the page because the page cannot send anything. It
+    has no network path back to us -- the download is a local file save that the
+    viewer must accept -- so the last step is a human emailing a file. The first
+    version of this called its button "Send answers back", which promised a
+    transmission that does not exist: he would have clicked it, closed the panel,
+    believed he was finished, and we would have waited on answers already sitting
+    in his Downloads folder.
+    """
     payload = []
     for i in items:
         quotes = i.get("quotes") or ([i["quote"]] if i.get("quote") else [])
@@ -489,7 +504,8 @@ def write_app(items: list[dict], path: Path | str, title: str,
             .replace("__ITEMS__", blob)
             .replace("__TOTAL__", str(len(items)))
             .replace("__VERSION__", version)
-            .replace("__TITLE__", title))
+            .replace("__TITLE__", title)
+            .replace("__RETURN_TO__", return_to))
     path = Path(path)
     path.write_text(html, encoding="utf-8")
     return path

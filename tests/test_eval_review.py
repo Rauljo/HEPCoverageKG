@@ -136,3 +136,19 @@ def test_the_app_keeps_the_framing_about_his_list():
     assert "your own list does not contain" in flat
     assert "not automatically our error" in flat
     assert "judge <b>the sentence against the paper</b>, not against your list" in flat
+
+
+def test_the_app_never_claims_to_send_anything():
+    """It has no network path back to us: the download is a local file save the
+    viewer must accept. A button reading "Send answers back" would have him
+    click it, close the panel, believe he was done, and leave us waiting on
+    answers already sitting in his Downloads folder."""
+    from hepcoveragekg.eval import review_app as RA
+    with tempfile.TemporaryDirectory() as d:
+        html = RA.write_app(_app_items(), pathlib.Path(d) / "a.html", "t",
+                            return_to="Raul").read_text()
+    flat = " ".join(html.split())
+    assert "cannot send anything on its own" in flat
+    assert "email it back" in flat
+    assert ">Send answers back<" not in flat
+    assert "__RETURN_TO__" not in flat, "the placeholder must be substituted"
