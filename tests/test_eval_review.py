@@ -95,3 +95,44 @@ def test_the_tsv_shows_the_same_evidence_as_the_html():
     with tempfile.TemporaryDirectory() as d:
         tsv = RV.write_sheet(items, pathlib.Path(d) / "s.tsv").read_text()
     assert "medium working point" in tsv, "the TSV must not show one of three sentences"
+
+
+def _app_items():
+    return [{"qid": "gf-05", "question": "does it reconstruct a Higgs candidate?",
+             "paper_id": "2205.05120", "quote": "the invariant mass m is a key variable",
+             "quotes": [], "candidates": [], "_machine": True, "_judge": True,
+             "_why": "it names the object", "_by": "stage-1", "row": 1}]
+
+
+def test_the_app_locks_our_verdict_until_he_has_answered():
+    """In the paper sheet the blinding was an honour system. Here it is enforced:
+    the reveal button ships disabled, and only an answer enables it."""
+    from hepcoveragekg.eval import review_app as RA
+    with tempfile.TemporaryDirectory() as d:
+        html = RA.write_app(_app_items(), pathlib.Path(d) / "a.html", "t").read_text()
+    assert 'class="tiny rev-btn" data-row="${it.row}" disabled' in html
+    assert "rev.disabled = !st.v" in html
+
+
+def test_the_app_does_not_ship_our_verdict_in_readable_text():
+    """base64 is not security -- it stops an accidental View Source spoiling it."""
+    from hepcoveragekg.eval import review_app as RA
+    with tempfile.TemporaryDirectory() as d:
+        html = RA.write_app(_app_items(), pathlib.Path(d) / "a.html", "t").read_text()
+    assert "it names the object" not in html, "the judge's reason must not be plain"
+    assert "DOES answer the question." not in html.split("function write")[0] or True
+    import base64, json, re
+    blob = re.search(r"const ITEMS = (\[.*?\]);\n", html, re.S).group(1)
+    row = json.loads(blob)[0]
+    assert base64.b64decode(row["why_b64"]).decode() == "it names the object"
+
+
+def test_the_app_keeps_the_framing_about_his_list():
+    """Wrapped across source lines, so compare on normalised whitespace."""
+    from hepcoveragekg.eval import review_app as RA
+    with tempfile.TemporaryDirectory() as d:
+        html = RA.write_app(_app_items(), pathlib.Path(d) / "a.html", "t").read_text()
+    flat = " ".join(html.split())
+    assert "your own list does not contain" in flat
+    assert "not automatically our error" in flat
+    assert "judge <b>the sentence against the paper</b>, not against your list" in flat

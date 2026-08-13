@@ -31,6 +31,7 @@ import sqlite3
 from pathlib import Path
 
 from hepcoveragekg.eval import review as RV
+from hepcoveragekg.eval import review_app as RA
 from hepcoveragekg.eval import supervisor as S
 from hepcoveragekg.kg import store
 
@@ -108,10 +109,13 @@ def main() -> int:
     RV.write_key(items, out / "ANSWER_KEY.jsonl")
     RV.write_html(items, out / "gabriel-review.html",
                   "HEPCoverageKG — does the paper say this?")
+    RA.write_app(items, out / "gabriel-review-app.html",
+                 "Does the paper say this?", version="v1")
     machine = sum(1 for i in items if i["_machine"])
     print(f"\n  {len(items)} items: {machine} we claimed, {len(items) - machine} we did not")
     print(f"  -> {out}/gabriel-review.html")
     print(f"  -> {out}/gabriel-review.tsv")
+    print(f"  -> {out}/gabriel-review-app.html  (the clickable one)")
     print(f"  -> {out}/ANSWER_KEY.jsonl  (kept OUT of the sheet)")
     return 0
 
