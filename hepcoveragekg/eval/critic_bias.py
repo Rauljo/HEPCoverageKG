@@ -238,14 +238,25 @@ def measure(chat: Callable, index, conn, cases: Sequence[Case]) -> dict[str, Arm
 #             order makes that worse: the weakest candidates arrive together in
 #             the last chunk, so one forced keep per chunk inflates every count.
 
+# The all-keep cases must be searches whose hits really ARE all the same thing.
+# The first attempt used "jet energy scale" and failed at 63% -- correctly: BM25
+# returns `electron-energy-scale`, `tau-h-energy-scale` and
+# `unclustered-energy-scale` for it, and those are genuinely different
+# systematics. The critic was right and the CONTROL was wrong. Generator names
+# are safe in a way systematic names are not, because the graph holds one entity
+# per version and tune of a single named program.
 CONTROLS = [
     # (name, question, search text, what a working critic must return)
     ("all-keep", "Which analyses use the Pythia generator?", "Pythia", "keep"),
-    ("all-keep", "Which analyses apply a jet energy scale uncertainty?",
-     "jet energy scale", "keep"),
+    ("all-keep", "Which analyses use the Sherpa generator?", "Sherpa", "keep"),
     ("all-drop", "Which analyses use the Pythia generator?", "jet energy scale", "drop"),
     ("all-drop", "Which analyses apply a jet energy scale uncertainty?",
      "Pythia", "drop"),
+    # The one the first run failed on, kept as a THIRD kind of case: a family
+    # question where the near-neighbours are different members of that family.
+    # Neither all-keep nor all-drop -- what it must not do is keep everything.
+    ("mixed-family", "Which analyses apply a jet energy scale uncertainty?",
+     "jet energy scale", "mixed"),
 ]
 
 
@@ -259,13 +270,18 @@ def run_controls(chat: Callable, index, conn, *, limit: int = 30) -> str:
         hits = retrieve.search(index, text, conn=conn, limit=limit)
         review = C.judge_candidates(chat, question, text, hits)
         rate = len(review.kept_ids) / max(len(review.verdicts), 1)
-        ok = rate >= 0.9 if expected == "keep" else rate <= 0.1
+        if expected == "keep":
+            ok = rate >= 0.9
+        elif expected == "drop":
+            ok = rate <= 0.1
+        else:                      # mixed: must discriminate, not answer wholesale
+            ok = 0.1 < rate < 0.9
         verdict &= ok
         lines.append(
             f"{'PASS' if ok else 'FAIL'}  {name:9s} kept {len(review.kept_ids):3d}/"
             f"{len(review.verdicts):3d} ({rate:5.1%})   q={question[:44]!r} "
             f"search={text!r}")
-        if not ok:
+        if not ok and expected in ("keep", "drop"):
             # the verdicts that broke it: unexpected drops, or unexpected keeps
             wanted_kept = expected == "keep"
             worst = [v for v in review.verdicts if v.kept != wanted_kept][:3]

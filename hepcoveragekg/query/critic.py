@@ -183,12 +183,19 @@ WIDER than the question on purpose, because the graph stores one entity per \
 version, tune and spelling. A candidate can match the search perfectly and still \
 be a wrong answer to the question.
 
-For each candidate give one of:
+Judge each candidate against THE QUESTION, not against the search. A candidate the search found perfectly well can still be unrelated to what was asked.
+
   "exact"      -- it is the thing the question is about
-  "broader"    -- the right family, but wider or less specific than the question
-                  asked. This is the usual verdict for something that matches
-                  the search text but not the question.
-  "unrelated"  -- a neighbour the search dragged in; not what was asked about
+  "broader"    -- THE SAME KIND OF THING as the question asks about, but wider or
+                  less specific. "Pythia" for a question about Pythia 8. Not for
+                  a question about something else entirely.
+  "unrelated"  -- not what was asked about. Use this whenever the candidate is a
+                  DIFFERENT KIND OF THING from the question (a generator when a
+                  systematic uncertainty was asked about), or a different member
+                  of the same family (electron energy scale when the question is
+                  about jet energy scale).
+
+Be decisive. If your "why" says the candidate is not what was asked, then the rung is "unrelated" -- not "broader". "broader" is only for a genuine generalisation of the thing asked about.
 
 CANDIDATES:
 {candidates}
