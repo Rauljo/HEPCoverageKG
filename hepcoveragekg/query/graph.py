@@ -167,6 +167,13 @@ def execute(state: PlannerState, config=None) -> PlannerState:
             session.stopped_because = f"answered ({claimed})"
             return state
 
+        # Papers handed to an entity tool go to `contents_of` before the id
+        # guard sees them -- the guard's correction is right for entities and
+        # sent 14.2% of Tier A into a false "not in the graph" (see
+        # planner.resolve_paper_calls).
+        asked_for = name
+        name, args, redirect = planner.resolve_paper_calls(name, args)
+
         unknown = [] if (args.get("object_set") or args.get("entity_set")) \
             else planner._check_ids(args, session.known_entity_ids)
         if unknown:
@@ -188,15 +195,19 @@ def execute(state: PlannerState, config=None) -> PlannerState:
             body = planner._render_rows(result.rows, state["max_rows"])
             if result.note:
                 body += f"\n[{result.note}]"
+            if redirect:
+                body += f"\n[{redirect}]"
             session.steps.append(planner.Step(state["round"], name, args,
                                               rows=len(result.rows), seconds=elapsed,
-                                              preview=body[:200]))
+                                              preview=body[:200],
+                                              redirected_from=asked_for if redirect else None))
             state["messages"].append({"role": "tool", "tool_call_id": call["id"],
                                       "content": body})
         except Exception as exc:  # noqa: BLE001 -- the planner must see any failure
             elapsed = time.perf_counter() - started
             session.steps.append(planner.Step(state["round"], name, args,
-                                              error=str(exc)[:200], seconds=elapsed))
+                                              error=str(exc)[:200], seconds=elapsed,
+                                              redirected_from=asked_for if redirect else None))
             state["messages"].append({"role": "tool", "tool_call_id": call["id"],
                                       "content": f"ERROR: {exc}"})
     return state

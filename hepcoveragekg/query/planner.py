@@ -349,6 +349,11 @@ class Step:
     error: Optional[str] = None
     seconds: float = 0.0
     preview: str = ""
+    # The tool the model actually asked for, when the call was rewritten before
+    # it ran. Recorded rather than swallowed: a redirect that leaves no trace
+    # would make the planner look as though it had chosen correctly, and tool
+    # selection is something this project measures (S-49).
+    redirected_from: Optional[str] = None
 
 
 @dataclass
@@ -473,7 +478,8 @@ class Session:
                          for t in self.thoughts],
             "steps": [
                 {"round": s.round, "tool": s.tool, "args": s.args, "rows": s.rows,
-                 "error": s.error, "seconds": round(s.seconds, 4)}
+                 "error": s.error, "seconds": round(s.seconds, 4),
+                 **({"redirected_from": s.redirected_from} if s.redirected_from else {})}
                 for s in self.steps
             ],
         }, ensure_ascii=False)
@@ -547,6 +553,87 @@ def _recover_tool_calls(content: str) -> list:
 # Arguments that must name entities the graph already returned.
 _ID_ARGS = ("entity_ids", "object_ids", "subject_a", "subject_b")
 
+# A paper, written either way. The graph holds papers as entities -- 60 of them,
+# `hepkg:paper:arxiv:2308.02285`, labelled with the title -- so the planner is
+# not wrong to reach for one by id. What it cannot know is that the paper NODE
+# is thin: it is the subject of 2 assertions (`paper_reports_result`), while the
+# paper itself contains 187. The other 185 hang off `assertion.paper_id`, which
+# only `contents_of` reads.
+_ARXIV_ID = re.compile(r"^\d{4}\.\d{4,5}$")
+PAPER_ID_PREFIX = "hepkg:paper:arxiv:"
+
+# Which entity tool means which `contents_of` call when handed a paper.
+_PAPER_REDIRECT = {"describe": "entity_ids", "count": "object_ids"}
+
+
+def _paper_arxiv(value: Any) -> Optional[str]:
+    """The arXiv id this argument names, if it names a paper at all."""
+    if not isinstance(value, str):
+        return None
+    if _ARXIV_ID.match(value):
+        return value
+    if value.startswith(PAPER_ID_PREFIX):
+        rest = value[len(PAPER_ID_PREFIX):]
+        return rest if _ARXIV_ID.match(rest) else None
+    return None
+
+
+def resolve_paper_calls(tool: str, args: dict) -> tuple[str, dict, Optional[str]]:
+    """Send a paper handed to an entity tool where papers actually live.
+
+    Measured on the 1,352 Tier A questions: **192 sessions (14.2%) died here**,
+    and 94.8% of them abstained against 0.9% everywhere else. The chain was
+    always the same, and the guards drove it:
+
+        describe(entity_ids=["2308.02285"])   -> unknown_entity_id
+        UNKNOWN_ID_MESSAGE: "call `search` FIRST ... use the exact entity_id"
+        search("2308.02285")                  -> 0 rows
+        "The graph does not contain any information about 2308.02285."
+
+    Every step is the model doing as it was told. `_check_ids` is right that the
+    id was never returned by a search; the correction it gives is right for
+    entities and wrong for papers, and nothing in the chain mentions the one tool
+    that takes an arXiv id directly. The result is the worst answer this project
+    can produce -- a false claim about coverage, with a clean trace.
+
+    Two rules, and the second matters more than it looks:
+
+      a paper id is not an invented id. It is verifiable by shape and usually
+          came from the question itself, so `_check_ids` lets it through. If the
+          paper is not in the corpus the tool returns no rows, which is honest.
+
+      `describe`/`count` on a paper become `contents_of`. Without this, making
+          papers findable would be WORSE than the bug: the planner would search,
+          get the real paper entity, describe it, receive 2 rows, and answer
+          "this analysis measures 2 observables" -- confidently, from 2 of 187
+          facts. That trades a visible abstention for a silent wrong number.
+
+    Returns the tool and arguments to run, plus a note recording the rewrite when
+    one happened. The note is deliberate: the redirect must not hide the
+    confusion, because "the planner treats papers as ordinary entities" is a
+    finding about tool selection (S-49), not just a bug to paper over.
+    """
+    id_arg = _PAPER_REDIRECT.get(tool)
+    if not id_arg:
+        return tool, args, None
+
+    value = args.get(id_arg)
+    if value is None or args.get("object_set") or args.get("entity_set"):
+        return tool, args, None
+    values = [value] if isinstance(value, str) else list(value)
+    papers = [_paper_arxiv(v) for v in values]
+    if not values or not all(papers):
+        return tool, args, None  # mixed or not papers at all -- leave it alone
+
+    rewritten = {"paper_ids": papers}
+    if args.get("predicate"):
+        rewritten["predicate"] = args["predicate"]
+    return "contents_of", rewritten, (
+        f"{tool} was called on a paper, so it ran as contents_of("
+        f"paper_ids={papers}) -- papers are entities here, but the paper NODE "
+        f"holds only its results; everything else in the paper is reached this way."
+    )
+
 
 def _check_ids(args: dict, known: set[str]) -> list[str]:
     """Ids in this call that the graph never returned.
@@ -560,6 +647,9 @@ def _check_ids(args: dict, known: set[str]) -> list[str]:
     and the model cannot always tell which it has. The prompt says so in words;
     this says so in a way that cannot be overlooked. A wrong answer becomes a
     corrective message instead.
+
+    Papers are exempt: `_paper_arxiv` recognises them by shape, so they need no
+    prior search to be legitimate -- see `resolve_paper_calls`.
     """
     unknown: list[str] = []
     for name in _ID_ARGS:
@@ -567,8 +657,11 @@ def _check_ids(args: dict, known: set[str]) -> list[str]:
         if value is None:
             continue
         for candidate in ([value] if isinstance(value, str) else value):
-            if isinstance(candidate, str) and candidate not in known:
-                unknown.append(candidate)
+            if not isinstance(candidate, str) or candidate in known:
+                continue
+            if _paper_arxiv(candidate):
+                continue
+            unknown.append(candidate)
     return unknown
 
 

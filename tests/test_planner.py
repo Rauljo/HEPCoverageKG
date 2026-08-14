@@ -514,3 +514,84 @@ def test_ids_are_recognised_from_every_column_a_template_returns():
     rows = [{"object_id": "hepkg:generator:pythia8"}, {"subject_id": "hepkg:sample:ttbar"}]
     found = planner._collect_ids(rows, "")
     assert found == {"hepkg:generator:pythia8", "hepkg:sample:ttbar"}
+
+
+# -- papers are entities, but thin ones -------------------------------------
+
+def test_a_paper_id_is_not_an_invented_id():
+    """The invented-id guard exists to stop `gen-223`, not to stop a citation.
+
+    A paper id is verifiable by shape and usually came from the question itself,
+    so it needs no prior search to be legitimate. Before this, `_check_ids`
+    rejected it and the correction it gave -- "call search FIRST" -- sent the
+    planner to a search that cannot succeed, because papers are indexed under
+    their titles.
+    """
+    assert planner._check_ids({"entity_ids": ["2308.02285"]}, set()) == []
+    assert planner._check_ids(
+        {"entity_ids": ["hepkg:paper:arxiv:2308.02285"]}, set()) == []
+    assert planner._check_ids({"entity_ids": ["gen-223"]}, set()) == ["gen-223"]
+
+
+def test_describe_on_a_paper_becomes_contents_of():
+    """Both spellings of a paper, and the predicate carried across."""
+    for written in ("2308.02285", "hepkg:paper:arxiv:2308.02285"):
+        tool, args, note = planner.resolve_paper_calls(
+            "describe", {"entity_ids": [written], "predicate": "result_measures_observable"})
+        assert tool == "contents_of"
+        assert args == {"paper_ids": ["2308.02285"],
+                        "predicate": "result_measures_observable"}
+        assert note and "contents_of" in note
+
+
+def test_the_redirect_leaves_a_trace(conn, index):
+    """A rewrite that hid itself would make the planner look as though it had
+    chosen the right tool, and tool selection is something we measure."""
+    chat = scripted(
+        _response([_call("describe", {"entity_ids": ["2308.02285"]})]),
+        _response([_call("answer", {"text": "x", "answerable": True, "reason": "answered"})]),
+    )
+    s = planner.answer(conn, index, "q", chat=chat)
+    step = s.steps[0]
+    assert step.tool == "contents_of" and step.redirected_from == "describe"
+    assert '"redirected_from": "describe"' in s.to_jsonl()
+
+
+def test_only_calls_that_are_wholly_about_papers_are_redirected():
+    """A mixed list is the planner doing something else; leave it alone."""
+    tool, args, note = planner.resolve_paper_calls(
+        "describe", {"entity_ids": ["2308.02285", "hepkg:generator:pythia8"]})
+    assert tool == "describe" and note is None
+    tool, _, _ = planner.resolve_paper_calls("subjects_of", {"object_ids": ["2308.02285"]})
+    assert tool == "subjects_of", "only describe/count mean contents_of"
+
+
+def test_a_paper_is_findable_by_its_arxiv_id(tmp_path):
+    """The paper carries its TITLE as the label and its arXiv id in
+    `external_ids`, so indexing labels alone left 60 papers searchable by title
+    and invisible by id -- while the module docstring claims arXiv ids are
+    exactly what the sparse half is here to catch."""
+    db = tmp_path / "x.db"
+    c = sqlite3.connect(db)
+    c.executescript(
+        """
+        CREATE TABLE entity_occurrence (
+            bundle_id TEXT, entity_id TEXT, paper_id TEXT, kind TEXT,
+            label TEXT, aliases TEXT DEFAULT '[]', external_ids TEXT DEFAULT '{}');
+        CREATE TABLE entity_canonical (entity_id TEXT PRIMARY KEY, canonical_id TEXT);
+        INSERT INTO entity_occurrence VALUES
+            ('b1','hepkg:paper:arxiv:2308.02285','2308.02285','paper',
+             'Measurement of the associated production of a Z boson','[]',
+             '{"arxiv":"2308.02285"}');
+        """
+    )
+    c.commit(); c.close()
+    conn = T.read_only(db)
+    idx = R.build(conn, embed=False)
+    hits = R.search(idx, "2308.02285", conn=conn, limit=10)
+    assert [h.entity_id for h in hits] == ["hepkg:paper:arxiv:2308.02285"]
+
+
+def test_an_index_without_external_ids_still_builds(conn):
+    """Older databases predate the column; the query layer must not hard-fail."""
+    assert len(R.build(conn, embed=False)) > 0

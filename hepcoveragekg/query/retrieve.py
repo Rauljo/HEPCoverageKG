@@ -162,16 +162,39 @@ def _surface_forms(conn) -> Iterable[tuple[str, str, str]]:
 
     Reads `entity_occurrence` so that every wording any paper used is reachable,
     not only the modal label kept on `entity`.
+
+    `external_ids` is indexed alongside the labels, and the case that forced it
+    is papers: a paper entity carries its TITLE as the label and its arXiv id in
+    `external_ids`, so before this the 60 papers were findable by title and
+    invisible by id. `search("2308.02285")` returned nothing about a paper that
+    is plainly in the graph -- and the docstring above already claims arXiv ids
+    are the sort of exact token BM25 is here to catch.
+
+    Safe because an external id is a rare exact string: it matches its own
+    entity and nothing else. Measured on the pilot, `top squark`,
+    `Higgs boson candidate` and `Pythia` return 0 paper-kind hits in 60, because
+    long titles lose to short exact labels under BM25 length normalisation.
     """
+    columns = {r[1] for r in conn.execute("PRAGMA table_info(entity_occurrence)")}
+    has_external = "external_ids" in columns
+    select = "SELECT entity_id, kind, label, aliases"
+    if has_external:
+        select += ", external_ids"
+
     seen: set[tuple[str, str]] = set()
-    for r in conn.execute(
-        "SELECT entity_id, kind, label, aliases FROM entity_occurrence"
-    ):
+    for r in conn.execute(f"{select} FROM entity_occurrence"):
         forms = [r["label"]]
         try:
             forms.extend(json.loads(r["aliases"] or "[]"))
         except (TypeError, ValueError):
             pass
+        if has_external:
+            try:
+                external = json.loads(r["external_ids"] or "{}")
+            except (TypeError, ValueError):
+                external = {}
+            if isinstance(external, dict):
+                forms.extend(v for v in external.values() if isinstance(v, str))
         for form in forms:
             if not form or not str(form).strip():
                 continue
