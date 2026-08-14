@@ -1244,3 +1244,110 @@ nothing 206 times. Independent of the critic, and cheap to fix.
 rungs the critic is supposed to pick between, and `-dirty` means the sha does not identify the code
 that produced them anyway. Re-baseline on today's code before the critic exists, or this repeats
 D-059's pattern of changing several things and then measuring.
+
+### D-060 addendum — two sites, and the second one never filters
+Judging `search` alone covers half of what S-69 asks for. The two failures are
+symmetric: **too fine** is `search` drowning in string matches (the supervisor's Q5),
+**too coarse** is a facet key standing in for a question that needed the variant. Only the
+first is guarded by a critic on `search`.
+
+*The facets site is a LABEL READER, not a filter.* Six papers carry
+`background_methods = ABCD` and describe six different methods -- Modified; ABCD data-driven;
+ABCD-style ratio over eight regions (A-H); two-dimensional sideband over CRs B, C, D; ABCD
+(matrix); multidimensional reweighting. *"How many use a data-driven estimate?"* is **6**.
+*"How many use the standard four-region ABCD?"* is **not 6**. Both answers come from those same
+six rows, and the difference is entirely in reading the labels against the question -- which the
+tool's own note asks the planner to do and then leaves to hope.
+
+**Nothing is removed there, unlike at `search`.** At `search`, `unrelated` means the candidate is
+not the thing (Herwig in a Pythia set) and dropping it loses nothing. At `facets` every match is
+genuine: the tag is right and only the variant differs -- and *for a coverage map the variants are
+the finding*. "There are at least five distinct ways this literature does ABCD" is the kind of
+answer this project exists to produce, and narrowing to the two that match as asked would destroy
+it. So a `broader` verdict is a **lead, not a demotion**: it names how the paper differs, which is
+directly usable as the next query, and the summary says to follow it with `facet_entities` or
+`contents_of`. (The user's correction; the original design had it filtering.)
+
+*A retraction*: the claim that this catches the Tier B 0.058 is **not established**. That was
+measured on the `search` path before facets existed. What S-69 warns about is a critic that
+*chooses* the facet rung when the question needed a finer one -- a rung-**selection** failure. The
+remedy is the same either way: notice the facet level does not answer the question, and say
+*go finer*, with the labels as the map.
+
+### D-060 addendum — relevance is not only about matching, and mostly it is not the judge's job
+Prompted by the question "why only judge `search`?". **40% of all tool results are truncated at 25
+rows** -- `subjects_of` 87% (139,878 rows hidden), `crosstab` 95%, `search` 71% -- and the 25 shown
+are the first 25 in SQL order, which has nothing to do with the question.
+
+But an LLM judge is the right instrument for only one of three situations:
+
+| situation | example | instrument |
+|---|---|---|
+| the question is "how many" | 160 analyses that all use Pythia | `count`, in SQL. Nothing to judge |
+| more relevant rows than fit | 187 rows from `contents_of` | rank the truncation, or filter by predicate |
+| membership is genuinely ambiguous | is this Pythia? is this ABCD? | **the critic** |
+
+*Traced case, which decided it.* **"How many analyses estimate the t̄t+γ background?"** -- true
+answer **1**. `search` returned 60 backgrounds (γ+jets, Multiboson, Wt, Z+X, Z+jets, W+jets, tWZ,
+ttW, tZq...), expansion gave 78 ids, `subjects_of` returned **142 rows**, 25 were shown. **141 were
+wrong**, and they were wrong because the SET was wrong -- the hop faithfully returned the analyses
+that estimate those other backgrounds. Filter the set and the hop returns one row; truncation stops
+existing.
+
+**And judging those rows was impossible anyway**: not one of the 142 named the background it was
+about. `subjects_of` returned subject, kind and predicate, never the matched object. So a judge --
+or a BM25 re-ranking, which was the plan -- would have been reading evidence that did not contain
+the answer. Fixed: the hop now returns `matched`, as `facets` already did. The tally reads
+`10 $t\bar{t}$ · 10 Diboson · 8 Z/γ*+jets`, which makes the failure legible instead of invisible.
+
+*Consequence*: relevance-ordered truncation drops down the list -- it cannot rank rows that carry no
+discriminating text -- and **filtering the set is confirmed as the root fix**, with a worked case
+that turns 142 rows into 1.
+
+### D-061 (2026-08-14) — the corpus does not saturate, so the search cap does not survive
+Measured on the pilot, subsampling 5/10/20/30/40/50/60 papers (five random subsets each) -- the
+growth-curve item S-47 B, partly answered:
+
+| papers | entities | new per paper |
+|---|---|---|
+| 5 | 459 | |
+| 10 | 983 | 104.7 |
+| 20 | 1,791 | 80.8 |
+| 30 | 2,639 | 84.8 |
+| 40 | 3,529 | 88.9 |
+| 60 | 5,114 | 87.1 |
+
+**No saturation.** The marginal rate at 60 papers is the rate at 10. The reason is that the
+vocabulary is paper-local: **only 1-22% of entities appear in more than one paper** -- `result` 0%,
+`event_region` 1%, `observable` 2%, `systematic_uncertainty` 8%, `generator` 22%. Extrapolated to
+the 2,969-paper corpus: **~255,000 entities**, fifty times today.
+
+What grows is not new physics but **new spellings of the same physics**. 78% of generator entities
+are paper-local wordings of a handful of generators.
+
+Three consequences, only one of which is a real problem:
+
+1. *The widening RULE survives* -- "widen while the tail is still relevant" is a stopping condition,
+   not a number, and does not care about corpus size.
+2. *The CAP does not.* `MAX_SEARCH_BREADTH = 240` is a rounding error against a concept with
+   thousands of spellings. It is env-overridable and must never be read as a considered value at
+   scale.
+3. *The cost model breaks, and that is the real issue.* Judging 5,000 candidates at chunk 15 is
+   **333 model calls for one search**. But scanning is the wrong algorithm: the goal is not to label
+   every candidate, it is to find **where relevance dies**, which is a boundary. Bisect it -- probe
+   at 240, 1,000, 4,000 and narrow -- for `log(n)` calls instead of `n/15`. Exhaustive scanning is
+   only right while the whole list fits in a handful of calls, which at 60 papers it does.
+   *Caveat*: bisection assumes relevance falls off monotonically with rank. It roughly does -- that
+   is what ranking means -- so a boundary should be confirmed with a chunk either side rather than
+   trusted from one probe.
+
+**Deliberately not built now.** The corpus is 60 papers, the cap does not bind at that size, and
+building for a corpus we do not have is guessing dressed as rigour. The ceiling counter (64.8% of
+Tier B searches came back exactly full) is what will say *when* it starts to hurt.
+
+**The conclusion that matters is not about search at all.** If 1,500 entities are mostly rewrites of
+the same few generators, they should have been merged before search ever saw them. Merging today is
+**7%** (5,114 -> 4,772). At 60 papers that is a quality issue; at 3,000 it decides whether a concept
+search is 30 clusters or 1,500. *Deduplication quality becomes the binding constraint on everything
+above it* -- a far stronger argument for the aliases work than tidiness, and it raises the stakes on
+the discovered-grouping rung ([[discovered-grouping-layer]]) too.

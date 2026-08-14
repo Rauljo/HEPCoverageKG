@@ -194,7 +194,7 @@ is exact ground truth for it (S-32). The thing to resist is starting with Gabrie
 - [ ] **Measure alias precision properly** (D-044) — a random labelled sample, not 14 eyeballed. Then decide the human gate.
 - [ ] **Metamorphic checks** (S-34) — paraphrase invariance, monotonicity, inclusion–exclusion, order invariance. Violations are guaranteed bugs, no labels.
 - [ ] **Stability / repeat sampling** (S-52).
-- [ ] **Growth curve, subsample version** (S-47 B) — subsets of 10/20/…/60 of the existing 60. No dependencies. Answers "is 2% coverage enough to say anything?"
+- [~] **Growth curve, subsample version** (S-47 B) — **entity half done (D-061): no saturation, ~86 new entities/paper flat from 10 to 60, because only 1–22% of entities appear in more than one paper.** Extrapolates to ~255k entities at 2,969 papers. Still open: the *answer-quality* half — does accuracy change with corpus size?
 - [ ] **Hops-to-node** (S-48) — Recall@k + MRR, stratified by rare/common, many-spellings/one, **merged/singleton** (tests whether dedup helps or hurts retrieval).
 - [ ] **Tool-selection + tool-necessity tests** (S-49) — remove a tool, see if it routes around; unused tools are a finding.
 - [ ] **Ablations** (S-36) — dedup, BM25/dense/RRF, guards, `SEARCH_BREADTH` 6/20/60, `PURPOSE` full vs minimal. Settles the open aliases and breadth questions **with evidence**.
