@@ -1136,3 +1136,111 @@ hours. Found only because the *replacement* server job vanished from the queue. 
 portable supervisor loop plus a pre-flight reap of our own stale processes. Related: `chmod +x` is
 itself a tracked change and was rejecting every `git pull` on the cluster; `core.fileMode` is now
 off there.
+
+---
+
+### D-060 (2026-08-14) — the query critic: flag the candidates, and let it widen the search
+The relevance step S-69 asked for, now specified. It sits between retrieval and use: `search`
+returns candidates, the critic marks which bear on **this** question, and the planner proceeds. It
+is the query critic, not Sunny's extraction panel ([[multi-agent-extension]]) — a different object
+at a different stage.
+
+**Why it is needed, in one path.** `search("Pythia")` takes the top `SEARCH_BREADTH` hits and saves
+*all* of them as `set_1`; `count(set_1)` then treats every one as part of the concept. Nothing
+between retrieval and use asks whether a hit belongs. That is the Tier B 0.058 failure — 60
+near-neighbours counted as one thing — and it cannot be fixed with a score cutoff, because the
+cutoff that saves `Pythia` (rank 20 at 50% of the best hit, still a real Pythia) destroys
+`top squark` (rank 20 at 71%, already "single top"). Only something that reads the question can
+separate those.
+
+**Decided:**
+
+1. **Flag, never filter, in stage 1.** A wrong discard is silent — nothing in the trace shows what
+   was removed (D-016, D-018). `set_N` keeps every candidate; a second handle `set_N_kept` holds the
+   survivors. Filtering is a later switch, turned on only once flags agree with what answers use,
+   and it doubles as the ablation arm.
+2. **Three rungs, not a binary.** `exact` / `broader` / `unrelated`. Binary cannot tell the two
+   failures apart that S-69 requires both of: Tier B errs **too coarse**, the supervisor's Q5 errs
+   **too fine**. Collapsing to binary for scoring stays available; recovering the direction later
+   does not.
+3. **Same model as the planner** for now. Different-family (S-37) is an ablation, not a
+   prerequisite; a second endpoint costs GPUs we do not have spare.
+4. **Ranked order, chunked — not shuffled.** Shuffling makes position bias measurable but
+   *relocates* the lost-in-the-middle risk onto the best candidate, which is a real cost paid for
+   measurement convenience. Chunks of ~15 are the actual mitigation: lost-in-the-middle is a
+   long-context effect, and each chunk is judged in its own call, so a rank-50 candidate is assessed
+   against the question rather than against rank 1 at the top of the same prompt.
+5. **Bias is measured, not assumed away** — three arms on a sample: shuffle A vs shuffle B (pure
+   position bias), ranked vs shuffled (how far the critic is merely restating the retriever), chunk
+   15 vs 60 (whether chunking earns its calls). The middle arm is the one that matters: if verdicts
+   barely move, we built an expensive restatement of BM25.
+6. **Both controls, in both directions.** *All-keep*: a search narrow enough that every hit belongs
+   — if the critic can never say "keep them all" it is hedging, not judging (the AgentRivet lesson,
+   [[multi-agent-extension]]). *All-drop*: a chunk where nothing belongs — ranked order puts the
+   weakest candidates together in the last chunk, so a model that feels obliged to keep something
+   per chunk inflates every count downstream by roughly one item per chunk. Both gate everything
+   after them.
+7. **A verdict moves a cluster, not an entity.** `concept` expands the seed hits through
+   `expand_canonical`, so the set handed to `count` is larger than the hit list and contains ids the
+   critic never saw. `set_N_kept` is therefore the *expansion of the kept seeds*. Dropping one seed
+   drops its cluster-mates with it — correct, since deduplication already ruled them the same thing,
+   but it makes each verdict weigh more than one row and the trace must say so.
+8. **Breadth becomes a stopping rule, not a constant.** `SEARCH_BREADTH = 60` is admitted in its own
+   comment to be a guess, and it exists only because everything retrieved gets used. Once a
+   relevance step exists, over-retrieval costs one line of prompt instead of a wrong count. So:
+   retrieve 60; if the list came back **exactly full** *and* the keep-rate in the **last** chunk is
+   still high, fetch the next 60. The trigger is relevance **at the tail**, not the overall keep
+   count — a search where all 60 are relevant is the most truncated case there is, and a rule that
+   widens "when not all were relevant" would stop there and widen on `top squark` instead, which is
+   junk all the way down.
+9. **Flagging may be strict; widening must be generous.** A wrongly-flagged candidate is still in
+   `set_N` and still in the trace. A candidate never retrieved is gone, and nothing downstream can
+   recover it. Different steps, different failure costs. The stop decision is logged with its tail
+   keep-rate so a run can be audited for "stopped because the tail was junk" versus "stopped because
+   the critic was harsh".
+
+**How it is scored** — the three tiers map onto the experiment cleanly. **Tier B is the treatment**
+(concept counting runs `search` → set → count; if the critic does not move Tier B it does not work).
+**Tier A is the control** — per-paper questions go through `contents_of`, so the critic has no
+business changing them, and a Tier A move is a bug signal. **Retrieval is the mechanism**:
+precision@k on the same hit lists, which is also where the named-vs-described gap lives (0.893 vs
+0.335). The supervisor's Tier 1 is a *direction* check only, not a scoreboard — its gold is
+graph-agreement gold, so a critic that correctly drops what his pipeline kept loses points for being
+right.
+
+**Sufficiency is a second critic, and it lives beside `verify.py`, not inside it.** Different
+question: `verify` asks "did every number come from a retrieved row", which is mechanical because
+97% of assertions carry their verbatim sentence, and that mechanical-ness is its entire claim.
+"Is this evidence *enough*" admits no such rule. Two checks at the `finish` seam reporting
+separately keeps both claims; folding an LLM into `verify` would forfeit the strong one. It catches
+what `verify` structurally cannot — answering from 3 rows when 60 existed, reasoning over the 25
+rows `_render_rows` showed as though they were all 200, and cheap `not_in_graph` abstention after a
+single phrasing. Flag-only, and measured on the abstention tier rather than Tier B. Built **after**
+the candidate critic, which has a measured failure attached to it.
+
+### D-060 addendum — the ceiling already binds, measured before any code
+Scanned every `search` step in `eval/runs/` for hit lists that came back exactly full, which is an
+exact truncation signal needing no LLM:
+
+| question set | searches | hit the 60 ceiling |
+|---|---|---|
+| conceptB (Tier B) | 458 | **297 — 64.8%** |
+| conceptB reworded | 470 | 288 — 61.3% |
+| retrieval | 788 | 429 — 54.4% |
+| retrieval reworded | 524 | 106 — 20.2% |
+| paperA (Tier A) | 218 | 1 — 0.5% |
+
+**Two thirds of Tier B searches are truncated**, so the ceiling is not a footnote and the stopping
+rule in decision 8 is load-bearing rather than a refinement. `jet energy scale` has 109 clusters
+against a limit of 60, and the trace of that loss looks like a clean successful search.
+
+**Tier A confirms itself as the control** at 0.5% — and surfaces an unrelated bug: **206 of its 218
+searches returned zero rows, and the search text was an arXiv id** (`search("2604.27044")`). The
+planner is searching for papers, which `contents_of` explicitly tells it not to do, and getting
+nothing 206 times. Independent of the critic, and cheap to fix.
+
+**The baselines cannot be reused.** Every run above is `6945b02-dirty`, and the one commit to touch
+`query/` since is `7ad9cd6` — the facet layer and both facet tools. So the numbers predate the
+rungs the critic is supposed to pick between, and `-dirty` means the sha does not identify the code
+that produced them anyway. Re-baseline on today's code before the critic exists, or this repeats
+D-059's pattern of changing several things and then measuring.
