@@ -67,6 +67,20 @@ DEFAULT_MAX_ROWS = 25
 # change answer. Guessing harder now would only look like rigour.
 SEARCH_BREADTH = 60
 
+# The ceiling on widening, when a critic is present to say the tail is still
+# relevant (D-060). Without a critic nothing widens and `SEARCH_BREADTH` is the
+# whole story.
+#
+# A stop is still needed, for two reasons that are not about cost. The
+# retriever's tail eventually becomes the corpus -- the broadest concepts run to
+# 192 entities and there is no rank at which BM25 declines to answer -- and each
+# doubling is another round of critic calls whose verdicts feed the decision to
+# double again. 240 is four doublings from 60 and comfortably past the largest
+# concept measured (`jet energy scale`, 109 clusters); a search that wants more
+# than that is a question about the whole corpus, which `crosstab` and `facets`
+# answer better than a widening search ever will.
+MAX_SEARCH_BREADTH = int(os.environ.get("SEARCH_BREADTH_MAX", 240))
+
 # Hard cap on one completion. Without it a single call can run to the context
 # limit, and on 2026-08-02 that stalled an evaluation run for an hour on one
 # question ("How many analyses define the object Electron?").
@@ -414,6 +428,12 @@ class Session:
     # Filled by the graph's `finish` node, so no answer leaves unchecked.
     verification: Any = None
 
+    # One `critic.Review` per search, when the critic is on. Kept whole rather
+    # than reduced to a count: the ablation needs to know WHICH candidates were
+    # flagged down and why, and a drop that leaves no trace is the failure the
+    # flag-never-filter rule exists to prevent (D-060).
+    reviews: list = field(default_factory=list)
+
     # Every literal value that came back from a tool, for the faithfulness check
     # (S-14). Accumulated as results arrive rather than reconstructed afterwards:
     # results are truncated before they enter the context, so replaying the steps
@@ -482,6 +502,15 @@ class Session:
                  **({"redirected_from": s.redirected_from} if s.redirected_from else {})}
                 for s in self.steps
             ],
+            **({"reviews": [
+                {"search_text": r.search_text, "tally": r.tally,
+                 "kept": len(r.kept_ids), "candidates": len(r.verdicts),
+                 "defaulted": r.defaulted, "calls": r.calls, "errors": r.errors,
+                 "tail_keep_rate": r.tail_keep_rate(),
+                 "dropped": [{"entity_id": v.entity_id, "why": v.reason}
+                             for v in r.verdicts if not v.kept]}
+                for r in self.reviews
+            ]} if self.reviews else {}),
         }, ensure_ascii=False)
 
 
@@ -699,13 +728,20 @@ def _render_rows(rows: list[dict], max_rows: int) -> str:
     return "\n".join(lines)
 
 
-def build_executor(conn, index, sets: Optional[dict] = None) -> Callable[[str, dict], Any]:
+def build_executor(conn, index, sets: Optional[dict] = None,
+                   critic: Optional[Callable] = None) -> Callable[[str, dict], Any]:
     """Bind the tools to this database, index and set of named results.
 
     Returned as a closure so the planner never holds a connection itself and
     cannot be handed a writable one by accident.
+
+    `critic` is `(search_text, hits) -> critic.Review` and defaults to OFF, so
+    the baseline arm of the ablation is literally this code with nothing passed
+    -- there is no second branch to keep in step with the first. When present it
+    marks each hit's rung and saves a second handle; it never removes anything
+    (D-060).
     """
-    from hepcoveragekg.query import retrieve, templates
+    from hepcoveragekg.query import critic as critic_mod, retrieve, templates
 
     sets = {} if sets is None else sets
 
@@ -736,20 +772,58 @@ def build_executor(conn, index, sets: Optional[dict] = None) -> Callable[[str, d
             limit = SEARCH_BREADTH
             hits = retrieve.search(index, args["text"], conn=conn,
                                    kind=args.get("kind"), limit=limit)
-            ids = retrieve.concept(index, args["text"], conn=conn,
-                                   kind=args.get("kind"), limit=limit)
-            name = f"set_{len(sets) + 1}"
-            sets[name] = ids
             # `facets` is included on every hit that has one. This is how the
             # model learns which closed-vocabulary key covers a concept -- from
             # an entity that demonstrably exists, rather than from a vocabulary
             # list in the prompt. Shipping the list instead would have put five
             # of the seven Tier 1 gold keys into the system prompt (D-054).
+            review = critic(args["text"], hits) if critic else None
+
+            # WIDEN WHILE THE TAIL IS STILL RELEVANT (D-060).
+            #
+            # `limit` exists only because everything retrieved gets used, so a
+            # junk candidate becomes a wrong count. With a relevance step it
+            # costs one line of prompt instead, and the ceiling can move.
+            #
+            # It binds hard: 297 of 458 Tier B searches (64.8%) came back
+            # EXACTLY full, measured before any of this existed. `jet energy
+            # scale` has 109 clusters against a limit of 60, and the trace of
+            # those 49 losses looks like a clean successful search.
+            #
+            # Widening is not undoable the way flagging is -- a candidate never
+            # retrieved cannot be recovered downstream -- so the threshold is
+            # generous even though the flagging is not.
+            widened = 0
+            while (review is not None
+                   and critic_mod.should_widen(review, len(hits), limit)
+                   and limit < MAX_SEARCH_BREADTH):
+                limit = min(limit * 2, MAX_SEARCH_BREADTH)
+                wider = retrieve.search(index, args["text"], conn=conn,
+                                        kind=args.get("kind"), limit=limit)
+                if len(wider) <= len(hits):
+                    break            # the retriever had no more to give
+                hits = wider
+                review = critic(args["text"], hits, refresh=True)
+                widened += 1
+
+            # `retrieve.concept` is `search` + `expand_canonical`, and the hits
+            # are already in hand -- calling it here re-ran BM25 and the dense
+            # encoder over the whole index a second time for every search, to
+            # arrive at the list above. Expanding directly is the same result at
+            # half the retrieval cost, which the widening loop above multiplies.
+            ids = templates.expand_canonical(conn, [h.entity_id for h in hits])
+            name = f"set_{len(sets) + 1}"
+            sets[name] = ids
+            rungs = ({v.entity_id: v for v in review.verdicts} if review else {})
+
             rows = []
             for h in hits:
                 row = {"entity_id": h.entity_id, "label": h.label, "kind": h.kind}
                 if h.facets:
                     row["facets"] = h.facets
+                verdict = rungs.get(h.entity_id)
+                if verdict is not None:
+                    row["bears_on"] = verdict.rung
                 rows.append(row)
             tagged = sum(1 for h in hits if h.facets)
             note = (f"saved as {name} ({len(ids)} entities, canonical clusters expanded). "
@@ -757,6 +831,32 @@ def build_executor(conn, index, sets: Optional[dict] = None) -> Callable[[str, d
             if tagged:
                 note += (f" {tagged}/{len(hits)} hits carry facet tags; those keys are"
                          " what the `facets` tool takes.")
+            if review is not None:
+                # A verdict moves a CLUSTER, not an entity. `concept` expands the
+                # seed hits through `expand_canonical`, so `set_N` is larger than
+                # the hit list and holds ids the critic never saw. The kept set
+                # must therefore be the expansion of the kept SEEDS -- taking a
+                # subset of `ids` would keep cluster-mates of dropped seeds and
+                # silently undo the judgement. Dedup already ruled those the same
+                # thing, so they travel together in both directions.
+                kept = templates.expand_canonical(conn, review.kept_ids) \
+                    if review.kept_ids else []
+                sets[f"{name}_kept"] = kept
+                tally = review.tally
+                if widened:
+                    # Said out loud for the same reason truncation is: a planner
+                    # that cannot tell a widened search from a normal one will
+                    # reason about breadth it never had.
+                    note += (f" The first {SEARCH_BREADTH} candidates were still"
+                             f" relevant at the tail, so the search was widened to"
+                             f" {limit} and re-judged.")
+                note += (
+                    f" RELEVANCE: {tally[critic_mod.EXACT]} exact,"
+                    f" {tally[critic_mod.BROADER]} broader,"
+                    f" {tally[critic_mod.UNRELATED]} unrelated."
+                    f" {name} still holds everything; {name}_kept holds the"
+                    f" {len(kept)} entities judged to bear on the question."
+                )
             return templates.QueryResult(shape="search", rows=rows, note=note)
         if tool == "describe":
             return templates.describe(conn, ids_for(args, "entity_ids", "entity_set"),
@@ -775,12 +875,25 @@ def build_executor(conn, index, sets: Optional[dict] = None) -> Callable[[str, d
             values = args.get("values") or args.get("value") or []
             if isinstance(values, str):
                 values = [values]
-            return templates.facets(
+            result = templates.facets(
                 conn, args["field"], values,
                 mode=args.get("mode", "all"),
                 category=args.get("category"),
                 experiment=args.get("experiment"),
             )
+            # The label reader, NOT a filter. Every paper stays in `result.rows`
+            # -- the tag is right for all of them and only the variant differs,
+            # and for a coverage map those variants are the finding. What gets
+            # added is a reading of how each paper's own words relate to the
+            # question, which both answers a narrow question and says where to
+            # look next.
+            if critic and result.rows:
+                reading = critic.read_facets(args["field"], values, result.rows)
+                if reading is not None:
+                    summary = critic_mod.facet_summary(reading)
+                    if summary:
+                        result.note = f"{result.note} {summary}".strip()
+            return result
         if tool == "facet_entities":
             value = args.get("value")
             if isinstance(value, list):      # a values=[...] slip; one key is meant
@@ -833,8 +946,79 @@ def _client():
     ), os.environ.get("LLM_MODEL_NAME", "Qwen/Qwen2.5-72B-Instruct-AWQ")
 
 
+def _build_critic(question: str, session: Session, use_critic):
+    """The candidate critic, bound to this question -- or None, which is OFF.
+
+    OFF is the default everywhere, so the ablation's control arm is this code
+    path with nothing switched on rather than a second implementation that has
+    to be kept in step (D-060).
+
+    `use_critic` may be a ready-made callable (a stub, or a different-family
+    model as the S-37 ablation), or True to build one on the planner's own
+    endpoint. Verdicts are cached per search text: a planner that searches the
+    same words twice in one session should not pay twice.
+    """
+    if not use_critic:
+        return None
+
+    from hepcoveragekg.query import critic as critic_mod
+
+    if callable(use_critic):
+        judge = use_critic
+    else:
+        client, model = _client()
+
+        def judge(search_text, hits):
+            def chat(messages):
+                return client.chat.completions.create(
+                    model=model, messages=messages, temperature=0.0,
+                    max_tokens=MAX_COMPLETION_TOKENS)
+
+            return critic_mod.judge_candidates(chat, question, search_text, hits)
+
+    def _chat(messages):
+        return client.chat.completions.create(
+            model=model, messages=messages, temperature=0.0,
+            max_tokens=MAX_COMPLETION_TOKENS)
+
+    seen: dict[str, Any] = {}
+
+    def review(search_text: str, hits, refresh: bool = False) -> Any:
+        """`refresh` re-judges the same words over a WIDER candidate list.
+
+        The cache is keyed on the search text alone, which is right for a
+        planner that searches the same words twice -- and wrong for the widening
+        loop, where the words are identical and the candidates are not. Without
+        the flag a widened search would be handed back the verdicts for the
+        narrower list it has just replaced, and `should_widen` would read a tail
+        that no longer exists.
+        """
+        if not refresh and search_text in seen:
+            return seen[search_text]
+        result = judge(search_text, hits)
+        if search_text in seen:
+            session.reviews.remove(seen[search_text])
+        seen[search_text] = result
+        session.reviews.append(result)
+        return result
+
+    def read_facets(field: str, values, rows) -> Any:
+        """The facets site. Reads labels; removes nothing (D-060 addendum)."""
+        if callable(use_critic) and not hasattr(use_critic, "read_facets"):
+            return None          # a stub supplied for the search site only
+        reader = getattr(use_critic, "read_facets", None)
+        result = (reader(field, values, rows) if reader
+                  else critic_mod.read_facet_labels(_chat, question, field, values, rows))
+        if result is not None:
+            session.reviews.append(result)
+        return result
+
+    review.read_facets = read_facets
+    return review
+
+
 def _prepare(conn, index, question, max_rounds, max_places, max_rows,
-             minimal_prompt, chat, thread_id):
+             minimal_prompt, chat, thread_id, use_critic=None):
     """The state and runtime config a run needs. Shared by answer() and stream()."""
     session = Session(question=question)
     if chat is None:
@@ -860,7 +1044,8 @@ def _prepare(conn, index, question, max_rounds, max_places, max_rows,
     runtime = {
         "thread_id": thread_id,
         "chat": chat,
-        "execute": build_executor(conn, index, session.sets),
+        "execute": build_executor(conn, index, session.sets,
+                                  critic=_build_critic(question, session, use_critic)),
         "tools": [{"type": "function", "function": spec} for spec in TOOL_SPECS],
     }
     config = {"configurable": runtime, "recursion_limit": max_rounds * 3 + 6}
@@ -878,6 +1063,7 @@ def stream(
     chat: Optional[Callable] = None,
     checkpointer: Any = None,
     thread_id: str = "default",
+    use_critic: Any = None,
 ):
     """Yield `(node_name, session)` after each node completes.
 
@@ -889,7 +1075,7 @@ def stream(
 
     session, state, config = _prepare(conn, index, question, max_rounds,
                                       max_places, max_rows, minimal_prompt,
-                                      chat, thread_id)
+                                      chat, thread_id, use_critic)
     started = time.perf_counter()
     app = graph_module.build(checkpointer=checkpointer)
     for update in app.stream(state, config=config, stream_mode="updates"):
@@ -910,6 +1096,7 @@ def answer(
     chat: Optional[Callable] = None,
     checkpointer: Any = None,
     thread_id: str = "default",
+    use_critic: Any = None,
 ) -> Session:
     """Answer one question, returning the answer and the whole trace.
 
@@ -929,7 +1116,7 @@ def answer(
     started = time.perf_counter()
     session, state, config = _prepare(conn, index, question, max_rounds,
                                       max_places, max_rows, minimal_prompt,
-                                      chat, thread_id)
+                                      chat, thread_id, use_critic)
     graph_module.build(checkpointer=checkpointer).invoke(state, config=config)
 
     session.seconds = time.perf_counter() - started

@@ -595,3 +595,81 @@ def test_a_paper_is_findable_by_its_arxiv_id(tmp_path):
 def test_an_index_without_external_ids_still_builds(conn):
     """Older databases predate the column; the query layer must not hard-fail."""
     assert len(R.build(conn, embed=False)) > 0
+
+
+# -- widening, when the tail is still relevant ------------------------------
+
+def _keeping(rung):
+    """A critic stub that gives every candidate the same rung."""
+    from hepcoveragekg.query import critic as C
+
+    def judge(search_text, hits, refresh=False):
+        return C.Review(question="q", search_text=search_text,
+                        verdicts=[C.Verdict(h.entity_id, rung) for h in hits])
+    return judge
+
+
+def test_a_saturated_search_widens_and_a_junk_one_does_not(conn, index, monkeypatch):
+    """The ceiling binds on 64.8% of Tier B searches, so this is the difference
+    between answering over 60 of 109 clusters and over all of them."""
+    from hepcoveragekg.query import critic as C
+
+    seen_limits = []
+    real = R.search
+
+    def spy(idx, text, conn=None, kind=None, limit=50):
+        seen_limits.append(limit)
+        # pretend the retriever always has more to give
+        return [SimpleNamespace(entity_id=f"e{i}", label=f"thing {i}",
+                                kind="generator", facets=[]) for i in range(limit)]
+
+    monkeypatch.setattr(R, "search", spy)
+    execute = planner.build_executor(conn, index, {}, critic=_keeping(C.EXACT))
+    execute("search", {"text": "jet energy scale"})
+    assert seen_limits[0] == planner.SEARCH_BREADTH
+    assert max(seen_limits) > planner.SEARCH_BREADTH, "a relevant tail must widen"
+    assert max(seen_limits) <= planner.MAX_SEARCH_BREADTH
+
+    seen_limits.clear()
+    execute = planner.build_executor(conn, index, {}, critic=_keeping(C.UNRELATED))
+    execute("search", {"text": "top squark"})
+    assert seen_limits == [planner.SEARCH_BREADTH], "a junk tail must not widen"
+    monkeypatch.setattr(R, "search", real)
+
+
+def test_nothing_widens_without_a_critic(conn, index, monkeypatch):
+    """Breadth only becomes a stopping rule when something can read the tail."""
+    seen = []
+    monkeypatch.setattr(R, "search", lambda idx, text, conn=None, kind=None, limit=50:
+                        (seen.append(limit) or
+                         [SimpleNamespace(entity_id=f"e{i}", label=f"t{i}",
+                                          kind="generator", facets=[])
+                          for i in range(limit)]))
+    planner.build_executor(conn, index, {})("search", {"text": "anything"})
+    assert seen == [planner.SEARCH_BREADTH]
+
+
+def test_the_kept_set_is_the_expansion_of_the_kept_seeds(conn, index):
+    """A verdict moves a CLUSTER. Taking a subset of the expanded set instead
+    would keep the cluster-mates of dropped seeds and undo the judgement."""
+    from hepcoveragekg.query import critic as C
+
+    def judge(search_text, hits, refresh=False):
+        return C.Review(question="q", search_text=search_text,
+                        verdicts=[C.Verdict(h.entity_id, C.UNRELATED) for h in hits])
+
+    sets = {}
+    planner.build_executor(conn, index, sets, critic=judge)("search", {"text": "Pythia"})
+    assert sets["set_1"], "the full set keeps everything"
+    assert sets["set_1_kept"] == [], "and the kept set drops the whole cluster"
+
+
+def test_the_critic_marks_rows_and_leaves_the_set_whole(conn, index):
+    from hepcoveragekg.query import critic as C
+
+    sets = {}
+    result = planner.build_executor(
+        conn, index, sets, critic=_keeping(C.BROADER))("search", {"text": "Pythia"})
+    assert all(row["bears_on"] == C.BROADER for row in result.rows)
+    assert "still holds everything" in result.note
+    assert len(sets["set_1"]) >= len(sets["set_1_kept"])

@@ -229,13 +229,24 @@ def subjects_of(conn, predicate: str, object_ids: str | list[str]) -> QueryResul
 
     Returns entities, not papers -- so the result can be fed straight into
     another hop. Use `papers_of` when the chain is finished.
+
+    **`matched` says WHICH object the row came back for**, and without it the
+    result is unreadable whenever the set holds more than one thing. Traced on a
+    real question -- *"how many analyses estimate the t̄t+γ background?"*, true
+    answer 1 -- a search returned 60 backgrounds (γ+jets, Z+jets, Wt, ttW, ...),
+    the hop faithfully returned 142 rows for them, and **not one row named the
+    background it was about**. 141 were wrong and nothing in the output could
+    say which. `facets` already returns the labels that caused its match for
+    exactly this reason; this is the same fix on the other hop.
     """
     ids = expand_canonical(conn, object_ids)
     sql = (
         "SELECT DISTINCT a.assertion_id AS assertion_id, a.subject_id AS entity_id,"
-        "       es.label AS label, es.kind AS kind, a.predicate AS predicate"
+        "       es.label AS label, es.kind AS kind, a.predicate AS predicate,"
+        "       eo.label AS matched"
         "  FROM assertion a"
         "  LEFT JOIN entity es ON es.entity_id = a.subject_id"
+        "  LEFT JOIN entity eo ON eo.entity_id = a.object_id"
         " WHERE a.predicate = ?"
         f"   AND a.object_id IN ({_placeholders(len(ids))})"
         " ORDER BY es.label"
