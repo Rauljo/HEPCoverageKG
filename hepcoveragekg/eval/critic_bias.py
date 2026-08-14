@@ -219,3 +219,104 @@ def measure(chat: Callable, index, conn, cases: Sequence[Case]) -> dict[str, Arm
         "shuffleB": run_arm(chat, index, conn, cases, name="shuffleB", seed=97),
         "chunk60": run_arm(chat, index, conn, cases, name="chunk60", chunk=60),
     }
+
+
+# ---------------------------------------------------------------------------
+# The two controls, built from the graph itself.
+# ---------------------------------------------------------------------------
+#
+# These GATE the arms above: a flip rate means nothing from a critic that cannot
+# produce both extreme answers.
+#
+#   all-keep  a question and a search that agree exactly, so every candidate
+#             belongs. A critic that still drops some is hedging rather than
+#             judging -- AgentRivet's Claude-Opus never once returned "approved"
+#             even when instructed to.
+#
+#   all-drop  a question and a search about DIFFERENT things, so no candidate
+#             belongs. A critic that keeps some is filling a quota, and ranked
+#             order makes that worse: the weakest candidates arrive together in
+#             the last chunk, so one forced keep per chunk inflates every count.
+
+CONTROLS = [
+    # (name, question, search text, what a working critic must return)
+    ("all-keep", "Which analyses use the Pythia generator?", "Pythia", "keep"),
+    ("all-keep", "Which analyses apply a jet energy scale uncertainty?",
+     "jet energy scale", "keep"),
+    ("all-drop", "Which analyses use the Pythia generator?", "jet energy scale", "drop"),
+    ("all-drop", "Which analyses apply a jet energy scale uncertainty?",
+     "Pythia", "drop"),
+]
+
+
+def run_controls(chat: Callable, index, conn, *, limit: int = 30) -> str:
+    """Can the critic say "all of them" and "none of them"?"""
+    from hepcoveragekg.query import retrieve
+
+    lines = ["controls (these gate everything else)", "=" * 60]
+    verdict = True
+    for name, question, text, expected in CONTROLS:
+        hits = retrieve.search(index, text, conn=conn, limit=limit)
+        review = C.judge_candidates(chat, question, text, hits)
+        rate = len(review.kept_ids) / max(len(review.verdicts), 1)
+        ok = rate >= 0.9 if expected == "keep" else rate <= 0.1
+        verdict &= ok
+        lines.append(
+            f"{'PASS' if ok else 'FAIL'}  {name:9s} kept {len(review.kept_ids):3d}/"
+            f"{len(review.verdicts):3d} ({rate:5.1%})   q={question[:44]!r} "
+            f"search={text!r}")
+        if not ok:
+            # the verdicts that broke it: unexpected drops, or unexpected keeps
+            wanted_kept = expected == "keep"
+            worst = [v for v in review.verdicts if v.kept != wanted_kept][:3]
+            for v in worst:
+                lines.append(f"          e.g. {v.entity_id[:44]}: {v.reason[:60]}")
+    lines.append("")
+    lines.append("GATE: " + ("passed -- the arms below are meaningful"
+                            if verdict else
+                            "FAILED -- fix the prompt before reading anything else"))
+    return "\n".join(lines)
+
+
+def main(argv=None) -> int:
+    """Run the controls, then the four ordering arms, and print both."""
+    import argparse
+    import os
+    import sqlite3
+
+    from hepcoveragekg.query import planner, retrieve, templates
+
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--db", default="data/processed/hepkg.db")
+    ap.add_argument("--run", default="eval/runs/20260803T234732-hepkg-48227.jsonl",
+                    help="a trace to take real planner-authored search texts from")
+    ap.add_argument("--cases", type=int, default=DEFAULT_CASES)
+    ap.add_argument("--out", default="")
+    args = ap.parse_args(argv)
+
+    conn = templates.read_only(args.db)
+    index = retrieve.build(conn, embed=False)
+    client, model = planner._client()
+
+    def chat(messages):
+        return client.chat.completions.create(
+            model=model, messages=messages, temperature=0.0,
+            max_tokens=planner.MAX_COMPLETION_TOKENS)
+
+    report_text = run_controls(chat, index, conn)
+    print(report_text, flush=True)
+
+    cases = load_cases(args.run, args.cases)
+    print(f"\n{len(cases)} real search texts from {args.run}\n", flush=True)
+    arms = measure(chat, index, conn, cases)
+    report_text += "\n\n" + report(arms)
+    print(report(arms), flush=True)
+
+    if args.out:
+        Path(args.out).write_text(report_text)
+        print(f"\nwritten to {args.out}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
