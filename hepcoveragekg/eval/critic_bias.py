@@ -238,35 +238,55 @@ def measure(chat: Callable, index, conn, cases: Sequence[Case]) -> dict[str, Arm
 #             order makes that worse: the weakest candidates arrive together in
 #             the last chunk, so one forced keep per chunk inflates every count.
 
-# The all-keep cases must be searches whose hits really ARE all the same thing.
-# The first attempt used "jet energy scale" and failed at 63% -- correctly: BM25
-# returns `electron-energy-scale`, `tau-h-energy-scale` and
-# `unclustered-energy-scale` for it, and those are genuinely different
-# systematics. The critic was right and the CONTROL was wrong. Generator names
-# are safe in a way systematic names are not, because the graph holds one entity
-# per version and tune of a single named program.
+# WHY THE ALL-KEEP CASE CANNOT COME FROM A SEARCH.
+#
+# Three attempts failed, and each time the CRITIC was right and the CONTROL was
+# wrong:
+#   "jet energy scale"            -> also returns electron-, tau-h- and
+#                                    unclustered-energy-scale: different
+#                                    systematics
+#   "Sherpa"                      -> also returns the samples generated with it
+#   "Sherpa", kind=generator      -> still returns `Powheg + Herwig 7`,
+#                                    `OpenLoops` and `Comix`
+#
+# That is not bad luck. A search returns an impure set BY CONSTRUCTION -- it is
+# the whole reason this module's subject exists -- so no search can be the source
+# of a set where every candidate must be kept.
+#
+# So the all-keep candidates come from a CANONICAL CLUSTER instead: entities the
+# aliases layer has already adjudicated as the same thing. If the critic drops a
+# cluster-mate it is disagreeing with a merge this project already accepted, and
+# that is a finding either way -- either the critic is wrong, or the merge was.
+ALL_KEEP_CLUSTERS = [
+    ("Which analyses include a pileup modelling uncertainty?",
+     "pileup uncertainty", "hepkg:systematic:pileup"),
+    ("Which analyses use proton-proton collisions at 13 TeV?",
+     "proton-proton collisions 13 TeV", "hepkg:collision_system:pp-13tev"),
+]
+
 CONTROLS = [
-    # (name, question, search text, expected, kind)
-    #
-    # The all-keep cases pin `kind`, because without it no search returns a
-    # homogeneous set: "Sherpa" also finds the SAMPLES generated with Sherpa and
-    # "Pythia" also finds systematics derived from varying it. Those are real
-    # evidence for the question and must not be dropped -- but whether they are
-    # "the generator" is a judgement call, which is precisely what a control
-    # must not contain. Pinning the kind removes the ambiguity from the CONTROL
-    # while leaving it in the arms, where it belongs.
-    ("all-keep", "Which analyses use the Pythia generator?", "Pythia", "keep", "generator"),
-    ("all-keep", "Which analyses use the Sherpa generator?", "Sherpa", "keep", "generator"),
+    # (name, question, search text, expected, kind) -- search-derived cases only
     ("all-drop", "Which analyses use the Pythia generator?", "jet energy scale",
      "drop", None),
     ("all-drop", "Which analyses apply a jet energy scale uncertainty?",
      "Pythia", "drop", None),
-    # The one the first run failed on, kept as a THIRD kind of case: a family
-    # question where the near-neighbours are different members of that family.
-    # Neither all-keep nor all-drop -- what it must not do is keep everything.
+    # A family question whose near-neighbours are other members of that family.
+    # Neither all-keep nor all-drop: what it must not do is answer wholesale.
     ("mixed-family", "Which analyses apply a jet energy scale uncertainty?",
      "jet energy scale", "mixed", None),
 ]
+
+
+def cluster_hits(conn, canonical_id: str):
+    """Every entity the aliases layer merged into one canonical id."""
+    from types import SimpleNamespace
+
+    rows = conn.execute(
+        "SELECT e.entity_id, e.label, e.kind FROM entity e"
+        "  JOIN entity_canonical ec ON ec.entity_id = e.entity_id"
+        " WHERE ec.canonical_id = ?", (canonical_id,)).fetchall()
+    return [SimpleNamespace(entity_id=r["entity_id"], label=r["label"],
+                            kind=r["kind"], facets=[]) for r in rows]
 
 
 def run_controls(chat: Callable, index, conn, *, limit: int = 30) -> str:
@@ -275,8 +295,16 @@ def run_controls(chat: Callable, index, conn, *, limit: int = 30) -> str:
 
     lines = ["controls (these gate everything else)", "=" * 60]
     verdict = True
-    for name, question, text, expected, kind in CONTROLS:
-        hits = retrieve.search(index, text, conn=conn, limit=limit, kind=kind)
+
+    cases = [(q, t, cluster_hits(conn, cid), "keep", "all-keep")
+             for q, t, cid in ALL_KEEP_CLUSTERS]
+    cases += [(q, t, retrieve.search(index, t, conn=conn, limit=limit, kind=k),
+               exp, name) for name, q, t, exp, k in CONTROLS]
+
+    for question, text, hits, expected, name in cases:
+        if not hits:
+            lines.append(f"SKIP  {name:9s} no candidates for {text!r}")
+            continue
         review = C.judge_candidates(chat, question, text, hits)
         rate = len(review.kept_ids) / max(len(review.verdicts), 1)
         if expected == "keep":
