@@ -185,17 +185,17 @@ be a wrong answer to the question.
 
 Judge each candidate against THE QUESTION, not against the search. A candidate the search found perfectly well can still be unrelated to what was asked.
 
-  "exact"      -- it is the thing the question is about
-  "broader"    -- THE SAME KIND OF THING as the question asks about, but wider or
-                  less specific. "Pythia" for a question about Pythia 8. Not for
-                  a question about something else entirely.
-  "unrelated"  -- not what was asked about. Use this whenever the candidate is a
-                  DIFFERENT KIND OF THING from the question (a generator when a
-                  systematic uncertainty was asked about), or a different member
-                  of the same family (electron energy scale when the question is
-                  about jet energy scale).
+  "exact"      -- counting it would answer the question. It is the thing asked
+                  about, OR it is direct evidence of it.
+  "broader"    -- it is a wider or less specific version of the thing asked
+                  about: "Pythia" for a question about Pythia 8.
+  "unrelated"  -- counting it would NOT help answer the question: a different
+                  thing entirely, or a different member of the same family
+                  (electron energy scale when jet energy scale was asked about).
 
-Be decisive. If your "why" says the candidate is not what was asked, then the rung is "unrelated" -- not "broader". "broader" is only for a genuine generalisation of the thing asked about.
+The bracketed word after each candidate is its record type in the database. IGNORE IT when deciding. A record of a different type can still be exact: a SAMPLE produced with Sherpa is evidence that an analysis used Sherpa, and a SYSTEMATIC derived from varying Pythia is evidence that an analysis used Pythia. Ask whether the candidate bears on the question, never what type of record it is.
+
+Be decisive. If your "why" says the candidate does not bear on the question, then the rung is "unrelated" -- not "broader". "broader" is only for a genuine generalisation of the thing asked about.
 
 CANDIDATES:
 {candidates}

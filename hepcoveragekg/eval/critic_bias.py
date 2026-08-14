@@ -246,17 +246,26 @@ def measure(chat: Callable, index, conn, cases: Sequence[Case]) -> dict[str, Arm
 # are safe in a way systematic names are not, because the graph holds one entity
 # per version and tune of a single named program.
 CONTROLS = [
-    # (name, question, search text, what a working critic must return)
-    ("all-keep", "Which analyses use the Pythia generator?", "Pythia", "keep"),
-    ("all-keep", "Which analyses use the Sherpa generator?", "Sherpa", "keep"),
-    ("all-drop", "Which analyses use the Pythia generator?", "jet energy scale", "drop"),
+    # (name, question, search text, expected, kind)
+    #
+    # The all-keep cases pin `kind`, because without it no search returns a
+    # homogeneous set: "Sherpa" also finds the SAMPLES generated with Sherpa and
+    # "Pythia" also finds systematics derived from varying it. Those are real
+    # evidence for the question and must not be dropped -- but whether they are
+    # "the generator" is a judgement call, which is precisely what a control
+    # must not contain. Pinning the kind removes the ambiguity from the CONTROL
+    # while leaving it in the arms, where it belongs.
+    ("all-keep", "Which analyses use the Pythia generator?", "Pythia", "keep", "generator"),
+    ("all-keep", "Which analyses use the Sherpa generator?", "Sherpa", "keep", "generator"),
+    ("all-drop", "Which analyses use the Pythia generator?", "jet energy scale",
+     "drop", None),
     ("all-drop", "Which analyses apply a jet energy scale uncertainty?",
-     "Pythia", "drop"),
+     "Pythia", "drop", None),
     # The one the first run failed on, kept as a THIRD kind of case: a family
     # question where the near-neighbours are different members of that family.
     # Neither all-keep nor all-drop -- what it must not do is keep everything.
     ("mixed-family", "Which analyses apply a jet energy scale uncertainty?",
-     "jet energy scale", "mixed"),
+     "jet energy scale", "mixed", None),
 ]
 
 
@@ -266,8 +275,8 @@ def run_controls(chat: Callable, index, conn, *, limit: int = 30) -> str:
 
     lines = ["controls (these gate everything else)", "=" * 60]
     verdict = True
-    for name, question, text, expected in CONTROLS:
-        hits = retrieve.search(index, text, conn=conn, limit=limit)
+    for name, question, text, expected, kind in CONTROLS:
+        hits = retrieve.search(index, text, conn=conn, limit=limit, kind=kind)
         review = C.judge_candidates(chat, question, text, hits)
         rate = len(review.kept_ids) / max(len(review.verdicts), 1)
         if expected == "keep":
