@@ -6,6 +6,10 @@
 > **→ [`system.md`](system.md) (v1.8, 2026-08-07) is now the reference document for what gets built
 > next**: the query system and the agent layers on top of the graph, the evaluation design, the
 > technology stack, and the order of work (S-01 … S-57). Read it after this file.
+> **→ [`ground-truth.md`](ground-truth.md) (v1.0, 2026-08-14) is the methods reference for the
+> evaluation gold**: why the supervisor's answers cannot serve as truth, the reference reader, the
+> cascade and its two judges, what the fixes were measured to be worth, and the three things the
+> finished gold is for. The evaluation chapter is written from that file (D-054 … D-059).
 > **2026-08-02 — the order of work is agreed** (§5 Phase 3, blocks 0–7). **Step 0 is asking Gabriel
 > for questions**, today. Harness designed but not built:
 > [`ideas/eval-harness-design.md`](ideas/eval-harness-design.md). Two pipeline ideas recorded as
