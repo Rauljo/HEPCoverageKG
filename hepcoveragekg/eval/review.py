@@ -195,6 +195,72 @@ def _one_line(text: str) -> str:
     return " ".join((text or "").split())
 
 
+def split_items(rows: list[dict], questions: list[dict],
+                start_row: int = 1001) -> list[dict]:
+    """The reads where three samples of ONE passage disagreed with each other.
+
+    A SEPARATE batch, deliberately, and numbered from 1001.
+
+    These fell through every bucket in `build`: not `claimed` (the answer is
+    None, so they are never judged and carry no `quote_supports` key), and not
+    `negatives` (the answer is not False). 87 of them, every one with a verified
+    quote, and only the 11 that happened to sit in his gold reached the first
+    sheet at all -- by accident, through the disagreements path.
+
+    They are the most informative items we have. A claim the judge upheld is
+    usually easy; a split is a real question our own machinery could not settle,
+    which is exactly what a human adjudicator is for. The first sheet therefore
+    measures the easy cases and skips the hard ones.
+
+    Why not simply add them to `build`. The first sheet is already sent, and its
+    answers -- in a spreadsheet and in the app's browser storage -- are keyed on
+    ROW NUMBER. Inserting 76 items would renumber everything after them, so a
+    verdict written against row 40 would silently reattach to a different paper.
+    That is the one corruption we could never detect afterwards. Hence a second
+    batch, its own row range, its own storage key, and `build` left untouched so
+    the issued sheet regenerates identically forever.
+    """
+    text = {q["qid"]: (q.get("per_paper") or q["text"]) for q in questions}
+    splits = [r for r in rows if r.get("answer") is None and r.get("quote")]
+    items = []
+    for n, r in enumerate(sorted(splits, key=lambda x: (x["qid"], x["paper_id"])),
+                          start_row):
+        # The tally must come from the window that ACTUALLY disagreed, not from
+        # `votes`, which counts every sample of every window. A 23-window paper
+        # reports "46 said false, 2 said true" because 46 samples correctly said
+        # "not in this passage" -- which reads as an overwhelming no, when what
+        # happened is that one window's three readings split 2-1. Showing him the
+        # paper-wide count would misrepresent our own uncertainty to the person
+        # we are asking to resolve it.
+        windows: dict = {}
+        for v in r.get("verdicts") or []:
+            if v.get("answer") is None:
+                continue
+            windows.setdefault(v.get("window"), []).append(
+                bool(v.get("answer") and v.get("quote_verified")))
+        tally = ""
+        for vals in windows.values():
+            if len(set(vals)) > 1:
+                yes = sum(vals)
+                # Not always three: a window read in the routed pass and again
+                # after escalation contributes both sets of samples.
+                tally = f"{yes} of {len(vals)} said yes, {len(vals) - yes} said no"
+                break
+        items.append({
+            "qid": r["qid"], "question": text.get(r["qid"], r["qid"]),
+            "paper_id": r["paper_id"], "quote": r["quote"],
+            "quotes": [], "candidates": [],
+            "_machine": True, "_judge": None,
+            "_why": ("Our readings of this passage disagreed with each other"
+                     + (f" — {tally}." if tally else ".")
+                     + " That is why it is in this batch: our own pipeline could"
+                       " not settle it."),
+            "_by": "split",
+            "row": n,
+        })
+    return items
+
+
 def write_sheet(items: list[dict], path: Path | str) -> Path:
     """The TSV the reviewer fills in. Two columns for them, the rest context."""
     path = Path(path)

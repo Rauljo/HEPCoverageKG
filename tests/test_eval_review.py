@@ -174,3 +174,54 @@ def test_the_returned_answers_are_a_table_not_json():
         html = RA.write_app(_app_items(), pathlib.Path(d) / "a.html", "t").read_text()
     assert 'row\\tquestion_id\\tpaper\\tverdict\\tnotes' in html
     assert "# sheet=" in html, "the version must travel with the answers"
+
+
+def test_batch_two_cannot_collide_with_the_sheet_already_sent():
+    """Batch 1 is issued and its answers are keyed on row number, in a
+    spreadsheet and in browser storage. Any overlap would silently reattach a
+    verdict to a different paper."""
+    rows = [{"qid": "gf-08", "paper_id": "p1", "answer": None,
+             "quote": "x" * 40, "votes": {"True": 1, "False": 2}}]
+    qs = S.build_records()
+    items = RV.split_items(rows, qs, start_row=1001)
+    assert [i["row"] for i in items] == [1001]
+    assert all(i["row"] > 202 for i in items)
+    assert items[0]["_by"] == "split"
+    assert items[0]["_judge"] is None
+    assert "disagreed" in items[0]["_why"]
+
+
+def test_build_is_untouched_so_the_issued_sheet_regenerates_identically():
+    """split_items is a separate function precisely so `build` never changes."""
+    import inspect
+    src = inspect.getsource(RV.build)
+    assert "splits" not in src, "batch 2 must not leak into the issued sheet"
+
+
+def test_batch_two_uses_its_own_browser_storage_key():
+    from hepcoveragekg.eval import review_app as RA
+    items = RV.split_items(
+        [{"qid": "gf-08", "paper_id": "p1", "answer": None, "quote": "x" * 40,
+          "votes": {"True": 1, "False": 2}}], S.build_records())
+    with tempfile.TemporaryDirectory() as d:
+        html = RA.write_app(items, pathlib.Path(d) / "b.html", "t",
+                            version="splits-v1").read_text()
+    assert 'hepckg-review-splits-v1' in html
+    assert 'hepckg-review-v1"' not in html, "must not share batch 1's storage"
+
+
+def test_the_split_tally_describes_the_window_that_disagreed():
+    """`votes` counts every sample of every window, so a 23-window paper reads
+    "46 said false, 2 said true" when one window split 2-1. Showing that to the
+    person resolving it would misrepresent our own uncertainty."""
+    rows = [{"qid": "gf-08", "paper_id": "p1", "answer": None, "quote": "x" * 40,
+             "votes": {"True": 2, "False": 46},
+             "verdicts": (
+                 [{"answer": False, "quote_verified": False, "window": w}
+                  for w in range(1, 16) for _ in range(3)]
+                 + [{"answer": True,  "quote_verified": True,  "window": 0},
+                    {"answer": False, "quote_verified": False, "window": 0},
+                    {"answer": False, "quote_verified": False, "window": 0}])}]
+    item, = RV.split_items(rows, S.build_records())
+    assert "1 of 3 said yes, 2 said no" in item["_why"]
+    assert "46" not in item["_why"], "the paper-wide count must not appear"

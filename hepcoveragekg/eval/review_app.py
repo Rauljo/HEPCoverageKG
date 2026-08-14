@@ -187,6 +187,7 @@ textarea{width:100%;margin-top:.6rem;padding:.5rem .65rem;border:1px solid var(-
       measurement for the questions it covers. Press <b>Finish &amp; get my answers
       file</b> whenever you like — it hands you a small file to email back to
       __RETURN_TO__.</p>
+    __NOTE__
     <p class="keyk">Keyboard: <kbd>y</kbd> yes · <kbd>n</kbd> no · <kbd>u</kbd> unsure ·
       <kbd>j</kbd>/<kbd>k</kbd> or <kbd>↓</kbd>/<kbd>↑</kbd> move · <kbd>r</kbd> reveal ·
       <kbd>?</kbd> notes</p>
@@ -472,7 +473,8 @@ def _b64(text: str) -> str:
 
 
 def write_app(items: list[dict], path: Path | str, title: str,
-              version: str = "v1", return_to: str = "Raul") -> Path:
+              version: str = "v1", return_to: str = "Raul",
+              note: str = "") -> Path:
     """One self-contained page: click yes/no/unsure, get one file back.
 
     `return_to` is named in the page because the page cannot send anything. It
@@ -490,6 +492,9 @@ def write_app(items: list[dict], path: Path | str, title: str,
             verdict = "Our model said this DOES answer the question."
         elif i["_judge"] is False:
             verdict = "Our model rejected this — it said the sentence does NOT answer the question."
+        elif i.get("_by") == "split":
+            verdict = ("Our readings of this passage disagreed with each other — "
+                       "we could not settle this one.")
         elif i["_machine"]:
             verdict = "Our model cited this, and our judge never ruled on it."
         else:
@@ -511,7 +516,8 @@ def write_app(items: list[dict], path: Path | str, title: str,
             .replace("__TOTAL__", str(len(items)))
             .replace("__VERSION__", version)
             .replace("__TITLE__", title)
-            .replace("__RETURN_TO__", return_to))
+            .replace("__RETURN_TO__", return_to)
+            .replace("__NOTE__", note))
     path = Path(path)
     path.write_text(html, encoding="utf-8")
     return path
