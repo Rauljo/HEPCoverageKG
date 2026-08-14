@@ -496,3 +496,36 @@ def test_the_critic_arm_hashes_differently_from_the_control():
     on = systems.PlannerSystem(None, None, max_rounds=6, use_critic=True)
     assert off.config["use_critic"] is False and on.config["use_critic"] is True
     assert systems.config_hash(off.config) != systems.config_hash(on.config)
+
+
+def test_the_run_record_carries_what_the_critic_did():
+    """An ablation that reports a score difference with no evidence of what
+    produced it is unreadable. This is the D-059 shape: the CLI stripped the
+    provenance and the unit test bypassed the CLI, so the fix was invisible.
+    Assert on what `from_session` really emits, not on the Session."""
+    from hepcoveragekg.eval import systems
+    from hepcoveragekg.query import critic as C, planner
+
+    session = planner.Session(question="q")
+    session.steps.append(planner.Step(1, "contents_of", {}, rows=9,
+                                      redirected_from="describe"))
+    session.reviews.append(C.Review("q", "Pythia", [
+        C.Verdict("e1", C.EXACT, "the version asked for"),
+        C.Verdict("e2", C.UNRELATED, "Herwig, a different generator"),
+    ]))
+    session.recovered_calls = 3
+    answer = systems.from_session(session)
+
+    assert answer.recovered_calls == 3, "the server's parser failures must survive"
+    assert answer.steps[0]["redirected_from"] == "describe"
+    review = answer.reviews[0]
+    assert review["tally"][C.UNRELATED] == 1 and review["kept"] == 1
+    assert review["dropped"] == [{"id": "e2", "why": "Herwig, a different generator"}]
+
+
+def test_a_run_without_a_critic_carries_an_empty_record_not_a_missing_one():
+    from hepcoveragekg.eval import systems
+    from hepcoveragekg.query import planner
+
+    answer = systems.from_session(planner.Session(question="q"))
+    assert answer.reviews == [] and answer.recovered_calls == 0

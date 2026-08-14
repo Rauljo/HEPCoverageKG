@@ -61,6 +61,14 @@ class Answer:
     rounds: int = 0
     seconds: float = 0.0
 
+    # Why an arm behaved as it did. Without these an ablation reports a score
+    # difference and no evidence of what produced it -- the D-059 failure shape,
+    # where the CLI stripped `provenance` and the unit test bypassed the CLI.
+    reviews: list[dict] = field(default_factory=list)   # what the critic judged
+    recovered_calls: int = 0   # tool calls the SERVER's parser missed and we recovered
+    invented_ids: list[str] = field(default_factory=list)
+    nudged: bool = False
+
     error: str = ""                  # a crash, recorded rather than raised
 
     @property
@@ -183,7 +191,9 @@ def from_session(session, conn=None) -> Answer:
         papers=_papers_of(conn, entity_ids),
         value=None,
         steps=[{"round": s.round, "tool": s.tool, "args": s.args, "rows": s.rows,
-                "error": s.error, "seconds": round(s.seconds, 3)} for s in session.steps],
+                "error": s.error, "seconds": round(s.seconds, 3),
+                **({"redirected_from": s.redirected_from} if s.redirected_from else {})}
+               for s in session.steps],
         sets={k: list(v) for k, v in session.sets.items()},
         entity_ids=entity_ids,
         evidence_ids=list(session.evidence_ids),
@@ -195,4 +205,14 @@ def from_session(session, conn=None) -> Answer:
         completion_tokens=session.completion_tokens,
         rounds=session.rounds,
         seconds=session.seconds,
+        reviews=[{"search_text": r.search_text, "tally": r.tally,
+                  "kept": len(r.kept_ids), "candidates": len(r.verdicts),
+                  "defaulted": r.defaulted, "calls": r.calls, "errors": r.errors,
+                  "tail_keep_rate": r.tail_keep_rate(),
+                  "dropped": [{"id": v.entity_id, "why": v.reason}
+                              for v in r.verdicts if not v.kept]}
+                 for r in getattr(session, "reviews", [])],
+        recovered_calls=getattr(session, "recovered_calls", 0),
+        invented_ids=list(getattr(session, "invented_ids", [])),
+        nudged=bool(getattr(session, "nudged", False)),
     )
