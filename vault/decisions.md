@@ -1351,3 +1351,36 @@ the same few generators, they should have been merged before search ever saw the
 search is 30 clusters or 1,500. *Deduplication quality becomes the binding constraint on everything
 above it* -- a far stronger argument for the aliases work than tidiness, and it raises the stakes on
 the discovered-grouping rung ([[discovered-grouping-layer]]) too.
+
+### D-060 addendum — a confound caught in the queue, not in the results
+The critic arm was queued behind a baseline that had already started, and the code moved between
+them. `subjects_of` gained its `matched` column in the interval -- and that is not a logging change:
+the extra field goes into the rows the planner READS, lengthens them against the 400-character
+per-row truncation, and hands the model information the control never had.
+
+So control and treatment would have differed by **two** things, and the write-up would have
+attributed all of it to the critic. That is D-059's pattern for the fifth time, and the only reason
+it was caught is that the arm was still `PENDING`.
+
+*Fixed by freezing the code and re-running the control on it*: `control-v2` (48433-5) then the critic
+arm (48436-8), both from the same commit, differing by one flag. The morning's baseline (48426-8)
+keeps its own value as the measurement of the paper-id fix, and is **not** the control for the
+critic.
+
+*The rule, since this keeps recurring*: a run that has already started has frozen its code; anything
+committed afterwards makes it a different system. Queue depth is not the same as comparability.
+
+### D-060 addendum — the serving-side tool parser fails constantly, and we were silently absorbing it
+The live server logged **1,327 `hermes_tool_parser` errors in 90 minutes** while returning 200 OK
+throughout. vLLM fails to extract the tool call, the model's call arrives in the message body
+instead, and `planner._recover_tool_calls` picks it out of the text. Nothing downstream ever noticed,
+which is the point: the recovery was written for exactly this and then never measured.
+
+`recovered_calls` existed on the Session and was **dropped by `from_session`**, so no run file has
+ever carried it. Now it does. The planner's own docstring called this "a count worth watching: if it
+is high, the serving-side tool parser is underperforming" -- and it is high.
+
+Worth reading once the arms land, because it bears on a claim the project makes: if a meaningful
+share of tool calls only survive because of a regex in our loop, then "the model uses the tools
+correctly" and "vLLM's `hermes` parser handles Qwen2.5's format" are two different statements, and
+only the first is ours to make.
