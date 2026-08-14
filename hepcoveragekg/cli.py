@@ -488,6 +488,7 @@ def _cmd_eval(args) -> int:
             conn, index,
             max_rounds=args.max_rounds, max_places=args.max_places,
             minimal_prompt=args.minimal_prompt,
+            use_critic=args.critic,
         )
     else:
         print(f"unknown system {args.system!r}", file=sys.stderr)
@@ -637,6 +638,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_eval.add_argument("--max-places", type=int, default=8)
     p_eval.add_argument("--minimal-prompt", action="store_true",
                         help="planner: the reduced PURPOSE variant -- an ablation axis")
+    # The critic is an ablation ARM, so it belongs in the config hash: two runs
+    # that differ only by this must not be mistaken for repeats of one another.
+    # It is off by default, which makes the control arm the ordinary code path
+    # rather than a second implementation (D-060).
+    p_eval.add_argument("--critic", action="store_true",
+                        help="planner: judge search candidates and read facet "
+                             "labels before use. Flags, never filters.")
     p_eval.add_argument("--unlock-test", action="store_true",
                         help="allow test-split questions; logged to eval/TEST_OPENED.log (S-10)")
     p_eval.add_argument("--reason", default="", help="why the test set was opened")

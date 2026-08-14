@@ -484,3 +484,15 @@ def test_run_ids_do_not_collide_between_simultaneous_jobs(monkeypatch):
     monkeypatch.setenv("SLURM_JOB_ID", "222")
     b = runner.new_run_id("hepkg")
     assert a != b, "same second, different jobs, must differ"
+
+
+def test_the_critic_arm_hashes_differently_from_the_control():
+    """Two runs differing only by the critic must not look like repeats of one
+    another -- the config hash is what the harness uses to tell arms apart, and
+    a collision would silently pool the treatment with its own control."""
+    from hepcoveragekg.eval import systems
+
+    off = systems.PlannerSystem(None, None, max_rounds=6, use_critic=False)
+    on = systems.PlannerSystem(None, None, max_rounds=6, use_critic=True)
+    assert off.config["use_critic"] is False and on.config["use_critic"] is True
+    assert systems.config_hash(off.config) != systems.config_hash(on.config)
