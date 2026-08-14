@@ -1384,3 +1384,28 @@ Worth reading once the arms land, because it bears on a claim the project makes:
 share of tool calls only survive because of a regex in our loop, then "the model uses the tools
 correctly" and "vLLM's `hermes` parser handles Qwen2.5's format" are two different statements, and
 only the first is ours to make.
+
+### D-060 addendum — the paper-id fix, measured on the same 540 Tier A questions
+Like-for-like: the same question ids in the 2026-08-03 run and today's, so no sampling difference.
+
+| | 2026-08-03 | today | delta |
+|---|---|---|---|
+| dead-end sessions | **79** | **0** | -79 |
+| abstained | 14.1% | 2.0% | **-12.0** |
+| count correct | 53.1% | 71.1% | **+18.0** |
+| faithfulness | 77.7% | 88.8% | +11.1 |
+| seconds/question | 13.1 | 12.5 | -0.6 |
+
+**The 79 that dead-ended before**: abstention **93.7% -> 2.5%**, count correct **5.1% -> 70.9%**. They
+now perform like the general population (71.1%), which is the strongest form the result could take --
+not "somewhat better", but *indistinguishable from questions that never had the bug*.
+
+*What is attributable and what is not.* The 79 -> 0 and the 12-point abstention drop are the fix, by
+mechanism: those sessions failed at a specific step that no longer exists. Of the +18 on count
+correct, the 79 recovering from 5.1% to 70.9% accounts for **about +9.6**; the remaining ~8 points
+are **unattributed**, because the interval also contains the facet layer and its two tools. Saying
+"the paper fix is worth 18 points" would be the same overclaim this project keeps having to retract.
+
+*Wall-clock did not move* (13.1 -> 12.5 s/question) even though far more work is now done per
+question -- because a dead-end session was CHEAP. It gave up after two calls. The bug was fast and
+wrong, which is exactly why nothing flagged it.
