@@ -1403,9 +1403,47 @@ not "somewhat better", but *indistinguishable from questions that never had the 
 *What is attributable and what is not.* The 79 -> 0 and the 12-point abstention drop are the fix, by
 mechanism: those sessions failed at a specific step that no longer exists. Of the +18 on count
 correct, the 79 recovering from 5.1% to 70.9% accounts for **about +9.6**; the remaining ~8 points
-are **unattributed**, because the interval also contains the facet layer and its two tools. Saying
-"the paper fix is worth 18 points" would be the same overclaim this project keeps having to retract.
+are **unattributed**. Saying "the paper fix is worth 18 points" would be the same overclaim this
+project keeps having to retract. *(Corrected later the same day: the first version of this entry
+blamed the facet layer for those 8 points. The facet layer was not running on the cluster at all --
+see the D-061 addendum. Both runs used the same pre-facets graph.)*
 
 *Wall-clock did not move* (13.1 -> 12.5 s/question) even though far more work is now done per
 question -- because a dead-end session was CHEAP. It gave up after two calls. The bug was fast and
 wrong, which is exactly why nothing flagged it.
+
+### D-061 addendum (2026-08-14) — the cluster had been running a different graph, and could not open ours
+The gate's all-keep control drew 3 candidates from a canonical cluster that has 12 members locally.
+Chasing that found the cause: **`data/processed/hepkg.db` is gitignored (`*.db`), so it has never been
+synced**, and the two machines had drifted:
+
+| | laptop | cluster (before today) |
+|---|---|---|
+| `entity` | 5,114 | 5,114 |
+| `assertion` | 14,188 | 14,188 |
+| `entity_canonical` | 663 | **597** |
+| `entity_facet` | 4,594 | **table does not exist** |
+| `assertion_signature_derived` | 734 | **table does not exist** |
+
+**Every evaluation run this project has ever done -- August's and today's -- ran without the facet
+layer.** The code for it has been on the cluster since `7ad9cd6`; the data never was. `facets` and
+`facet_entities` would have raised `no such table` and been reported to the planner as tool errors,
+which is exactly the kind of failure that looks like a model choosing not to use a tool.
+
+*And copying the database did not work either*: the cluster's SQLite is **3.36.0**, `STRICT` tables
+need **3.37.0**, and the two facet-era tables are the only ones that use `STRICT`. So the newer graph
+was unopenable there -- `malformed database schema (assertion_signature_derived)`. Fixed by
+rebuilding those two tables without the modifier into a compatibility copy (schema otherwise
+byte-identical, indexes recreated, row counts verified) and syncing that. `facets(ABCD)` now returns
+its 6 papers with labels on the cluster, for the first time.
+
+**A correction to the paper-id measurement.** That entry said the unattributed ~8 points "also
+contains the facet layer". It does not -- the facet layer was not running on either side. Both runs
+used the same pre-facets graph, so that comparison is *cleaner* than claimed, and the ~8 points are
+attributable to the interval's other changes (the removed double retrieval per search) or to
+run-to-run variation. The original wording overclaimed a confound that did not exist, which is the
+same failure as claiming a fix that did not run -- just in the opposite direction.
+
+*Standing consequence*: the database is an input to every measurement and is not under version
+control. Its identity has to be checked, not assumed -- row counts for `entity`, `entity_canonical`
+and `entity_facet` are enough to tell two builds apart, and belong in the run metadata.
