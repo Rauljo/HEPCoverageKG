@@ -33,6 +33,11 @@ from typing import Callable, Iterable, Iterator, Optional
 from .questions import Question, QuestionSet
 from .systems import Answer, System, config_hash
 
+# Bound on one question. Raised from 180 s on 2026-08-15: see `run`. The point
+# of the bound is to stop a hung socket, not to cap honest work, so it wants to
+# sit well above the slowest arm's tail rather than near its mean.
+DEFAULT_TIMEOUT = float(os.environ.get("EVAL_QUESTION_TIMEOUT", 600))
+
 RUN_DIR = Path("eval/runs")
 
 
@@ -156,7 +161,7 @@ def run(questions: QuestionSet, system: System, *, repeats: int = 1,
         out_dir: str | Path = RUN_DIR,
         on_record: Optional[Callable[[Record], None]] = None,
         scorers: Optional[Iterable] = None,
-        timeout: Optional[float] = 180.0,
+        timeout: Optional[float] = DEFAULT_TIMEOUT,
         abort_after_consecutive_errors: int = 20) -> Path:
     """Run every question `repeats` times and write JSONL. Returns the path.
 
@@ -166,6 +171,14 @@ def run(questions: QuestionSet, system: System, *, repeats: int = 1,
 
     `timeout` bounds a single question. `None` disables it, which is right for a
     stub or an offline system and wrong for anything touching a model.
+
+    **A timeout is not neutral across arms.** At 180 s it cut 33 of 436 Tier B
+    questions out of the CRITIC arm on 2026-08-15 and 1 out of the control --
+    because concept questions go through `search`, which the critic makes slow,
+    while per-paper questions go through `contents_of`, which it does not touch.
+    A wall that lands almost entirely on the arm under test, in the tier under
+    test, biases the comparison it is supposed to protect. Set it from the
+    SLOWEST arm, not the fastest.
 
     `abort_after_consecutive_errors` stops a run whose model endpoint has died.
     Without it an overnight job outlives its server and then spends `timeout`

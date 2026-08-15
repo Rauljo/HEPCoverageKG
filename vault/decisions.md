@@ -1562,3 +1562,51 @@ as genuine ambiguity in the papers.
 
 *Repeats stay*, and the straddle check with them -- the point is not that the noise was fake, it is
 that it was diagnostic. Removing the measurement would remove the diagnosis.
+
+### D-062 addendum — pooling hid the result: Tier B splits into two shapes that move OPPOSITE ways
+The critic's effect is not "+2.5 points overall". Broken out:
+
+| tier / shape | n | metric | control | critic | delta |
+|---|---|---|---|---|---|
+| **B / count** | 327 | count correct | **0.058** | **0.144** | **+0.086** |
+| **B / set** | 109 | set recall | 0.917 | 0.734 | -0.183 |
+| | | set precision | 0.077 | 0.062 | -0.014 |
+| | | set F1 | 0.137 | 0.111 | -0.026 |
+| **A / per-paper** | 757 | count correct | -- | -- | **-0.001** |
+
+**0.058 is *the* number** -- the figure recorded in S-68 as the Tier B failure, "answering too coarse,
+60 near-neighbours counted as one thing". The critic was built for exactly that and **more than
+doubles it**. Pooling with 757 Tier A questions that correctly did not move diluted a +8.6-point
+effect into +2.5.
+
+**Tier A moved by -0.001 of 757 questions.** The control tier behaved as a control, which is the
+result that makes the Tier B movement readable at all.
+
+*Why the shapes diverge, and it is mechanical rather than empirical*: a **count** is a PROPERTY of the
+set, so removing junk makes the number right. A **"which analyses"** answer IS the set, so removing
+candidates removes correct members. Filtering trades recall for precision -- a gain where precision
+is the problem, a loss where recall is the answer. **Consequence for the design: the filtered handle
+belongs on counting questions and the full set on listing questions**, which the planner can choose
+per question rather than per run.
+
+*One thing that does not fit, and is not being smoothed over*: set **precision** also fell, and
+filtering should raise it. The likely cause is in the same table -- set-question abstention jumped
+**0.018 -> 0.193**, and an abstained question scores zero on everything. Since 87% of the extra
+abstention was the 180 s wall, much of the set damage may be an artefact rather than judgement. Not
+separable until the wall is raised.
+
+*Paired, not pooled, is also the right STATISTIC.* Per question: 41 better, 14 worse, 55 changed of
+1,084. McNemar p = **0.00036**. D-062 called +2.5 "not distinguishable from run-to-run variation" by
+reaching for S-52's repeats rule -- correct for comparing MEANS across arms, wrong here, because a
+paired within-question comparison makes each question its own control and needs no repeats for the
+sign. **Retracted.**
+
+### D-062 addendum — the 180 s wall was not neutral across arms
+It cut **33 of 436 Tier B questions out of the critic arm and 1 out of the control**. Not incidental:
+concept questions go through `search`, which the critic makes slow; per-paper questions go through
+`contents_of`, which it does not touch. So the wall landed on the arm under test, in the tier under
+test, and scored those questions as abstentions.
+
+Raised to **600 s** (`EVAL_QUESTION_TIMEOUT`), with the reasoning recorded at the constant: the bound
+exists to stop a hung socket, not to cap honest work, so it belongs above the SLOWEST arm's tail
+rather than near the fastest arm's mean.
