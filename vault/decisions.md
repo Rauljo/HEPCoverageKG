@@ -1649,3 +1649,38 @@ is evidence the gold is not simply being disagreed with.
 *Caveats kept*: 25-30% of set answers name no papers at all and are still scored on the footprint
 fallback (`set_named_none`), so those numbers are a blend. The critic arm has fewer scored records
 (n=90 vs 109 on reach) because the 180 s wall removed some -- being fixed in the run now in flight.
+
+### D-062 addendum — the gold-free check disagrees with the gold-scored one, and both are right
+Paraphrase invariance (S-34): two wordings of one question have the same true answer whatever it is,
+so comparing the system to ITSELF needs no gold and nothing about how Tier B's gold was built can
+contest it. 218 pairs, from `relation: paraphrase_of:<qid>`.
+
+| arm | usable pairs | count agreement | median gap | one side abstained |
+|---|---|---|---|---|
+| control | 204 | **0.714** | 0 | 10 |
+| critic | 178 | **0.439** | 1 | 21 |
+
+**The critic makes the system markedly less self-consistent.** Against the gold it looks good --
+set F1 x2.2, count error +34 -> +8, exact counts 3% -> 15%. Against itself it looks worse.
+
+*Both are true, and the resolution is not a contradiction.* The critic moves answers toward the truth
+**on average** while inserting a **noisy step**. The noise is already measured: 16.6% of keep/drop
+decisions flip between two shuffles of the same candidate list. Two paraphrases produce two different
+search texts, hence two different candidate lists, hence two different sets of verdicts -- so a
+noisy filter converts a stable-but-wrong system into a less stable, more-often-right one.
+
+**This is the finding to take to the write-up**, because accuracy alone would have hidden it: a
+coverage map that answers the same question two ways and gives two numbers is not usable by a
+physicist, however good its mean. Consistency is a requirement here, not a secondary metric.
+
+*Consequences.* The fix for both is the same -- make the critic itself less noisy. That is exactly
+what the ranked-vs-shuffled arm and `repeats=3` are for, and it raises the value of a cheaper
+mechanism (self-consistency over repeated verdicts, or caching a concept's verdicts across
+paraphrases) over a better prompt.
+
+*Caveat kept*: the critic arm has fewer usable pairs (178 vs 204) because the 180 s wall removed
+some, and one-sided abstentions doubled (10 -> 21). Some of the measured instability is therefore the
+timeout, not the judgement. The run in flight, at 600 s, separates them.
+
+*Also*: `set_jaccard` reported nothing -- the paraphrase pairs in this set are all count-shaped, so
+the set half of the measure is untested and awaits a question set that pairs them.
