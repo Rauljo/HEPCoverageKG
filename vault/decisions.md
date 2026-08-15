@@ -1610,3 +1610,42 @@ test, and scored those questions as abstentions.
 Raised to **600 s** (`EVAL_QUESTION_TIMEOUT`), with the reasoning recorded at the constant: the bound
 exists to stop a hung socket, not to cap honest work, so it belongs above the SLOWEST arm's tail
 rather than near the fastest arm's mean.
+
+### D-062 addendum — rescored: the critic HELPS set questions, and the direction test confirms why
+Prompted by the supervisor-facing worry that Tier B's gold is graph-derived and our system might be
+righter than it. Chasing that found the instrument was wrong, not just the gold. Rescored from
+stored answers (872 records, no GPU):
+
+| metric | control | critic | |
+|---|---|---|---|
+| set precision | 0.127 | **0.252** | x2.0 |
+| set recall | 0.439 | **0.608** | +0.169 |
+| set F1 | 0.145 | **0.314** | x2.2 |
+| retrieval reach | 0.917 | 0.889 | -0.028 |
+
+**The earlier "set recall 0.917 -> 0.734, the critic hurts set questions" was an artefact and is
+withdrawn.** Those numbers graded the *retrieval footprint* -- every paper containing any entity
+touched while searching, median 39 against a median gold of 2 -- and shrinking that footprint is the
+critic's whole job. Scored on the papers the answer NAMES, the critic roughly doubles every set
+metric.
+
+**The decisive pair**: retrieval reach falls only 2.8 points while set F1 doubles. The critic is
+removing junk *without* losing the papers that matter.
+
+#### The direction test answers the "maybe our gold is wrong" worry
+`claimed_count` extracts the number the answer asserts, so over- and under-counting are separable:
+
+| arm | n | median claimed minus gold | over | under | exact |
+|---|---|---|---|---|---|
+| control | 291 | **+34** | 94% | 3% | 3% |
+| critic | 269 | **+8** | 82% | 3% | **15%** |
+
+The system **massively over-counts** -- the median answer is 34 papers above a gold whose median is
+small -- and the critic cuts that to +8, with exact answers rising 3% -> 15%. Crucially
+**under-counting stays at 3% in both arms**: the critic is not cutting too hard, it is removing
+things that were never in the answer. That is the shape a working relevance step should have, and it
+is evidence the gold is not simply being disagreed with.
+
+*Caveats kept*: 25-30% of set answers name no papers at all and are still scored on the footprint
+fallback (`set_named_none`), so those numbers are a blend. The critic arm has fewer scored records
+(n=90 vs 109 on reach) because the 180 s wall removed some -- being fixed in the run now in flight.
