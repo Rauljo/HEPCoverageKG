@@ -529,3 +529,72 @@ def test_a_run_without_a_critic_carries_an_empty_record_not_a_missing_one():
 
     answer = systems.from_session(planner.Session(question="q"))
     assert answer.reviews == [] and answer.recovered_calls == 0
+
+
+# -- scoring the answer, not the retrieval footprint -------------------------
+
+def _q(shape="set", papers=None, value=None, kind=None):
+    from hepcoveragekg.eval.questions import Question, Truth
+    return Question(qid="q1", text="which analyses?", shape=shape, split="dev",
+                    truth=Truth(kind=kind or ("set" if shape == "set" else "count"),
+                                value=value, papers=papers or [], items=[]))
+
+
+def _a(text="", papers=None, value=None):
+    from hepcoveragekg.eval.systems import Answer
+    return Answer(text=text, answered=True, papers=papers or [], value=value)
+
+
+def test_set_scoring_reads_the_answer_not_the_search_footprint():
+    """`a.papers` is every paper any retrieved entity appears in -- a by-product
+    of looking things up. Grading it compared a 39-paper footprint against a
+    2-paper gold and scored a perfect answer at 0.05."""
+    from hepcoveragekg.eval import scoring
+
+    footprint = [f"20{i:02d}.0000{i%10}" for i in range(39)]
+    out = scoring.set_f1(_q(papers=["2308.02285", "2312.04450"]),
+                         _a(text="Two analyses: 2308.02285 and 2312.04450.",
+                            papers=footprint))
+    assert out["set_precision"] == 1.0 and out["set_recall"] == 1.0
+
+
+def test_the_footprint_is_still_measured_under_its_own_name():
+    """It measures something real -- whether retrieval REACHED the right papers
+    -- just not answer quality. Separate name so the two cannot be confused."""
+    from hepcoveragekg.eval import scoring
+
+    out = scoring.retrieval_reach(_q(papers=["2308.02285", "2312.04450"]),
+                                  _a(text="no ids here", papers=["2308.02285"]))
+    assert out == {"retrieval_reach": 0.5}
+
+
+def test_a_gold_too_long_to_list_abstains_rather_than_punishing_brevity():
+    """No prose answer lists forty papers, so scoring one would measure
+    truncation. Abstaining shows up honestly as reduced coverage."""
+    from hepcoveragekg.eval import scoring
+
+    big = [f"2{i:03d}.00001" for i in range(scoring.MAX_LISTABLE + 5)]
+    assert scoring.set_f1(_q(papers=big), _a(text="2000.00001")) is None
+    small = big[:scoring.MAX_LISTABLE]
+    assert scoring.set_f1(_q(papers=small), _a(text="2000.00001")) is not None
+
+
+def test_naming_nothing_falls_back_and_is_flagged():
+    from hepcoveragekg.eval import scoring
+
+    out = scoring.set_f1(_q(papers=["2308.02285"]),
+                         _a(text="I found some analyses.", papers=["2308.02285"]))
+    assert out["set_recall"] == 1.0
+    assert out["set_named_none"] == 1.0, "scored on the fallback -- say so"
+
+
+def test_the_claimed_number_is_extracted_so_direction_is_visible():
+    """`exact_count` says hit or miss. Over- and under-counting are different
+    diagnoses: too high means junk in the set, too low means over-filtering."""
+    from hepcoveragekg.eval import scoring
+
+    q = _q(shape="count", value=38, kind="count")
+    assert scoring.claimed_count(q, _a(text="...is recorded in 41 papers."))["count_error"] == 3.0
+    assert scoring.claimed_count(q, _a(text="12 analyses use it."))["count_error"] == -26.0
+    assert scoring.claimed_count(q, _a(text="1,286 papers"))["claimed_count"] == 1286.0
+    assert scoring.claimed_count(q, _a(text="no number at all")) is None

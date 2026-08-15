@@ -16,6 +16,7 @@ computed over 12 of 200 records cannot masquerade as an overall result.
 """
 from __future__ import annotations
 
+import re
 from typing import Callable, Iterable, Optional
 
 from .questions import Question
@@ -48,6 +49,15 @@ _REFUSALS = (
     "does not contain", "does not record", "no information", "not in the graph",
     "cannot answer", "does not have any", "no data", "unable to",
 )
+
+# The number a counting answer ASSERTS: "...in 38 papers", "38 analyses".
+_CLAIMED = re.compile(r"\b(\d[\d,]*)\s+(?:distinct\s+|different\s+|unique\s+)?"
+                      r"(?:papers?|analyses|analysis|studies)\b", re.I)
+
+# The most papers a prose answer can realistically list, so the most a gold may
+# hold before `set_f1` abstains rather than punishing brevity. Measured: the
+# planner writes 11 papers at the median and 15 at most.
+MAX_LISTABLE = 15
 
 
 def responded(q: Question, a: Answer) -> dict:
@@ -119,27 +129,90 @@ def exact_count(q: Question, a: Answer) -> Optional[dict]:
 
 
 def set_f1(q: Question, a: Answer) -> Optional[dict]:
-    """For set questions: precision/recall/F1 over paper ids.
+    """For set questions: precision/recall/F1 over the papers the answer NAMES.
 
     Papers are compared, not entities, because papers are what the truth from
     SQL is expressed in and what a physicist means by "which analyses".
 
-    **Only for set-shaped questions.** A counting question also carries a paper
-    list, but its answer is a number and legitimately names no papers -- scoring
-    it here dragged the 2026-08-02 headline from 0.60 to 0.12 and made a correct
-    system look broken. Naming papers when asked for a count is not the task.
+    **Score the essay, not the library shelf.** This previously read
+    `set(a.papers) or set(_arxiv_ids_in(a.text))`, and `a.papers` is every paper
+    containing any entity the system touched while searching -- a by-product of
+    looking things up, not an answer. So the text fallback never fired, and on
+    2026-08-15 that meant grading a **39-paper retrieval footprint against a
+    2-paper gold** (both medians): precision 0.077, where the papers the model
+    actually wrote down scored 0.154. A system naming exactly the right two
+    papers would still have scored about 0.05.
+
+    It also made the critic unmeasurable on these questions. Shrinking that
+    footprint is the critic's whole job, so "set recall fell" was close to a
+    tautology rather than a finding.
+
+    `MAX_LISTABLE` guards the opposite error, and it is why this abstains rather
+    than scoring everything: no prose answer can list forty papers, so a large
+    gold would penalise brevity instead of wrongness. Measured on this set the
+    guard rarely binds -- 105 of 109 golds hold five papers or fewer while the
+    planner names nine -- but a question set with wider answers would need it,
+    and a metric that quietly punishes truncation is worse than one that says it
+    cannot judge.
     """
     if q.shape != "set" or q.truth.kind == "subset" or not q.truth.papers:
         return None
     truth = set(q.truth.papers)
-    got = set(a.papers) or set(_arxiv_ids_in(a.text))
+    if len(truth) > MAX_LISTABLE:
+        return None          # unlistable in prose; abstain rather than mismeasure
+    named = set(_arxiv_ids_in(a.text))
+    got = named or set(a.papers)     # fall back only when it named nothing at all
     if not got:
-        return {"set_precision": 0.0, "set_recall": 0.0, "set_f1": 0.0}
+        return {"set_precision": 0.0, "set_recall": 0.0, "set_f1": 0.0,
+                "set_named_none": 1.0}
     tp = len(truth & got)
     precision = tp / len(got)
     recall = tp / len(truth) if truth else 0.0
     f1 = 0.0 if precision + recall == 0 else 2 * precision * recall / (precision + recall)
-    return {"set_precision": precision, "set_recall": recall, "set_f1": f1}
+    return {"set_precision": precision, "set_recall": recall, "set_f1": f1,
+            "set_named_none": 0.0 if named else 1.0}
+
+
+def retrieval_reach(q: Question, a: Answer) -> Optional[dict]:
+    """Did retrieval TOUCH the right papers, whatever the answer then said?
+
+    The footprint measure that `set_f1` used to be, kept because it measures
+    something real -- just not answer quality. Reported separately so the two
+    can never be confused again.
+
+    The gap between them is the interesting quantity. On 2026-08-15: the gold
+    papers were inside the retrieval footprint **91.7%** of the time, and named
+    in the answer **22.8%** of the time. Retrieval is not the bottleneck on set
+    questions; deciding what to write down is.
+    """
+    if q.shape != "set" or not q.truth.papers or not a.papers:
+        return None
+    truth = set(q.truth.papers)
+    reached = len(truth & set(a.papers)) / len(truth)
+    return {"retrieval_reach": reached}
+
+
+def claimed_count(q: Question, a: Answer) -> Optional[dict]:
+    """The number the answer ASSERTS, and how far it sits from the truth.
+
+    `exact_count` asks only "is the right number somewhere in the prose", which
+    cannot tell over-counting from under-counting. The direction is the
+    diagnosis: a system that consistently answers HIGH is carrying junk in its
+    set, one that answers LOW has filtered too hard. That distinction is what
+    says whether a relevance step is helping or overreaching -- and it matters
+    doubly here, because Tier B's gold is itself computed from the graph, so a
+    disagreement is not automatically the system's error.
+    """
+    if q.truth.kind != "count" or q.truth.value is None:
+        return None
+    claimed = a.value
+    if claimed is None:
+        match = _CLAIMED.search(a.text or "")
+        if not match:
+            return None
+        claimed = float(match.group(1).replace(",", ""))
+    return {"claimed_count": float(claimed),
+            "count_error": float(claimed) - float(q.truth.value)}
 
 
 # Above this many papers, no prose answer can list the full set, so the
@@ -291,6 +364,7 @@ def tool_use(q: Question, a: Answer) -> Optional[dict]:
 
 def default_scorers() -> list[Scorer]:
     return [cost, responded, faithfulness, exact_count, set_f1,
+            retrieval_reach, claimed_count,
             known_positive_recall, label_recall, entity_retrieved, tool_use]
 
 
