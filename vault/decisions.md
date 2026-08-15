@@ -1532,3 +1532,33 @@ Not "the critic does not work". It works, it is measurably aggressive, and every
 named mechanism. What it does not yet have is a reason to be switched on: **before running it again,
 fix the widen signal, re-measure with repeats>=3, and settle ranked-vs-shuffled on evidence rather
 than on the argument that lost the moment it was tested.**
+
+### D-062 addendum — the gate's run-to-run variance was the PROMPT, not just the server
+Gate v2, three repeats per control, on the sharpened prompt:
+
+```
+PASS  all-keep      100.0% +/- 0.0%  of 12   (pileup cluster)
+PASS  all-keep      100.0% +/- 0.0%  of  8   (pp-13TeV cluster)
+PASS  all-drop        0.0% +/- 0.0%  of 30
+PASS  all-drop        6.7% +/- 0.0%  of 30
+PASS  mixed-family   70.0% +/- 0.0%  of 30
+```
+
+**Zero spread on every control.** The same all-drop case read 0/30, 2/30 and 4/30 within one hour the
+day before.
+
+Earlier this was written off as "vLLM batching non-determinism, so the gate was reading noise". That
+is the *mechanism* but not the *cause*, and the distinction matters. Batching non-determinism is
+always present at temperature 0; it only shows up in the output when the model is **near a decision
+boundary**. The readings that wobbled came from the prompt whose rungs were defined against the
+search rather than the question -- exactly the version that wrote *"Pythia is a generator, not an
+analysis applying jet energy scale uncertainty"* and then labelled it `broader`. A model on the fence
+flips under reordering; a model with an unambiguous rule does not.
+
+So **prompt ambiguity presents as run-to-run variance**, and the variance is a usable signal about
+the prompt rather than a fact of the infrastructure to be tolerated. Worth carrying into the reader
+work too: the per-window splits there ([[ground-truth]]) may be measuring prompt boundaries as much
+as genuine ambiguity in the papers.
+
+*Repeats stay*, and the straddle check with them -- the point is not that the noise was fake, it is
+that it was diagnostic. Removing the measurement would remove the diagnosis.
