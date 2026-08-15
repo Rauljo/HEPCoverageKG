@@ -144,22 +144,54 @@ class Review:
         return sum(1 for v in self.verdicts if v.defaulted)
 
     def tail_keep_rate(self, chunk: int = CHUNK) -> Optional[float]:
-        """Keep-rate over the LAST chunk, in retrieval order.
-
-        The stopping signal for widening a search (D-060). The question is
-        whether the good candidates have RUN OUT by the end of the list: if they
-        have not, the list was too short and rank 61 probably holds more.
-
-        Deliberately not the overall keep-rate, which points the wrong way on
-        the clearest case. A search where all 60 hits are relevant and the list
-        came back full is the most truncated case there is -- "widen when some
-        were irrelevant" would stop exactly there, and would widen on
-        `top squark`, which is junk all the way down.
-        """
+        """Keep-rate over the LAST chunk, in retrieval order."""
         if not self.verdicts:
             return None
         tail = self.verdicts[-chunk:]
         return sum(1 for v in tail if v.kept) / len(tail)
+
+    def head_keep_rate(self, chunk: int = CHUNK) -> Optional[float]:
+        """Keep-rate over the FIRST chunk, in retrieval order."""
+        if not self.verdicts:
+            return None
+        head = self.verdicts[:chunk]
+        return sum(1 for v in head if v.kept) / len(head)
+
+    def decay(self, chunk: int = CHUNK) -> Optional[float]:
+        """Tail keep-rate as a fraction of head keep-rate. The widen signal.
+
+        The question is whether the good candidates have RUN OUT by the end of
+        the list: if they have not, the list was too short and rank 61 probably
+        holds more.
+
+        **Measured as a ratio, not an absolute, because an absolute threshold
+        makes the widen decision hostage to how strict the critic is overall.**
+        On 2026-08-15 that is exactly what happened: the critic marked 75% of all
+        candidates `unrelated`, so a tail keep-rate of 0.5 was unreachable and
+        the widen loop fired ZERO times across 1,074 searches -- leaving the
+        measurement that motivated it (64.8% of Tier B searches truncated at the
+        ceiling) untested. D-060 decision 9 says flagging may be strict while
+        widening must be generous; feeding both from one absolute number broke
+        that on the first run.
+
+        A ratio is immune to it. A critic keeping 40% at the head and 35% at the
+        tail has not run out, whether the 40% is 40% or 8%. One keeping 40% then
+        5% has.
+
+        Deliberately not the overall keep-rate, which points the wrong way on the
+        clearest case: a search where every hit is relevant and the list came
+        back full is the MOST truncated case there is, and "widen when some were
+        irrelevant" would stop exactly there.
+        """
+        head = self.head_keep_rate(chunk)
+        tail = self.tail_keep_rate(chunk)
+        if head is None or tail is None:
+            return None
+        if head == 0:
+            # Nothing was kept anywhere. There is no relevance to have run out
+            # of, so this is not evidence of truncation.
+            return 0.0
+        return tail / head
 
 
 PROMPT = """\
@@ -343,7 +375,7 @@ def judge_candidates(
 
 
 def should_widen(review: Review, hits_returned: int, limit: int,
-                 *, threshold: float = 0.5, chunk: int = CHUNK) -> bool:
+                 *, threshold: float = 0.6, chunk: int = CHUNK) -> bool:
     """Is there good reason to think rank `limit + 1` holds more of the same?
 
     Two conditions, and the first is not optional: the hit list must have come
@@ -354,16 +386,21 @@ def should_widen(review: Review, hits_returned: int, limit: int,
     came back exactly full, so the ceiling binds on two questions in three and
     this is load-bearing rather than a refinement.
 
-    `threshold` is generous by design (D-060). Flagging is reversible -- a
-    wrongly-flagged candidate is still in the set and still in the trace -- but
-    NOT widening is not: a candidate never retrieved is gone, and nothing
-    downstream can recover it. Strict flagging and generous widening are the
-    right way round for those two different costs.
+    `threshold` is a RATIO of tail keep-rate to head keep-rate (see
+    `Review.decay`), so a globally strict critic cannot suppress widening the
+    way it did on 2026-08-15 -- zero widened searches out of 1,074, because a
+    75%-unrelated critic can never reach an absolute 0.5.
+
+    Generous by design (D-060). Flagging is reversible -- a wrongly-flagged
+    candidate is still in the set and still in the trace -- but NOT widening is
+    not: a candidate never retrieved is gone, and nothing downstream can recover
+    it. Strict flagging and generous widening are the right way round for those
+    two different costs.
     """
     if hits_returned < limit:
         return False
-    rate = review.tail_keep_rate(chunk)
-    return rate is not None and rate >= threshold
+    ratio = review.decay(chunk)
+    return ratio is not None and ratio >= threshold
 
 
 # ---------------------------------------------------------------------------

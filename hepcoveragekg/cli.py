@@ -489,6 +489,7 @@ def _cmd_eval(args) -> int:
             max_rounds=args.max_rounds, max_places=args.max_places,
             minimal_prompt=args.minimal_prompt,
             use_critic=args.critic,
+            critic_seed=args.critic_seed,
         )
     else:
         print(f"unknown system {args.system!r}", file=sys.stderr)
@@ -645,6 +646,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_eval.add_argument("--critic", action="store_true",
                         help="planner: judge search candidates and read facet "
                              "labels before use. Flags, never filters.")
+    # Ranked order is the default and is now IN DOUBT: on 2026-08-15 the shuffled
+    # arms discriminated by true retrieval rank BETTER than ranked did, which is
+    # the opposite of what the default was chosen for. This makes that a third
+    # arm rather than an argument.
+    p_eval.add_argument("--critic-seed", type=int, default=None,
+                        help="planner: shuffle the candidates the critic sees, "
+                             "with this seed. Omit for retrieval order.")
     p_eval.add_argument("--unlock-test", action="store_true",
                         help="allow test-split questions; logged to eval/TEST_OPENED.log (S-10)")
     p_eval.add_argument("--reason", default="", help="why the test set was opened")

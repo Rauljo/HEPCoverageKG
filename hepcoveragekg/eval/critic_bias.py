@@ -289,8 +289,20 @@ def cluster_hits(conn, canonical_id: str):
                             kind=r["kind"], facets=[]) for r in rows]
 
 
-def run_controls(chat: Callable, index, conn, *, limit: int = 30) -> str:
-    """Can the critic say "all of them" and "none of them"?"""
+def run_controls(chat: Callable, index, conn, *, limit: int = 30,
+                 repeats: int = 3) -> str:
+    """Can the critic say "all of them" and "none of them"?
+
+    Repeated, because a single reading of a control is not a control. The same
+    `Pythia question / jet-energy-scale search` case scored 0/30, 2/30 and 4/30
+    within one hour on 2026-08-15 -- same prompt, same model, temperature 0. The
+    spread is vLLM's batching non-determinism, and it is wider than the 10% band
+    the gate was judging against, so the gate was reading noise as a verdict.
+
+    Each case runs `repeats` times and is judged on the MEAN, with the observed
+    spread printed beside it. A band that a control straddles is reported as
+    straddled rather than resolved by whichever run happened to be last.
+    """
     from hepcoveragekg.query import retrieve
 
     lines = ["controls (these gate everything else)", "=" * 60]
@@ -305,18 +317,30 @@ def run_controls(chat: Callable, index, conn, *, limit: int = 30) -> str:
         if not hits:
             lines.append(f"SKIP  {name:9s} no candidates for {text!r}")
             continue
-        review = C.judge_candidates(chat, question, text, hits)
-        rate = len(review.kept_ids) / max(len(review.verdicts), 1)
+        rates, reviews = [], []
+        for _ in range(repeats):
+            review = C.judge_candidates(chat, question, text, hits)
+            reviews.append(review)
+            rates.append(len(review.kept_ids) / max(len(review.verdicts), 1))
+        rate = sum(rates) / len(rates)
+        spread = (max(rates) - min(rates)) / 2
+        review = reviews[-1]
+
         if expected == "keep":
-            ok = rate >= 0.9
+            ok, band = rate >= 0.9, (0.9, 1.0)
         elif expected == "drop":
-            ok = rate <= 0.1
+            ok, band = rate <= 0.1, (0.0, 0.1)
         else:                      # mixed: must discriminate, not answer wholesale
-            ok = 0.1 < rate < 0.9
-        verdict &= ok
+            ok, band = 0.1 < rate < 0.9, (0.1, 0.9)
+        # A control whose spread crosses its own threshold has not been measured,
+        # whichever side the mean happens to fall.
+        straddles = (rate - spread) < band[0] <= (rate + spread) or \
+                    (rate - spread) <= band[1] < (rate + spread)
+        verdict &= ok and not straddles
+        mark = "STRADDLES" if straddles else ("PASS" if ok else "FAIL")
         lines.append(
-            f"{'PASS' if ok else 'FAIL'}  {name:9s} kept {len(review.kept_ids):3d}/"
-            f"{len(review.verdicts):3d} ({rate:5.1%})   q={question[:44]!r} "
+            f"{mark:9s} {name:9s} kept {rate:5.1%} +/- {spread:4.1%} of "
+            f"{len(review.verdicts):3d}  (n={repeats})  q={question[:38]!r} "
             f"search={text!r}")
         if not ok and expected in ("keep", "drop"):
             # the verdicts that broke it: unexpected drops, or unexpected keeps
@@ -327,7 +351,8 @@ def run_controls(chat: Callable, index, conn, *, limit: int = 30) -> str:
     lines.append("")
     lines.append("GATE: " + ("passed -- the arms below are meaningful"
                             if verdict else
-                            "FAILED -- fix the prompt before reading anything else"))
+                            "FAILED -- fix the prompt, or widen a band a control "
+                            "straddles, before reading anything else"))
     return "\n".join(lines)
 
 

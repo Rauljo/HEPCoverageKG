@@ -946,7 +946,7 @@ def _client():
     ), os.environ.get("LLM_MODEL_NAME", "Qwen/Qwen2.5-72B-Instruct-AWQ")
 
 
-def _build_critic(question: str, session: Session, use_critic):
+def _build_critic(question: str, session: Session, use_critic, seed=None):
     """The candidate critic, bound to this question -- or None, which is OFF.
 
     OFF is the default everywhere, so the ablation's control arm is this code
@@ -974,7 +974,8 @@ def _build_critic(question: str, session: Session, use_critic):
                     model=model, messages=messages, temperature=0.0,
                     max_tokens=MAX_COMPLETION_TOKENS)
 
-            return critic_mod.judge_candidates(chat, question, search_text, hits)
+            return critic_mod.judge_candidates(chat, question, search_text, hits,
+                                               seed=seed)
 
     def _chat(messages):
         return client.chat.completions.create(
@@ -1018,7 +1019,7 @@ def _build_critic(question: str, session: Session, use_critic):
 
 
 def _prepare(conn, index, question, max_rounds, max_places, max_rows,
-             minimal_prompt, chat, thread_id, use_critic=None):
+             minimal_prompt, chat, thread_id, use_critic=None, critic_seed=None):
     """The state and runtime config a run needs. Shared by answer() and stream()."""
     session = Session(question=question)
     if chat is None:
@@ -1045,7 +1046,8 @@ def _prepare(conn, index, question, max_rounds, max_places, max_rows,
         "thread_id": thread_id,
         "chat": chat,
         "execute": build_executor(conn, index, session.sets,
-                                  critic=_build_critic(question, session, use_critic)),
+                                  critic=_build_critic(question, session, use_critic,
+                                                       critic_seed)),
         "tools": [{"type": "function", "function": spec} for spec in TOOL_SPECS],
     }
     config = {"configurable": runtime, "recursion_limit": max_rounds * 3 + 6}
@@ -1064,6 +1066,7 @@ def stream(
     checkpointer: Any = None,
     thread_id: str = "default",
     use_critic: Any = None,
+    critic_seed: Optional[int] = None,
 ):
     """Yield `(node_name, session)` after each node completes.
 
@@ -1075,7 +1078,7 @@ def stream(
 
     session, state, config = _prepare(conn, index, question, max_rounds,
                                       max_places, max_rows, minimal_prompt,
-                                      chat, thread_id, use_critic)
+                                      chat, thread_id, use_critic, critic_seed)
     started = time.perf_counter()
     app = graph_module.build(checkpointer=checkpointer)
     for update in app.stream(state, config=config, stream_mode="updates"):
@@ -1097,6 +1100,7 @@ def answer(
     checkpointer: Any = None,
     thread_id: str = "default",
     use_critic: Any = None,
+    critic_seed: Optional[int] = None,
 ) -> Session:
     """Answer one question, returning the answer and the whole trace.
 
@@ -1116,7 +1120,7 @@ def answer(
     started = time.perf_counter()
     session, state, config = _prepare(conn, index, question, max_rounds,
                                       max_places, max_rows, minimal_prompt,
-                                      chat, thread_id, use_critic)
+                                      chat, thread_id, use_critic, critic_seed)
     graph_module.build(checkpointer=checkpointer).invoke(state, config=config)
 
     session.seconds = time.perf_counter() - started

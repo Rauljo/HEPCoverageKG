@@ -315,3 +315,53 @@ def test_the_facet_reader_defaults_missing_verdicts_the_same_way():
 def test_no_rows_is_not_a_call():
     review = C.read_facet_labels(replying(verdicts_for(1)), "q", "f", ["v"], [])
     assert review.calls == 0 and review.verdicts == []
+
+
+# -- the widen signal, after it fired zero times in production ---------------
+
+def _mixed(rungs):
+    return C.Review("q", "s", [C.Verdict(f"e{i}", r) for i, r in enumerate(rungs)])
+
+
+def test_a_strict_critic_can_still_widen():
+    """The 2026-08-15 failure: the critic marked 75% of everything `unrelated`,
+    so an ABSOLUTE tail threshold of 0.5 was unreachable and the widen loop fired
+    zero times in 1,074 searches. A ratio is immune -- 20% at the head and 20% at
+    the tail means relevance has not decayed, however low 20% is."""
+    strict = _mixed([C.EXACT] * 3 + [C.UNRELATED] * 12   # head: 3/15 kept
+                    + [C.UNRELATED] * 12 + [C.EXACT] * 3)  # tail: 3/15 kept
+    assert strict.head_keep_rate() == 0.2 and strict.tail_keep_rate() == 0.2
+    assert strict.decay() == 1.0
+    assert C.should_widen(strict, hits_returned=30, limit=30) is True
+
+
+def test_relevance_that_has_decayed_still_stops():
+    decayed = _mixed([C.EXACT] * 15 + [C.UNRELATED] * 15)
+    assert decayed.decay() == 0.0
+    assert C.should_widen(decayed, hits_returned=30, limit=30) is False
+
+
+def test_a_partial_decay_is_a_judgement_call_not_a_cliff():
+    """Half the head's rate at the tail is decay; four fifths is not."""
+    mild = _mixed([C.EXACT] * 10 + [C.UNRELATED] * 5      # head 10/15
+                  + [C.EXACT] * 8 + [C.UNRELATED] * 7)     # tail 8/15
+    assert 0.75 < mild.decay() < 0.85
+    assert C.should_widen(mild, hits_returned=30, limit=30) is True
+
+    steep = _mixed([C.EXACT] * 12 + [C.UNRELATED] * 3      # head 12/15
+                   + [C.EXACT] * 4 + [C.UNRELATED] * 11)   # tail 4/15
+    assert steep.decay() < 0.4
+    assert C.should_widen(steep, hits_returned=30, limit=30) is False
+
+
+def test_keeping_nothing_anywhere_is_not_evidence_of_truncation():
+    """A ratio of 0/0 must not become "the tail is as good as the head"."""
+    nothing = _mixed([C.UNRELATED] * 30)
+    assert nothing.decay() == 0.0
+    assert C.should_widen(nothing, hits_returned=30, limit=30) is False
+
+
+def test_a_list_that_did_not_fill_still_never_widens():
+    full = _mixed([C.EXACT] * 30)
+    assert C.should_widen(full, hits_returned=43, limit=60) is False
+    assert C.should_widen(full, hits_returned=60, limit=60) is True
