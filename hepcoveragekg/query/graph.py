@@ -124,6 +124,29 @@ def plan(state: PlannerState, config=None) -> PlannerState:
     return state
 
 
+def _papers_resolver(runtime):
+    """Entity ids -> the papers they appear in, through the ordinary tool.
+
+    Goes through `papers_of` rather than a second query path so a cited answer
+    and a `papers_of` call in the trace can never disagree about the same set.
+    """
+    def resolve(entity_ids):
+        if not entity_ids:
+            return []
+        try:
+            result = runtime["execute"]("papers_of", {"entity_ids": list(entity_ids)})
+        except Exception:  # noqa: BLE001 -- a citation must not crash the answer
+            return None
+        seen, out = set(), []
+        for row in result.rows:
+            paper = row.get("paper_id") or row.get("arxiv_id")
+            if paper and paper not in seen:
+                seen.add(paper)
+                out.append(str(paper))
+        return out
+    return resolve
+
+
 def execute(state: PlannerState, config=None) -> PlannerState:
     """Run this round's batch of tool calls and feed the results back."""
     from hepcoveragekg.query import planner
@@ -161,10 +184,36 @@ def execute(state: PlannerState, config=None) -> PlannerState:
                     "role": "tool", "tool_call_id": call["id"],
                     "content": planner.NUDGE})
                 continue
+
+            # An abstention made while HOLDING relevant rows gets challenged --
+            # once, and for a REASON, never for a different answer.
+            #
+            # Two measured false negatives look exactly like this: the critic
+            # kept 13 candidates and the system still said "the graph does not
+            # record any papers", and on f_CP^Htt it rejected 41 of 42 with
+            # individually correct reasons and then reported nothing found.
+            #
+            # But challenging an abstention is dangerous in a way challenging an
+            # answer is not: "no paper here covers that" is this project's actual
+            # output, and a system taught never to abstain would fabricate
+            # coverage instead. So the challenge asks it to say WHY the rows it
+            # holds do not answer the question. A sound abstention survives that
+            # and is recorded with its justification, which makes it *more*
+            # trustworthy; only the ones that simply gave up change.
+            held = planner.rows_held(session)
+            if (claimed == "not_in_graph" and held
+                    and not session.abstention_challenged):
+                session.abstention_challenged = True
+                state["messages"].append({
+                    "role": "tool", "tool_call_id": call["id"],
+                    "content": planner.ABSTENTION_CHALLENGE.format(held=held)})
+                continue
+
             session.answer = str(args.get("text", "")).strip()
             session.answerable = bool(args.get("answerable", True))
             session.reason = claimed
             session.stopped_because = f"answered ({claimed})"
+            planner.resolve_citations(session, args, _papers_resolver(runtime))
             return state
 
         # Papers handed to an entity tool go to `contents_of` before the id

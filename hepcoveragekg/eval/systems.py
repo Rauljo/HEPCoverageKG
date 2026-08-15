@@ -66,6 +66,8 @@ class Answer:
     # where the CLI stripped `provenance` and the unit test bypassed the CLI.
     reviews: list[dict] = field(default_factory=list)   # what the critic judged
     recovered_calls: int = 0   # tool calls the SERVER's parser missed and we recovered
+    cited: str = ""            # which handles the answer pointed at, if any
+    abstention_challenged: bool = False
     invented_ids: list[str] = field(default_factory=list)
     nudged: bool = False
 
@@ -185,11 +187,17 @@ def from_session(session, conn=None) -> Answer:
         set(getattr(session, "known_entity_ids", set()))
         | {i for ids in session.sets.values() for i in ids}
     )
+    # A CITED answer wins over the reconstructed one. `_papers_of(entity_ids)` is
+    # every paper any retrieved entity appears in -- a retrieval footprint, 39
+    # papers at the median against a gold of 2 -- whereas `answer_papers` is the
+    # set the model actually pointed at. Falling back to the footprint keeps old
+    # runs and uncited answers scoreable.
+    cited_papers = list(getattr(session, "answer_papers", []) or [])
     return Answer(
         text=session.answer,
         answered=bool(session.answerable),
-        papers=_papers_of(conn, entity_ids),
-        value=None,
+        papers=cited_papers or _papers_of(conn, entity_ids),
+        value=getattr(session, "answer_value", None),
         steps=[{"round": s.round, "tool": s.tool, "args": s.args, "rows": s.rows,
                 "error": s.error, "seconds": round(s.seconds, 3),
                 **({"redirected_from": s.redirected_from} if s.redirected_from else {})}
@@ -213,6 +221,8 @@ def from_session(session, conn=None) -> Answer:
                               for v in r.verdicts if not v.kept]}
                  for r in getattr(session, "reviews", [])],
         recovered_calls=getattr(session, "recovered_calls", 0),
+        cited=getattr(session, "answer_cited", ""),
+        abstention_challenged=bool(getattr(session, "abstention_challenged", False)),
         invented_ids=list(getattr(session, "invented_ids", [])),
         nudged=bool(getattr(session, "nudged", False)),
     )

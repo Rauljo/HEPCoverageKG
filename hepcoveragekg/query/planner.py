@@ -109,6 +109,22 @@ NUDGE = (
     "then answer with reason='out_of_scope'."
 )
 
+# Sent when the model abstains while holding rows it has itself judged relevant.
+#
+# Deliberately NOT "answer anyway". A false "not in the graph" is a fabricated
+# claim about the literature, and a false "here is the answer" is worse -- so the
+# only safe challenge is one a correct abstention can pass. Asking for the reason
+# does that: "all 13 are Sherpa 2.2.2 and the question asked for 2.2.1" is a
+# complete response and gets recorded as the justification.
+ABSTENTION_CHALLENGE = (
+    "You are about to report that the graph does not contain this, while holding "
+    "{held} retrieved rows judged relevant to it. That may well be right -- near "
+    "misses are not answers. Say plainly why those rows do NOT answer the "
+    "question, then give your answer. If they genuinely do not, keep "
+    "reason='not_in_graph' and state the mismatch; that is a useful finding, not "
+    "a failure. Do not invent an answer to satisfy this message."
+)
+
 UNKNOWN_ID_MESSAGE = (
     "ERROR: these ids were never returned by a search: {unknown}. "
     "Do not invent ids. Call `search` FIRST, wait for its results, and then use the "
@@ -319,6 +335,26 @@ TOOL_SPECS: list[dict] = [
         },
     },
     {
+        "name": "refine",
+        "description": (
+            "Drop entities you can see do NOT belong, and get back what remains. Saves a new "
+            "set you can count or cite. Use it when a search or a hop returned things that "
+            "are clearly not what the question asked about -- your own judgement, recorded "
+            "with a reason. Nothing is deleted from the original set."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "entity_set": {"type": "string", "description": "the set to refine, e.g. set_1"},
+                "drop_ids": {"type": "array", "items": {"type": "string"},
+                             "description": "entity ids that do not belong"},
+                "reason": {"type": "string",
+                           "description": "why they do not belong -- recorded, not optional"},
+            },
+            "required": ["entity_set", "drop_ids", "reason"],
+        },
+    },
+    {
         "name": "answer",
         "description": (
             "Give the final answer and stop. Call this only when the retrieved rows support "
@@ -328,7 +364,23 @@ TOOL_SPECS: list[dict] = [
         "parameters": {
             "type": "object",
             "properties": {
-                "text": {"type": "string", "description": "the answer, citing what was retrieved"},
+                "text": {"type": "string", "description": "the answer, in prose"},
+                "papers_from": {
+                    "type": "string",
+                    "description": (
+                        "CITE, do not retype. The name of a set whose papers ARE the answer "
+                        "(e.g. set_1_kept) -- the paper list is taken from it. Use this "
+                        "instead of writing arXiv ids into `text`."
+                    ),
+                },
+                "value_from": {
+                    "type": "string",
+                    "description": (
+                        "CITE, do not retype. For a 'how many' question: the name of a set "
+                        "(the answer is how many PAPERS it covers). The number is read from "
+                        "the graph, not counted by eye."
+                    ),
+                },
                 "answerable": {
                     "type": "boolean",
                     "description": "false if you cannot answer from this graph",
@@ -427,6 +479,21 @@ class Session:
 
     # Filled by the graph's `finish` node, so no answer leaves unchecked.
     verification: Any = None
+
+    # What the final answer CITED rather than retyped (S-29, applied to output).
+    # The model wrote 11 arXiv ids into prose at the median and got the wrong
+    # ones: 100% of the papers it named were genuinely retrieved, and only 22.8%
+    # of the gold ones were among them. It is a SELECTION failure, and a citation
+    # cannot select wrongly.
+    answer_papers: list[str] = field(default_factory=list)
+    answer_value: Optional[float] = None
+    answer_cited: str = ""
+
+    # Set when an abstention was challenged for a reason, and what came back.
+    # The challenge asks the model to JUSTIFY, never to answer differently --
+    # a system taught not to abstain would fabricate coverage, which is worse
+    # than the false negatives this is aimed at.
+    abstention_challenged: bool = False
 
     # One `critic.Review` per search, when the critic is on. Kept whole rather
     # than reduced to a count: the ablation needs to know WHICH candidates were
@@ -902,6 +969,34 @@ def build_executor(conn, index, sets: Optional[dict] = None,
                 raise ValueError("facet_entities needs a single `value`")
             return templates.facet_entities(conn, args["field"], value,
                                             kind=args.get("kind"))
+        if tool == "refine":
+            # The answerer's own relevance judgement, made explicit.
+            #
+            # Marking is ADDITIVE and flag-only, exactly as the critic's is: the
+            # original set is untouched and the reason is recorded. The critic
+            # judges retrieval candidates; this lets the model drop what it can
+            # see does not belong once it has looked at the rows -- and the
+            # counting then happens in SQL over what remains, instead of by eye.
+            #
+            # Which is the point. Counting is the measured weak spot (0.50), and
+            # `count` alone cannot express an answer aggregated across several
+            # calls; a set that the model has curated can.
+            source = args["entity_set"]
+            if source not in sets:
+                raise ValueError(
+                    f"no set named '{source}'. Available: {sorted(sets) or 'none yet'}.")
+            drop = {str(x) for x in (args.get("drop_ids") or [])}
+            kept = [i for i in sets[source] if i not in drop]
+            unknown = drop - set(sets[source])
+            name = f"{source}_refined"
+            sets[name] = kept
+            note = (f"saved as {name}: {len(kept)} of {len(sets[source])} kept, "
+                    f"{len(sets[source]) - len(kept)} dropped ({args['reason'][:80]}). "
+                    f"{source} is unchanged. Pass {name} to count, papers_of, or "
+                    f"answer(value_from=...).")
+            if unknown:
+                note += f" {len(unknown)} of the ids given were not in {source} and were ignored."
+            return templates.QueryResult(shape="refine", rows=[], note=note)
         if tool == "count":
             return templates.count(conn, args["predicate"],
                                    ids_for(args, "object_ids", "object_set"))
@@ -930,6 +1025,54 @@ def system_prompt(conn, minimal: bool = False) -> str:
         "Call `answer` when the retrieved rows support an answer, or to say the graph does not "
         "hold what was asked.",
     ])
+
+
+
+def rows_held(session: "Session") -> int:
+    """How many retrieved rows the session is sitting on.
+
+    Used to decide whether an abstention deserves challenging. Counts rows from
+    successful steps rather than set membership, because a set can be large while
+    every hop off it came back empty -- and an abstention there is correct.
+    """
+    return sum(s.rows for s in session.steps if not s.error)
+
+
+def resolve_citations(session: "Session", args: dict,
+                      papers_of: Optional[Callable] = None) -> None:
+    """Turn `papers_from` / `value_from` into the answer's data.
+
+    The output half of S-29. Handles solved retyping ids INTO tools -- the model
+    once wrote 31 ids into one call, 863 tokens, and looped to 6,521 characters
+    on a retry. Nothing solved retyping them OUT: measured on 2026-08-15 the
+    planner named 11 arXiv ids at the median, **100% of them genuinely
+    retrieved**, and hit only 22.8% of the gold papers while retrieval had
+    reached 91.7% of them. That is selection, not hallucination, and a citation
+    cannot select wrongly.
+
+    A cited name that does not exist is left unresolved rather than guessed at,
+    and the session records what was cited so a run can show how often the model
+    used the mechanism at all.
+    """
+    cited = []
+    for key, kind in (("papers_from", "papers"), ("value_from", "value")):
+        name = str(args.get(key) or "").strip()
+        if not name or name not in session.sets:
+            continue
+        # A set holds ENTITY ids. Both the paper list and the count are about
+        # PAPERS -- "how many analyses" means distinct papers, and the number of
+        # entities is an artefact of how many spellings the graph happens to
+        # hold for one thing (56 for Pythia). Resolving through `papers_of` is
+        # what makes the citation mean what the question asked.
+        papers = papers_of(session.sets[name]) if papers_of else None
+        if papers is None:
+            continue
+        cited.append(f"{kind}={name}")
+        if kind == "papers":
+            session.answer_papers = list(papers)
+        else:
+            session.answer_value = float(len(papers))
+    session.answer_cited = ", ".join(cited)
 
 
 def _client():

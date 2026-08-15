@@ -673,3 +673,112 @@ def test_the_critic_marks_rows_and_leaves_the_set_whole(conn, index):
     assert all(row["bears_on"] == C.BROADER for row in result.rows)
     assert "still holds everything" in result.note
     assert len(sets["set_1"]) >= len(sets["set_1_kept"])
+
+
+# -- citing the answer instead of retyping it -------------------------------
+
+def test_the_answer_cites_a_set_instead_of_listing_papers(conn, index):
+    """The output half of S-29. Measured: the planner wrote 11 arXiv ids at the
+    median, 100% of them genuinely retrieved, and hit only 22.8% of the gold
+    papers while retrieval had reached 91.7%. That is selection, and a citation
+    cannot select wrongly."""
+    chat = scripted(
+        _response([_call("search", {"text": "Pythia"})]),
+        _response([_call("answer", {"text": "These analyses use Pythia.",
+                                    "papers_from": "set_1", "value_from": "set_1",
+                                    "answerable": True, "reason": "answered"})]),
+    )
+    s = planner.answer(conn, index, "which analyses use Pythia?", chat=chat)
+    assert s.answer_papers == ["p1"], "the paper list came from the set, not the prose"
+    assert s.answer_value == 1.0, "the count is papers, never the number of entities"
+    assert "papers=set_1" in s.answer_cited and "value=set_1" in s.answer_cited
+
+
+def test_a_citation_naming_nothing_is_left_unresolved_not_guessed(conn, index):
+    chat = scripted(
+        _response([_call("search", {"text": "Pythia"})]),
+        _response([_call("answer", {"text": "x", "papers_from": "set_99",
+                                    "answerable": True, "reason": "answered"})]),
+    )
+    s = planner.answer(conn, index, "q", chat=chat)
+    assert s.answer_papers == [] and s.answer_cited == ""
+
+
+def test_the_count_is_papers_not_entities(conn, index):
+    """A set holds entity ids and the graph keeps 56 spellings of Pythia. "How
+    many analyses" means distinct PAPERS, so citing must resolve through them."""
+    chat = scripted(
+        _response([_call("search", {"text": "Pythia"})]),
+        _response([_call("answer", {"text": "x", "value_from": "set_1",
+                                    "answerable": True, "reason": "answered"})]),
+    )
+    s = planner.answer(conn, index, "how many?", chat=chat)
+    assert s.answer_value == 1.0 and len(s.sets["set_1"]) >= 1
+
+
+# -- refine: the answerer's own relevance marks ------------------------------
+
+def test_refine_drops_ids_additively_and_records_why(conn, index):
+    sets = {"set_1": ["a", "b", "c"]}
+    execute = planner.build_executor(conn, index, sets)
+    result = execute("refine", {"entity_set": "set_1", "drop_ids": ["b"],
+                                "reason": "different generator"})
+    assert sets["set_1"] == ["a", "b", "c"], "the original set is never touched"
+    assert sets["set_1_refined"] == ["a", "c"]
+    assert "different generator" in result.note and "2 of 3 kept" in result.note
+
+
+def test_refine_ignores_ids_that_were_not_in_the_set(conn, index):
+    sets = {"set_1": ["a"]}
+    result = planner.build_executor(conn, index, sets)(
+        "refine", {"entity_set": "set_1", "drop_ids": ["zzz"], "reason": "x"})
+    assert sets["set_1_refined"] == ["a"]
+    assert "were not in set_1" in result.note
+
+
+# -- the abstention challenge ------------------------------------------------
+
+def test_abstaining_while_holding_rows_is_challenged_once(conn, index):
+    """Two measured false negatives had this shape: 13 candidates kept, and the
+    answer was still "the graph does not record any papers"."""
+    chat = scripted(
+        _response([_call("search", {"text": "Pythia"})]),
+        _response([_call("answer", {"text": "not in the graph", "answerable": False,
+                                    "reason": "not_in_graph"})]),
+        _response([_call("answer", {"text": "On reflection, 1 paper does.",
+                                    "answerable": True, "reason": "answered"})]),
+    )
+    s = planner.answer(conn, index, "q", chat=chat)
+    assert s.abstention_challenged is True
+    assert s.reason == "answered"
+
+
+def test_the_challenge_asks_for_a_reason_and_accepts_the_abstention(conn, index):
+    """The dangerous failure mode is teaching the system never to abstain: a
+    false coverage claim is worse than a false negative. A sound abstention must
+    survive the challenge unchanged."""
+    chat = scripted(
+        _response([_call("search", {"text": "Pythia"})]),
+        _response([_call("answer", {"text": "no", "answerable": False,
+                                    "reason": "not_in_graph"})]),
+        _response([_call("answer", {"text": "All hits are Sherpa 2.2.2; the question "
+                                            "asked for 2.2.1.",
+                                    "answerable": False, "reason": "not_in_graph"})]),
+    )
+    s = planner.answer(conn, index, "q", chat=chat)
+    assert s.reason == "not_in_graph", "a justified abstention stands"
+    assert "2.2.1" in s.answer
+    assert planner.ABSTENTION_CHALLENGE.count("Do not invent") == 1
+
+
+def test_abstaining_with_nothing_retrieved_is_not_challenged_twice(conn, index):
+    """The NUDGE already covers the empty case; challenging it too would be two
+    corrections for one mistake."""
+    chat = scripted(
+        _response([_call("answer", {"text": "no", "answerable": False,
+                                    "reason": "not_in_graph"})]),
+        _response([_call("answer", {"text": "still no", "answerable": False,
+                                    "reason": "not_in_graph"})]),
+    )
+    s = planner.answer(conn, index, "q", chat=chat)
+    assert s.nudged is True and s.abstention_challenged is False
