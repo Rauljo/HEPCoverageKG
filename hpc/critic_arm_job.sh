@@ -13,6 +13,15 @@
 #   ARM=ranked    critic on, candidates in retrieval order (the current default)
 #   ARM=shuffled  critic on, candidates shuffled -- the default is in doubt
 #
+#   CONTRACT=v1   the answer as it has always been (default)
+#   CONTRACT=v2   cite a set instead of retyping ids, `refine`, and an
+#                 abstention challenged for its reasons
+#
+# The two cross: {critic off,on} x {answer v1,v2} is a 2x2, and the interaction
+# is the interesting cell -- if citing works, the critic's filtering matters MORE,
+# because a cited set becomes the answer directly instead of being a pool the
+# model picks from.
+#
 # repeats=3, because D-062's +0.025 had no error bar and S-52 says three repeats
 # before comparing anything.
 #
@@ -32,6 +41,11 @@ case "$ARM" in
   shuffled) FLAGS="--critic --critic-seed 20260815" ;;
   *) echo "unknown ARM=$ARM"; exit 2 ;;
 esac
-echo "host=$(hostname)  arm=$ARM  questions=$QUESTIONS  flags='$FLAGS'"
+case "${CONTRACT:-v1}" in
+  v1) ;;
+  v2) FLAGS="$FLAGS --answer-contract" ;;
+  *) echo "unknown CONTRACT=$CONTRACT"; exit 2 ;;
+esac
+echo "host=$(hostname)  arm=$ARM  contract=${CONTRACT:-v1}  questions=$QUESTIONS  flags='$FLAGS'"
 .venv/bin/python -m hepcoveragekg.cli eval run "$QUESTIONS" \
     --system planner --repeats 3 $FLAGS
