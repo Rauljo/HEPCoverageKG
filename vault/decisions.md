@@ -1447,3 +1447,88 @@ same failure as claiming a fix that did not run -- just in the opposite directio
 *Standing consequence*: the database is an input to every measurement and is not under version
 control. Its identity has to be checked, not assumed -- row counts for `entity`, `entity_canonical`
 and `entity_facet` are enough to tell two builds apart, and belong in the run metadata.
+
+---
+
+### D-062 (2026-08-15) — the query critic, measured: it does not pay for itself yet
+2,508 questions per arm, nine shards each, same commit, same graph, one flag apart, aligned on all
+2,508 shared `(qid, repeat)` pairs. The critic ran properly: **1,074 searches judged, 50,496
+candidates, 3,599 calls, zero critic errors**.
+
+| metric | control | critic | delta |
+|---|---|---|---|
+| count correct | 0.486 | 0.511 | **+0.025** |
+| set recall | 0.917 | 0.734 | **-0.183** |
+| set F1 | 0.137 | 0.111 | -0.026 |
+| abstained | 0.018 | 0.062 | +0.044 |
+| errored | **0** | **0.046** | +0.046 |
+| seconds/question | 27.0 | 60.1 | **x2.2** |
+| entities retrieved | 58 | 41.8 | -16.2 |
+| evidence quotes | 58.3 | 25.8 | -32.5 |
+
+**The honest reading: a 2.5-point gain on the headline metric, bought with 2.2x the wall-clock, 18
+points of set recall, and a 4.6% error rate that was zero.** And the 2.5 points have **no error
+bar** -- `repeats=1`, so `compare` cannot print a noise floor, and S-52 says three repeats before
+comparing anything. It is not yet distinguishable from run-to-run variation.
+
+*The 116 errors are all one thing*: `TimeoutError: no answer within 180s`. Not a logic fault --
+the critic simply makes sessions slow enough that 4.6% hit the runner's wall.
+
+*It is very aggressive*: **38,045 of 50,496 candidates marked `unrelated` (75%)**, against 6,305
+`exact` and 6,146 `broader`.
+
+#### Three mechanism findings, each fixable
+
+**1. The widen loop never fired -- 0 widened searches -- and I caused it.** `should_widen` requires
+a tail keep-rate >= 0.5, and a critic marking 75% unrelated almost never has one. D-060 decision 9
+says in as many words that *flagging may be strict but widening must be generous*; I then fed both
+from the same verdicts. So the ceiling measurement that motivated the whole stopping rule (64.8% of
+Tier B searches truncated) went untested. The widen signal needs its own, looser threshold -- or to
+count `exact` at the tail rather than `kept`.
+
+**2. The `chunk60` arm is not a measurement of chunk size.** 2,087 of its 2,099 verdicts
+**defaulted**: sixty verdicts do not fit in `MAX_COMPLETION_TOKENS = 800`, so the reply truncated
+and the parser found almost nothing. "Chunking earns its calls" is therefore **unmeasured**.
+*But it is an excellent live demonstration of the defaulting asymmetry*: 2,087 unparseable verdicts
+became **keeps, not silent drops**, and the arm reports `defaulted=2087` rather than a suspiciously
+clean 100% keep rate. The guard did exactly its job on a case I did not anticipate.
+
+**3. Position bias is real and large.** Two shuffles of the same candidates, same model,
+temperature 0: **21.7% of rungs and 16.6% of keep/drop decisions flip**. One decision in six depends
+on where the candidate sat in the prompt.
+
+#### And a result that contradicts the design decision behind it
+`ranked vs shuffled` moves 19.5% of keep decisions against a shuffle-vs-shuffle floor of 16.6% --
+so only about **3 points** is the ranking signal. The critic is mostly *not* restating BM25; it is
+mostly noisy.
+
+Worse for the chosen default, keep-rate by TRUE retrieval rank:
+
+```
+ranked    [0.422, 0.393, 0.350, 0.273]     gentle slope
+shuffleA  [0.529, 0.357, 0.276, 0.243]     steeper
+shuffleB  [0.511, 0.319, 0.243, 0.210]     steeper
+```
+
+**The shuffled arms discriminate by true rank BETTER than the ranked arm.** Plausible mechanism: in
+rank order each chunk is homogeneous -- chunk 1 all plausible, chunk 4 all marginal -- so the model
+calibrates within the chunk; a shuffled chunk contains a mix and can be compared against itself.
+
+That is evidence *against* D-060 decision 4 (ranked by default), which was chosen to protect the
+best candidate from the lost-in-the-middle effect. The protection appears to cost more than it
+saves. **Not yet acted on** -- it is one measurement, on 37 searches, and it should be repeated with
+`repeats>=3` before a default changes on it.
+
+#### The gate is marginal, not passed
+In-job it read **4/30 (13.3%)** on the `Pythia question / jet-energy-scale search` control, against
+0/30 and 2/30 in two standalone runs an hour earlier. Same prompt, same model, temperature 0 -- the
+spread is vLLM's batching non-determinism. A 10% threshold is inside the run-to-run noise, so the
+gate needs either a wider band or repeats of its own. The failing verdicts are the old shape:
+*"This is a systematic uncertainty related to jet energy scale"* -- correct reasoning, wrong label --
+now at 13% instead of 100%.
+
+#### What this means for the arm
+Not "the critic does not work". It works, it is measurably aggressive, and every cost above has a
+named mechanism. What it does not yet have is a reason to be switched on: **before running it again,
+fix the widen signal, re-measure with repeats>=3, and settle ranked-vs-shuffled on evidence rather
+than on the argument that lost the moment it was tested.**
