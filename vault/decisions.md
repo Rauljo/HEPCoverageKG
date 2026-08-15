@@ -1684,3 +1684,36 @@ timeout, not the judgement. The run in flight, at 600 s, separates them.
 
 *Also*: `set_jaccard` reported nothing -- the paraphrase pairs in this set are all count-shaped, so
 the set half of the measure is untested and awaits a question set that pairs them.
+
+### D-062 addendum — adjudicating the 11 losses: none of them is the critic over-filtering
+Read by hand, with the critic's own recorded drop reasons beside each.
+
+| verdict | n | reading |
+|---|---|---|
+| timeout | 3 | infrastructure; the 180 s wall, since raised |
+| **over-counted** | **6** | claimed 3, 10, 36, 6, 14, 45 against golds of 2, 2, 3, 5, 2, 2 -- filtered too LITTLE |
+| said nothing found | 1 | the answering step failed *while holding kept candidates* |
+| under-counted | 1 | the only shape consistent with over-filtering |
+
+**Not one of the eleven is the critic dropping a correct answer**, which is what "the critic lost us
+11 questions" naturally reads as. Six are the opposite failure -- the critic did not cut enough, and
+the system still answered 45 papers where the gold says 2.
+
+*The one under-count, examined*: "V+jets (QCD/EW) simulation sample (Sherpa 2.2.1)", gold 4, answered
+0. Its drops are **correct physics** -- `vjets_powheg_symmetry` rejected as *"a V+jets sample but a
+different generator (Powheg)"*, `wz-zz-jets-nominal` as *"Sherpa 2.2.2 instead of 2.2.1"*. The
+question names 2.2.1 specifically. And the critic **kept 13 candidates** and the system still said
+"the graph does not record any papers". So even this one is the answering step, not the filter.
+
+*The same pattern in the other "nothing found"*: f_CP^Htt, where 41 of 42 candidates were dropped
+with reasons that are each individually right -- f_SM, mu_f, pT^H, f_LR^Z and f_LR^W are genuinely
+different observables -- and the answer was still a false negative.
+
+**So the recurring failure is not the filter, it is what happens after it.** A harsh verdict does
+push the system toward giving up, but only mildly: abstention runs 1.3% / 1.9% / 3.5% as the dropped
+share rises through 0-50% / 50-80% / 80-100%, against 1.8% in the control. Real, and far too small to
+explain the false negatives above.
+
+*Consequence*: the next thing worth fixing is not the critic's judgement but the step that turns
+kept rows into an answer -- consistent with the separate finding that gold papers sit in the
+retrieval footprint 91.7% of the time and are named in the answer 22.8% of the time.
