@@ -748,7 +748,7 @@ def test_abstaining_while_holding_rows_is_challenged_once(conn, index):
         _response([_call("answer", {"text": "On reflection, 1 paper does.",
                                     "answerable": True, "reason": "answered"})]),
     )
-    s = planner.answer(conn, index, "q", chat=chat)
+    s = planner.answer(conn, index, "q", chat=chat, answer_contract=True)
     assert s.abstention_challenged is True
     assert s.reason == "answered"
 
@@ -765,7 +765,7 @@ def test_the_challenge_asks_for_a_reason_and_accepts_the_abstention(conn, index)
                                             "asked for 2.2.1.",
                                     "answerable": False, "reason": "not_in_graph"})]),
     )
-    s = planner.answer(conn, index, "q", chat=chat)
+    s = planner.answer(conn, index, "q", chat=chat, answer_contract=True)
     assert s.reason == "not_in_graph", "a justified abstention stands"
     assert "2.2.1" in s.answer
     assert planner.ABSTENTION_CHALLENGE.count("Do not invent") == 1
@@ -780,5 +780,16 @@ def test_abstaining_with_nothing_retrieved_is_not_challenged_twice(conn, index):
         _response([_call("answer", {"text": "still no", "answerable": False,
                                     "reason": "not_in_graph"})]),
     )
-    s = planner.answer(conn, index, "q", chat=chat)
+    s = planner.answer(conn, index, "q", chat=chat, answer_contract=True)
     assert s.nudged is True and s.abstention_challenged is False
+
+
+def test_the_challenge_does_not_fire_under_the_v1_contract(conn, index):
+    """v1 must be byte-for-byte what it was, or the arms differ by two things."""
+    chat = scripted(
+        _response([_call("search", {"text": "Pythia"})]),
+        _response([_call("answer", {"text": "no", "answerable": False,
+                                    "reason": "not_in_graph"})]),
+    )
+    s = planner.answer(conn, index, "q", chat=chat)
+    assert s.abstention_challenged is False and s.reason == "not_in_graph"

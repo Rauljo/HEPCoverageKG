@@ -490,6 +490,7 @@ def _cmd_eval(args) -> int:
             minimal_prompt=args.minimal_prompt,
             use_critic=args.critic,
             critic_seed=args.critic_seed,
+            answer_contract=args.answer_contract,
         )
     else:
         print(f"unknown system {args.system!r}", file=sys.stderr)
@@ -650,6 +651,13 @@ def build_parser() -> argparse.ArgumentParser:
     # arms discriminated by true retrieval rank BETTER than ranked did, which is
     # the opposite of what the default was chosen for. This makes that a third
     # arm rather than an argument.
+    # The v2 answer contract: cite a set instead of retyping ids, `refine` to
+    # mark rows out, and a challenged abstention. An ARM, not a default -- it
+    # adds a tool and changes `answer`'s schema, so a run with it differs from
+    # one without by more than the thing under test.
+    p_eval.add_argument("--answer-contract", action="store_true",
+                        help="planner: cite sets in the answer, allow `refine`, "
+                             "and challenge an abstention held against evidence")
     p_eval.add_argument("--critic-seed", type=int, default=None,
                         help="planner: shuffle the candidates the critic sees, "
                              "with this seed. Omit for retrieval order.")

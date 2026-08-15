@@ -598,3 +598,26 @@ def test_the_claimed_number_is_extracted_so_direction_is_visible():
     assert scoring.claimed_count(q, _a(text="12 analyses use it."))["count_error"] == -26.0
     assert scoring.claimed_count(q, _a(text="1,286 papers"))["claimed_count"] == 1286.0
     assert scoring.claimed_count(q, _a(text="no number at all")) is None
+
+
+def test_the_answer_contract_is_its_own_arm():
+    """It adds a tool and changes `answer`'s schema, so a run with it is a
+    different system -- the config hash has to say so."""
+    from hepcoveragekg.eval import systems
+
+    v1 = systems.PlannerSystem(None, None, max_rounds=6, answer_contract=False)
+    v2 = systems.PlannerSystem(None, None, max_rounds=6, answer_contract=True)
+    assert systems.config_hash(v1.config) != systems.config_hash(v2.config)
+
+
+def test_the_v1_tool_list_is_unchanged_by_the_new_contract():
+    """The arms differ by one flag only if v1 is byte-for-byte what it was."""
+    from hepcoveragekg.query import planner
+
+    v1 = {t["name"] for t in planner.tools_for(False)}
+    assert "refine" not in v1
+    answer = [t for t in planner.tools_for(False) if t["name"] == "answer"][0]
+    assert set(answer["parameters"]["properties"]) == {"text", "answerable", "reason"}
+    # and the module constant must not have been mutated by building v1
+    spec = [t for t in planner.TOOL_SPECS if t["name"] == "answer"][0]
+    assert "papers_from" in spec["parameters"]["properties"]

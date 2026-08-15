@@ -404,6 +404,32 @@ TOOL_SPECS: list[dict] = [
 ]
 
 
+# Tools that exist only under the v2 answer contract, and the `answer` fields
+# that go with them. Switchable because they are an ABLATION ARM, not a
+# refactor: adding a tool changes the tool list the model sees, and changing
+# `answer`'s schema changes the prompt, so a run with them differs from one
+# without by more than the thing under test. Every comparison this week that
+# went wrong went wrong exactly there.
+V2_TOOLS = ("refine",)
+V2_ANSWER_FIELDS = ("papers_from", "value_from")
+
+
+def tools_for(answer_contract: bool = False) -> list[dict]:
+    """The tool schemas for one run. `answer_contract` turns the v2 answer on."""
+    import copy
+
+    specs = []
+    for spec in TOOL_SPECS:
+        if spec["name"] in V2_TOOLS and not answer_contract:
+            continue
+        if spec["name"] == "answer" and not answer_contract:
+            spec = copy.deepcopy(spec)
+            for field_name in V2_ANSWER_FIELDS:
+                spec["parameters"]["properties"].pop(field_name, None)
+        specs.append(spec)
+    return specs
+
+
 @dataclass
 class Step:
     """One tool call and what came back. The unit of the trace."""
@@ -796,7 +822,8 @@ def _render_rows(rows: list[dict], max_rows: int) -> str:
 
 
 def build_executor(conn, index, sets: Optional[dict] = None,
-                   critic: Optional[Callable] = None) -> Callable[[str, dict], Any]:
+                   critic: Optional[Callable] = None,
+                   answer_contract: bool = False) -> Callable[[str, dict], Any]:
     """Bind the tools to this database, index and set of named results.
 
     Returned as a closure so the planner never holds a connection itself and
@@ -1162,7 +1189,8 @@ def _build_critic(question: str, session: Session, use_critic, seed=None):
 
 
 def _prepare(conn, index, question, max_rounds, max_places, max_rows,
-             minimal_prompt, chat, thread_id, use_critic=None, critic_seed=None):
+             minimal_prompt, chat, thread_id, use_critic=None, critic_seed=None,
+             answer_contract=False):
     """The state and runtime config a run needs. Shared by answer() and stream()."""
     session = Session(question=question)
     if chat is None:
@@ -1190,9 +1218,12 @@ def _prepare(conn, index, question, max_rounds, max_places, max_rows,
         "chat": chat,
         "execute": build_executor(conn, index, session.sets,
                                   critic=_build_critic(question, session, use_critic,
-                                                       critic_seed)),
-        "tools": [{"type": "function", "function": spec} for spec in TOOL_SPECS],
+                                                       critic_seed),
+                                  answer_contract=answer_contract),
+        "tools": [{"type": "function", "function": spec}
+                  for spec in tools_for(answer_contract)],
     }
+    runtime["answer_contract"] = bool(answer_contract)
     config = {"configurable": runtime, "recursion_limit": max_rounds * 3 + 6}
     return session, state, config
 
@@ -1210,6 +1241,7 @@ def stream(
     thread_id: str = "default",
     use_critic: Any = None,
     critic_seed: Optional[int] = None,
+    answer_contract: bool = False,
 ):
     """Yield `(node_name, session)` after each node completes.
 
@@ -1221,7 +1253,8 @@ def stream(
 
     session, state, config = _prepare(conn, index, question, max_rounds,
                                       max_places, max_rows, minimal_prompt,
-                                      chat, thread_id, use_critic, critic_seed)
+                                      chat, thread_id, use_critic, critic_seed,
+                                      answer_contract)
     started = time.perf_counter()
     app = graph_module.build(checkpointer=checkpointer)
     for update in app.stream(state, config=config, stream_mode="updates"):
@@ -1244,6 +1277,7 @@ def answer(
     thread_id: str = "default",
     use_critic: Any = None,
     critic_seed: Optional[int] = None,
+    answer_contract: bool = False,
 ) -> Session:
     """Answer one question, returning the answer and the whole trace.
 
@@ -1263,7 +1297,8 @@ def answer(
     started = time.perf_counter()
     session, state, config = _prepare(conn, index, question, max_rounds,
                                       max_places, max_rows, minimal_prompt,
-                                      chat, thread_id, use_critic, critic_seed)
+                                      chat, thread_id, use_critic, critic_seed,
+                                      answer_contract)
     graph_module.build(checkpointer=checkpointer).invoke(state, config=config)
 
     session.seconds = time.perf_counter() - started
