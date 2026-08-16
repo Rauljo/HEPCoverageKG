@@ -1258,8 +1258,15 @@ def _build_critic(question: str, session: Session, use_critic, seed=None):
                     model=model, messages=messages, temperature=0.0,
                     max_tokens=MAX_COMPLETION_TOKENS)
 
-            return critic_mod.judge_candidates(chat, question, search_text, hits,
-                                               seed=seed)
+            # A small judge needs the demonstration-led prompt: on 2026-08-17
+            # the 8B went from 38.9%/86.7% kept on two all-drop controls to
+            # 3.3%/3.3% when the comparison was made structural and the examples
+            # balanced. Chosen by which endpoint the critic is on, so a run says
+            # what it used rather than depending on an operator remembering.
+            small = bool(os.environ.get("CRITIC_BASE_URL"))
+            return critic_mod.judge_candidates(
+                chat, question, search_text, hits, seed=seed,
+                prompt=critic_mod.SMALL_PROMPT if small else None)
 
     def _chat(messages):
         return client.chat.completions.create(
