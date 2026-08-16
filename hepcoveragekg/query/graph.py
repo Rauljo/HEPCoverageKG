@@ -257,10 +257,15 @@ def execute(state: PlannerState, config=None) -> PlannerState:
                 body += f"\n[{result.note}]"
             if redirect:
                 body += f"\n[{redirect}]"
-            session.steps.append(planner.Step(state["round"], name, args,
-                                              rows=len(result.rows), seconds=elapsed,
-                                              preview=body[:200],
-                                              redirected_from=asked_for if redirect else None))
+            session.steps.append(planner.Step(
+                state["round"], name, args,
+                rows=len(result.rows), seconds=elapsed, preview=body[:200],
+                redirected_from=asked_for if redirect else None,
+                # kept only for tools whose single row IS an answer, so
+                # `answer(value_from=...)` can lift the number rather than the
+                # model retyping it or the harness re-deriving it
+                result=(dict(result.rows[0]) if name in planner.ANSWER_SHAPED
+                        and result.rows else None)))
             state["messages"].append({"role": "tool", "tool_call_id": call["id"],
                                       "content": body})
         except Exception as exc:  # noqa: BLE001 -- the planner must see any failure

@@ -376,9 +376,11 @@ TOOL_SPECS: list[dict] = [
                 "value_from": {
                     "type": "string",
                     "description": (
-                        "CITE, do not retype. For a 'how many' question: the name of a set "
-                        "(the answer is how many PAPERS it covers). The number is read from "
-                        "the graph, not counted by eye."
+                        "CITE, do not retype. For a 'how many' question: which `count` call "
+                        "holds the answer -- 'step_3', or just 'count' for the last one. The "
+                        "number is lifted from that result, so call `count` first and cite it "
+                        "rather than tallying rows by eye. A set cannot be cited here: its "
+                        "size is how wide the search was, not the answer."
                     ),
                 },
                 "answerable": {
@@ -454,6 +456,11 @@ class Step:
     # would make the planner look as though it had chosen correctly, and tool
     # selection is something this project measures (S-49).
     redirected_from: Optional[str] = None
+    # The result itself, for the few tools whose output IS an answer rather than
+    # a list to read. Kept so `answer(value_from=...)` can lift the number
+    # straight out instead of the model retyping it or the harness re-deriving
+    # it -- one row of three integers, not a transcript.
+    result: Optional[dict] = None
 
 
 @dataclass
@@ -707,6 +714,11 @@ _CLAIMED_IN_TEXT = re.compile(
     r"\b(\d[\d,]*)\s+(?:distinct\s+|different\s+|unique\s+)?"
     r"(?:papers?|analyses|analysis|studies)\b", re.I)
 PAPER_ID_PREFIX = "hepkg:paper:arxiv:"
+
+# Tools whose single row IS an answer, so it is worth keeping. `count` is the
+# one that matters: it reports how many PAPERS carry an assertion, which is what
+# "how many analyses..." asks. Everything else returns rows to be read.
+ANSWER_SHAPED = {"count"}
 
 # Which entity tool means which `contents_of` call when handed a paper.
 _PAPER_REDIRECT = {"describe": "entity_ids", "count": "object_ids"}
@@ -1094,52 +1106,57 @@ def resolve_citations(session: "Session", args: dict,
     """Turn `papers_from` / `value_from` into the answer's data.
 
     The output half of S-29. Handles solved retyping ids INTO tools -- the model
-    once wrote 31 ids into one call, 863 tokens, and looped to 6,521 characters
-    on a retry. Nothing solved retyping them OUT: measured on 2026-08-15 the
-    planner named 11 arXiv ids at the median, **100% of them genuinely
-    retrieved**, and hit only 22.8% of the gold papers while retrieval had
-    reached 91.7% of them. That is selection, not hallucination, and a citation
-    cannot select wrongly.
+    once wrote 31 ids into one call, 863 tokens, looping to 6,521 characters on a
+    retry. Nothing solved retyping them OUT: measured 2026-08-15, the planner
+    named 11 arXiv ids at the median, **100% genuinely retrieved**, and hit only
+    22.8% of the gold papers while retrieval had reached 91.7%. Selection, not
+    hallucination -- and a citation cannot select wrongly.
 
-    A cited name that does not exist is left unresolved rather than guessed at,
-    and the session records what was cited so a run can show how often the model
-    used the mechanism at all.
+    **CITE A RESULT, NEVER AN INPUT.** The first version of this took the number
+    from a SET, by counting the papers its entities appear in. That was wrong
+    twice over, measured on 2026-08-16 for a question whose gold is 2:
+
+        count(result_has_systematic, set) ->  36 papers   the question asked
+        papers_of(set)                    ->  77 papers   what was resolved
+
+    `papers_of` is predicate-blind -- it answers "where do these entities appear
+    at all", not "which papers record this assertion" (the D-043 discrepancy, in
+    a new place). So the harness took the number away from the model and
+    re-derived it by a route that ignored the question. v1, where the model reads
+    the figure off `count` and types it, scored 0.220 against v2's 0.179: the
+    mechanism was losing to the transcription it replaced.
+
+    A value now cites a STEP whose result is an answer -- in practice a `count`
+    call, which reports papers, facts and assertions for a predicate over a set.
+    A paper LIST still cites a set, because there the set genuinely is the answer.
     """
     cited = []
-    for key, kind in (("papers_from", "papers"), ("value_from", "value")):
-        name = str(args.get(key) or "").strip()
-        if not name or name not in session.sets:
-            continue
-        # A RAW search set is not an answer. Measured on 2026-08-16: 441 of 650
-        # citations pointed at one, and the resolved value had a median of 35
-        # against a gold median of 2 -- because a raw set is everything the
-        # search touched, so citing it reports retrieval BREADTH as the count.
-        # That is the footprint failure `set_f1` already had, reappearing here.
-        #
-        # Only a set the model has narrowed may be cited for a value: `_kept`
-        # (the critic's) or `_refined` (its own). Refusing is the right response
-        # rather than resolving anyway -- an unusable number that looks like an
-        # answer is worse than no number, and the caller turns this into a
-        # corrective message the way the invented-id guard does.
-        if kind == "value" and not name.endswith(("_kept", "_refined")):
-            session.citation_refused = (
-                f"value_from={name} is a raw search set, so its paper count is "
-                f"how wide the search was, not the answer. Narrow it first with "
-                f"`refine`, then cite that -- or give the number in the text.")
-            continue
-        # A set holds ENTITY ids. Both the paper list and the count are about
-        # PAPERS -- "how many analyses" means distinct papers, and the number of
-        # entities is an artefact of how many spellings the graph happens to
-        # hold for one thing (56 for Pythia). Resolving through `papers_of` is
-        # what makes the citation mean what the question asked.
+
+    name = str(args.get("papers_from") or "").strip()
+    if name and name in session.sets:
+        # A set holds ENTITY ids while the answer is about PAPERS -- the graph
+        # keeps 56 spellings of Pythia, and no question is asking about
+        # spellings. Resolving through `papers_of` is right HERE, where the
+        # question is "which analyses", and wrong for a count.
         papers = papers_of(session.sets[name]) if papers_of else None
-        if papers is None:
-            continue
-        cited.append(f"{kind}={name}")
-        if kind == "papers":
+        if papers is not None:
             session.answer_papers = list(papers)
+            cited.append(f"papers={name}")
+
+    ref = str(args.get("value_from") or "").strip()
+    if ref:
+        step = _step_by_ref(session, ref)
+        if step is None or not step.result:
+            session.citation_refused = (
+                f"value_from={ref} does not name a result that holds a number. "
+                f"Cite the `count` call that answers the question -- counting is "
+                f"what it is for, and it respects the predicate. A set cannot be "
+                f"cited for a number: its size is how wide the search was."
+            )
         else:
-            session.answer_value = float(len(papers))
+            session.answer_value = float(step.result.get("papers", 0))
+            cited.append(f"value={ref}")
+
     session.answer_cited = ", ".join(cited)
 
     # If the prose states a number AND a citation resolved to a different one,
@@ -1152,6 +1169,24 @@ def resolve_citations(session: "Session", args: dict,
             spoken = float(stated.group(1).replace(",", ""))
             if spoken != session.answer_value:
                 session.citation_disagrees = (spoken, session.answer_value)
+
+
+def _step_by_ref(session: "Session", ref: str):
+    """The step a citation names: `step_3`, `3`, or the tool's own name.
+
+    Lenient about the spelling because the alternative is refusing a citation
+    over punctuation and sending the model back to typing numbers. When a bare
+    tool name matches several steps the LAST is taken -- a planner that counts
+    twice has refined its answer, not changed the subject.
+    """
+    token = ref.strip().lower().removeprefix("step_").removeprefix("step ")
+    if token.isdigit():
+        index = int(token) - 1
+        if 0 <= index < len(session.steps):
+            return session.steps[index]
+        return None
+    matches = [s for s in session.steps if s.tool == token and s.result]
+    return matches[-1] if matches else None
 
 
 def _client():

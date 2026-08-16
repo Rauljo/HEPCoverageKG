@@ -684,18 +684,17 @@ def test_the_answer_cites_a_set_instead_of_listing_papers(conn, index):
     cannot select wrongly."""
     chat = scripted(
         _response([_call("search", {"text": "Pythia"})]),
-        _response([_call("refine", {"entity_set": "set_1", "drop_ids": [],
-                                    "reason": "all belong"})]),
+        _response([_call("count", {"predicate": "uses_generator",
+                                   "object_set": "set_1"})]),
         _response([_call("answer", {"text": "These analyses use Pythia.",
-                                    "papers_from": "set_1",
-                                    "value_from": "set_1_refined",
+                                    "papers_from": "set_1", "value_from": "count",
                                     "answerable": True, "reason": "answered"})]),
     )
     s = planner.answer(conn, index, "which analyses use Pythia?", chat=chat,
                        answer_contract=True)
     assert s.answer_papers == ["p1"], "the paper list came from the set, not the prose"
-    assert s.answer_value == 1.0, "the count is papers, never the number of entities"
-    assert "papers=set_1" in s.answer_cited and "value=set_1" in s.answer_cited
+    assert s.answer_value == 1.0, "the number came from the count call's result"
+    assert "papers=set_1" in s.answer_cited and "value=count" in s.answer_cited
 
 
 def test_a_citation_naming_nothing_is_left_unresolved_not_guessed(conn, index):
@@ -708,18 +707,19 @@ def test_a_citation_naming_nothing_is_left_unresolved_not_guessed(conn, index):
     assert s.answer_papers == [] and s.answer_cited == ""
 
 
-def test_the_count_is_papers_not_entities(conn, index):
-    """A set holds entity ids and the graph keeps 56 spellings of Pythia. "How
-    many analyses" means distinct PAPERS, so citing must resolve through them."""
+def test_the_cited_number_comes_from_count_not_from_set_size(conn, index):
+    """`count` respects the predicate; a set's paper count does not. Measured on
+    a gold-of-2 question: count said 36, papers_of said 77."""
     chat = scripted(
         _response([_call("search", {"text": "Pythia"})]),
-        _response([_call("refine", {"entity_set": "set_1", "drop_ids": [],
-                                    "reason": "all belong"})]),
-        _response([_call("answer", {"text": "x", "value_from": "set_1_refined",
+        _response([_call("count", {"predicate": "uses_generator",
+                                   "object_set": "set_1"})]),
+        _response([_call("answer", {"text": "x", "value_from": "step_2",
                                     "answerable": True, "reason": "answered"})]),
     )
     s = planner.answer(conn, index, "how many?", chat=chat, answer_contract=True)
-    assert s.answer_value == 1.0 and len(s.sets["set_1"]) >= 1
+    assert s.answer_value == 1.0
+    assert s.steps[1].result is not None, "the count result is retained to be cited"
 
 
 # -- refine: the answerer's own relevance marks ------------------------------
@@ -849,22 +849,23 @@ def test_building_one_contract_cannot_mutate_the_other():
     assert _fingerprint(planner.tools_for(False)) == before
 
 
-def test_citing_a_raw_search_set_for_a_number_is_refused(conn, index):
-    """A raw set is everything the search touched. Measured on 2026-08-16: 441 of
-    650 citations pointed at one, and the resolved value had a median of 35
-    against a gold median of 2 -- retrieval BREADTH reported as the answer."""
+def test_citing_a_set_for_a_number_is_refused(conn, index):
+    """A set's size is how wide the search was. Measured 2026-08-16: 441 of 650
+    citations pointed at a set and resolved to a median of 35 against a gold
+    median of 2 -- and even a NARROWED set is wrong, because `papers_of` ignores
+    the predicate entirely."""
     chat = scripted(
         _response([_call("search", {"text": "Pythia"})]),
         _response([_call("answer", {"text": "x", "value_from": "set_1",
                                     "answerable": True, "reason": "answered"})]),
-        _response([_call("refine", {"entity_set": "set_1", "drop_ids": [],
-                                    "reason": "checked"})]),
-        _response([_call("answer", {"text": "x", "value_from": "set_1_refined",
+        _response([_call("count", {"predicate": "uses_generator",
+                                   "object_set": "set_1"})]),
+        _response([_call("answer", {"text": "x", "value_from": "count",
                                     "answerable": True, "reason": "answered"})]),
     )
     s = planner.answer(conn, index, "how many?", chat=chat, answer_contract=True)
     assert s.citation_corrected is True, "the model must be told, not silently ignored"
-    assert s.answer_value == 1.0, "and it recovers by citing the narrowed set"
+    assert s.answer_value == 1.0, "and it recovers by citing the count"
 
 
 def test_a_refused_citation_does_not_end_the_session_with_a_bare_answer(conn, index):
@@ -886,10 +887,10 @@ def test_prose_and_citation_disagreeing_is_recorded(conn, index):
     scored as though it had one number."""
     chat = scripted(
         _response([_call("search", {"text": "Pythia"})]),
-        _response([_call("refine", {"entity_set": "set_1", "drop_ids": [],
-                                    "reason": "x"})]),
+        _response([_call("count", {"predicate": "uses_generator",
+                                   "object_set": "set_1"})]),
         _response([_call("answer", {"text": "There are 22 analyses.",
-                                    "value_from": "set_1_refined",
+                                    "value_from": "count",
                                     "answerable": True, "reason": "answered"})]),
     )
     s = planner.answer(conn, index, "how many?", chat=chat, answer_contract=True)
@@ -899,11 +900,43 @@ def test_prose_and_citation_disagreeing_is_recorded(conn, index):
 def test_agreeing_prose_and_citation_records_no_disagreement(conn, index):
     chat = scripted(
         _response([_call("search", {"text": "Pythia"})]),
-        _response([_call("refine", {"entity_set": "set_1", "drop_ids": [],
-                                    "reason": "x"})]),
+        _response([_call("count", {"predicate": "uses_generator",
+                                   "object_set": "set_1"})]),
         _response([_call("answer", {"text": "There is 1 paper.",
-                                    "value_from": "set_1_refined",
+                                    "value_from": "count",
                                     "answerable": True, "reason": "answered"})]),
     )
     s = planner.answer(conn, index, "how many?", chat=chat, answer_contract=True)
     assert s.citation_disagrees is None
+
+
+def test_a_step_can_be_cited_by_number_or_by_tool_name(conn, index):
+    """Lenient on spelling, because refusing a citation over punctuation sends
+    the model back to typing numbers -- which is the thing being replaced."""
+    from types import SimpleNamespace
+    s = planner.Session(question="q")
+    s.steps = [planner.Step(1, "search", {}, rows=3),
+               planner.Step(2, "count", {}, rows=1, result={"papers": 7}),
+               planner.Step(3, "count", {}, rows=1, result={"papers": 4})]
+    for ref, expect in (("step_2", 7), ("2", 4 if False else 7), ("step 2", 7),
+                        ("count", 4), ("COUNT", 4)):
+        s.answer_value = None
+        planner.resolve_citations(s, {"value_from": ref})
+        assert s.answer_value == expect, f"{ref!r} resolved to {s.answer_value}"
+
+
+def test_a_bare_tool_name_takes_the_LAST_matching_step(conn, index):
+    """A planner that counts twice has refined its answer, not changed subject."""
+    s = planner.Session(question="q")
+    s.steps = [planner.Step(1, "count", {}, rows=1, result={"papers": 99}),
+               planner.Step(2, "count", {}, rows=1, result={"papers": 5})]
+    planner.resolve_citations(s, {"value_from": "count"})
+    assert s.answer_value == 5
+
+
+def test_citing_a_step_that_holds_no_number_is_refused(conn, index):
+    s = planner.Session(question="q")
+    s.steps = [planner.Step(1, "search", {}, rows=60)]
+    planner.resolve_citations(s, {"value_from": "step_1"})
+    assert s.answer_value is None
+    assert "does not name a result that holds a number" in s.citation_refused
