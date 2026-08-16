@@ -1189,6 +1189,33 @@ def _step_by_ref(session: "Session", ref: str):
     return matches[-1] if matches else None
 
 
+def _critic_client():
+    """The endpoint the CRITIC talks to, which need not be the planner's.
+
+    Separate because the critic is 48% of all LLM calls and its task is narrow
+    -- short prompt, fifteen candidates, structured JSON back -- so it is the
+    obvious place to put a small model and leave the 72B to answer. Splitting
+    the endpoints is what makes that measurable rather than hypothetical.
+
+    Falls back to the planner's client when unset, so every existing run and
+    every test keeps its current behaviour and the split is an ablation arm
+    rather than a change of default.
+    """
+    from openai import OpenAI
+    from dotenv import load_dotenv
+
+    load_dotenv()
+    base = os.environ.get("CRITIC_BASE_URL")
+    if not base:
+        return _client()
+    return OpenAI(
+        base_url=base,
+        api_key=os.environ.get("LLM_API_KEY", "dummy"),
+        timeout=float(os.environ.get("LLM_TIMEOUT", 120)),
+        max_retries=int(os.environ.get("LLM_MAX_RETRIES", 3)),
+    ), os.environ.get("CRITIC_MODEL", "NousResearch/Meta-Llama-3.1-8B-Instruct")
+
+
 def _client():
     """OpenAI-compatible client, configured exactly as the aliases layer's."""
     from openai import OpenAI
@@ -1223,7 +1250,7 @@ def _build_critic(question: str, session: Session, use_critic, seed=None):
     if callable(use_critic):
         judge = use_critic
     else:
-        client, model = _client()
+        client, model = _critic_client()
 
         def judge(search_text, hits):
             def chat(messages):
