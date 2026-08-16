@@ -3,7 +3,7 @@
 #SBATCH --exclude=compute-0-1
 #SBATCH --job-name=arm
 #SBATCH --output=/home/xucabrjs/HEPCoverageKG/logs/arm_%j.out
-#SBATCH --time=16:00:00
+#SBATCH --time=36:00:00
 #SBATCH --mem=16G
 #SBATCH --cpus-per-task=4
 # =============================================================================
@@ -24,6 +24,13 @@
 #
 # repeats=3, because D-062's +0.025 had no error bar and S-52 says three repeats
 # before comparing anything.
+#
+# 36 HOURS, not 16. The phase-1 critic shards were killed by Slurm at 16h with
+# 72-97% written -- a critic-on conceptB shard is 145 questions x 3 repeats where
+# a quarter of the questions run past 180s and the wall is 600s. The v2 arms are
+# slower still. Records are written incrementally so a killed job is not lost,
+# but a truncated arm costs alignment: every arm has to drop the questions the
+# shortest one never reached.
 #
 # All three arms run CONCURRENTLY so they meet the same server. That makes
 # `seconds` contaminated by contention and not comparable across arms in this
