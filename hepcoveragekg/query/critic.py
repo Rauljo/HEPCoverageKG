@@ -241,6 +241,57 @@ what the candidate is, then decide.\
 """
 
 
+# A prompt for a SMALL judge.
+#
+# The 8B failed the gate on 2026-08-16 in a specific way: every reason it gave
+# was a description of the candidate -- "jet energy scale systematic" -- with no
+# mention of the question at all. Asked whether `jet-energy-scale` bore on a
+# PYTHIA question it answered "this is a jet energy scale systematic" and kept
+# it. It recognised the family and stopped, which is the same failure recorded
+# for the 8B on the aliases task, where it answered "are these related?" instead
+# of "are these the same?" and merged 8 distinct SMEFT Wilson coefficients.
+#
+# So the comparison is made STRUCTURAL rather than requested. The model must
+# write what the candidate is AND what the question wants, as separate fields,
+# before choosing. Ignoring the question stops being possible: there is a slot
+# for it that has to be filled.
+#
+# Two worked examples, because a small model takes far more from a demonstration
+# than from a definition -- and both examples are DROPS, since keeping is the
+# failure mode being corrected.
+SMALL_PROMPT = """\
+Decide whether each candidate helps answer one question.
+
+THE QUESTION: {question}
+
+For every candidate, fill three fields:
+  "is"    - what the candidate is, in a few words
+  "asks"  - what THIS question is about, in a few words (the same every time)
+  "rung"  - "exact" if counting the candidate helps answer the question,
+            "broader" if it is a wider version of what the question asks about,
+            "unrelated" if it does not help answer THIS question
+
+Compare "is" against "asks" before choosing. A candidate can be a perfectly good
+thing and still be unrelated to what was asked.
+
+EXAMPLE, question "Which analyses use the Pythia generator?":
+  candidate "jet energy scale uncertainty"
+  {{"i": 1, "is": "a jet energy scale systematic", "asks": "the Pythia generator",
+   "rung": "unrelated"}}
+
+EXAMPLE, question "Which analyses apply a jet energy scale uncertainty?":
+  candidate "PYTHIA 8.230"
+  {{"i": 2, "is": "the Pythia generator, version 8.230",
+   "asks": "a jet energy scale uncertainty", "rung": "unrelated"}}
+
+CANDIDATES:
+{candidates}
+
+Reply with JSON only, one entry per candidate, indexes 1 to {n}:
+{{"verdicts": [{{"i": 1, "is": "...", "asks": "...", "rung": "exact"}}, ...]}}\
+"""
+
+
 def _render_candidates(hits: Sequence[Any]) -> str:
     """The candidate block, one line each.
 
@@ -288,7 +339,10 @@ def _parse(raw: str, n: int) -> dict[int, tuple[str, str]]:
         rung = str(item.get("rung", "")).strip().lower()
         if rung not in RUNGS:
             continue
-        out[index] = (rung, str(item.get("why", ""))[:200])
+        why = item.get("why")
+        if why is None and ("is" in item or "asks" in item):
+            why = f"{item.get('is','')} | asked: {item.get('asks','')}"
+        out[index] = (rung, str(why or "")[:200])
     return out
 
 
@@ -305,6 +359,7 @@ def judge_candidates(
     *,
     chunk: int = CHUNK,
     seed: Optional[int] = SEED_RANKED,
+    prompt: Optional[str] = None,
 ) -> Review:
     """Judge every candidate, and return them in RETRIEVAL order.
 
@@ -334,10 +389,13 @@ def judge_candidates(
     offset = 0
     for group in _chunks(shown, chunk):
         n = len(group)
-        prompt = PROMPT.format(question=question, search_text=search_text,
-                               candidates=_render_candidates(group), n=n)
+        template = prompt or PROMPT
+        body = (template.format(question=question, candidates=_render_candidates(group), n=n)
+                if "{search_text}" not in template
+                else template.format(question=question, search_text=search_text,
+                                     candidates=_render_candidates(group), n=n))
         try:
-            reply = chat([{"role": "user", "content": prompt}])
+            reply = chat([{"role": "user", "content": body}])
             review.calls += 1
             usage = getattr(reply, "usage", None)
             if usage:
