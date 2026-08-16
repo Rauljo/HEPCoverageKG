@@ -1818,3 +1818,54 @@ failure shape as a silently dropped critic record (D-060) and a name-only schema
 *Consequence for the harness*: run records should carry the scorer version alongside `git_sha`,
 `config_hash` and the database identity already noted as missing. Four things now identify a
 measurement, and only two of them are recorded.
+
+### D-065 (2026-08-17) — a small judge is viable, and the failure was the prompt asking the wrong thing
+The critic is **48% of all LLM calls**, so it is the obvious place for a small model -- and at scale
+it is the only place that matters, since D-061's growth curve makes the critic's call volume the
+thing that grows. Llama-3.1-8B judging, Qwen2.5-72B answering, on separate cards.
+
+The prior was discouraging and specific: on the aliases task the 8B answered *"are these related?"*
+rather than *"are these the same?"*, merging 8 distinct SMEFT Wilson coefficients and accepting WH/ZH
+at confidence >= 0.9 ([[logs/2026-07-28]]).
+
+**Three prompt iterations, gated at 45 calls each:**
+
+| control | v1 definitions | v2 structural | v3 balanced | 72B |
+|---|---|---|---|---|
+| all-drop, Pythia question | 38.9% | 6.7% | **3.3%** | 0.0% |
+| all-drop, JES question | 86.7% | 3.3% | **3.3%** | 6.7% |
+| all-keep, pileup cluster | 100% | 58.3% | **100%** | 100% |
+| all-keep, pp-13TeV cluster | 100% | 100% | **100%** | 100% |
+| mixed-family | 63.3% | 40.0% | **44.4%** | 70.0% |
+
+#### The failure was never that the model could not compare
+v1 reproduced the aliases-task fault exactly: every reason it gave was a **label for the candidate**
+and none mentioned the question. Asked whether `jet-energy-scale` bore on a **Pythia** question it
+answered *"jet energy scale systematic"* and kept it. Asking "why" invites a description, and a small
+model gives you one.
+
+**v2 made the comparison structural rather than requested**: the model fills separate `is` and `asks`
+fields before choosing a rung, so the question has a slot that must be filled. Two controls moved by
+**30 and 83 points**. That is not prompt polish -- it is removing the option to skip the comparison.
+
+#### And then it learned the wrong direction from the examples
+Both v2 examples were DROPS, chosen to correct over-keeping. The 8B promptly began splitting
+`pileup reweighting` from `pileup modelling` -- two names the aliases layer has already adjudicated
+as one uncertainty -- and an all-keep control fell to 58.3%. **Examples teach a direction, so they
+have to point both ways.** v3 adds one KEEP example on a wording variant and states the rule in
+words: different WORDING for one thing is `exact`, a different THING is `unrelated`.
+
+**The asymmetry against the 72B is the transferable finding.** The large model needed its
+*definitions* corrected (D-060: rungs defined against the search rather than the question, then
+record type mistaken for relevance). The small model needed its *demonstrations* balanced and was far
+more sensitive to them. Prompt work does not transfer between sizes; the failure modes are different
+in kind.
+
+#### Held back from calling this a win
+Three iterations against five controls is a small target, and fitting the prompt TO the controls is
+the obvious risk. The full arm on real questions is the test of whether it generalises, and it is
+running. Read against the 72B-judge arm on the same shard, which took counting 0.235 -> 0.298:
+landing near 0.235 would mean the gate was fitted rather than passed.
+
+*The gate itself is now 2 for 2* -- it caught the reason-vs-label prompt bug on the 72B, and here it
+turned "spend twenty hours finding out" into three cheap iterations that fixed the thing.
