@@ -793,3 +793,51 @@ def test_the_challenge_does_not_fire_under_the_v1_contract(conn, index):
     )
     s = planner.answer(conn, index, "q", chat=chat)
     assert s.abstention_challenged is False and s.reason == "not_in_graph"
+
+
+# -- v1 is frozen ------------------------------------------------------------
+
+# The exact fingerprint of the v1 tool schemas, taken from commit b6ce7b2 --
+# the code that produced the phase-1 arms on 2026-08-15. Every later run that
+# claims to be a v1 control has to match it, or it is not a control.
+V1_TOOL_FINGERPRINT = "aa028ae68fd37d83"
+
+
+def _fingerprint(specs) -> str:
+    import hashlib
+    import json
+    return hashlib.sha256(json.dumps(specs, sort_keys=True).encode()).hexdigest()[:16]
+
+
+def test_the_v1_tool_schema_is_frozen():
+    """Pins the SCHEMA THE MODEL READS, not just its shape.
+
+    This test exists because the earlier version checked property NAMES and
+    passed while v1 was quietly broken: adding the v2 contract rewrote the
+    `text` field's description from "the answer, citing what was retrieved" to
+    "the answer, in prose", and `tools_for(False)` stripped the new fields
+    without restoring the old wording. A one-line prompt change, invisible to a
+    name check, and it moved count_correct 0.220 -> 0.204 -- nineteen times the
+    run-to-run noise floor of 0.0008 measured by replicating the same commit.
+
+    Descriptions ARE the prompt. Freezing the whole structure is the only check
+    that would have caught it.
+    """
+    assert _fingerprint(planner.tools_for(False)) == V1_TOOL_FINGERPRINT, (
+        "the v1 tool schema changed. Every previous v1 run is now a different "
+        "system, so either restore it or retire the old control runs -- but do "
+        "not silently compare across the change.")
+
+
+def test_v2_differs_from_v1_only_where_intended():
+    v1 = {t["name"]: t for t in planner.tools_for(False)}
+    v2 = {t["name"]: t for t in planner.tools_for(True)}
+    assert set(v2) - set(v1) == {"refine"}
+    changed = {k for k in v1 if k in v2 and v1[k] != v2[k]}
+    assert changed == {"answer"}, f"v2 should touch `answer` alone, also changed: {changed}"
+
+
+def test_building_one_contract_cannot_mutate_the_other():
+    before = _fingerprint(planner.tools_for(False))
+    planner.tools_for(True)
+    assert _fingerprint(planner.tools_for(False)) == before

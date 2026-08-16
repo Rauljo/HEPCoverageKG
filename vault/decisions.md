@@ -1717,3 +1717,52 @@ explain the false negatives above.
 *Consequence*: the next thing worth fixing is not the critic's judgement but the step that turns
 kept rows into an answer -- consistent with the separate finding that gold papers sit in the
 retrieval footprint 91.7% of the time and are named in the answer 22.8% of the time.
+
+### D-063 (2026-08-16) — a replication control caught a one-line prompt regression, and gave us a real noise floor
+Two runs were compared, both nominally `critic=off, answer=v1`:
+
+| comparison | count_correct | reading |
+|---|---|---|
+| phase 1 (b6ce7b2) vs bridge (c209974) | 0.220 -> 0.204, **-0.0159** | different commits |
+| bridge vs replica, **same commit** | 0.204 -> 0.204, **-0.0008** | different runs only |
+
+**Run-to-run variation is 0.0008. The cross-commit difference is nineteen times that.** So the
+commit changed v1's behaviour, and the "byte-identical v1" claim was false.
+
+*The cause, one line*:
+
+```
+- "text": {"description": "the answer, citing what was retrieved"}
++ "text": {"description": "the answer, in prose"}
+```
+
+Adding the v2 contract rewrote the `answer` tool's `text` description, and `tools_for(False)`
+stripped the new FIELDS without restoring the old WORDING. So v1 quietly stopped telling the model
+to cite what it retrieved. The downstream numbers agree: `unsupported_claims` 0.284 -> 0.244,
+`answered` 0.955 -> 0.974, `abstained` 0.042 -> 0.023.
+
+**The unit test passed throughout**, because it asserted the property NAMES were
+`{text, answerable, reason}`. Descriptions *are* the prompt. A name check cannot see a prompt change,
+and this is the second time this week a guard has been shown to test a proxy rather than the thing
+(the first: `from_session` dropping the critic's record while a unit test asserted on the Session).
+
+*Fixed two ways.* The polarity is inverted -- **v1's wording is now the canonical text and v2
+replaces it**, so the control cannot drift when an arm is added. And the v1 schema is frozen by
+fingerprint: `aa028ae68fd37d83`, taken from b6ce7b2, the code that actually produced the phase-1
+arms. Verified identical after the fix. A test fails if it ever moves again.
+
+#### Two things this changes beyond the bug
+**We now have a measured noise floor, and it is small.** 0.0008 on `count_correct` between runs of
+the same code. Every result this week clears it by a wide margin -- the critic's Tier B counting
+effect (+0.086) by 100x, the paper-id fix (+0.18) by 200x, the set F1 doubling (+0.169) by 200x. The
+one number that would NOT have cleared it is the original pooled +0.025, which is why pooling was
+the wrong reading rather than merely a weak one.
+
+*And it means the within-run repeat spread was not the problem I feared.* The `±` printed across 3
+repeats is of the same order as the between-run figure, so `compare`'s noise floor is honest. The
+bridge's apparent 3x-noise deltas were a real regression, not an underestimated bar.
+
+**Phase 2 must run on the fixed commit.** Because the fix restores v1 exactly, a v1 arm on the fixed
+code is comparable with phase 1's arms again -- so the 2x2 can use phase 1's `ranked/v1` as its
+control rather than needing it re-run. Had the regression gone unnoticed, every v1-vs-v2 comparison
+would have carried a one-line prompt change inside it and been read as the answer contract's effect.

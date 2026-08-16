@@ -364,7 +364,7 @@ TOOL_SPECS: list[dict] = [
         "parameters": {
             "type": "object",
             "properties": {
-                "text": {"type": "string", "description": "the answer, in prose"},
+                "text": {"type": "string", "description": "the answer, citing what was retrieved"},
                 "papers_from": {
                     "type": "string",
                     "description": (
@@ -422,10 +422,18 @@ def tools_for(answer_contract: bool = False) -> list[dict]:
     for spec in TOOL_SPECS:
         if spec["name"] in V2_TOOLS and not answer_contract:
             continue
-        if spec["name"] == "answer" and not answer_contract:
+        if spec["name"] == "answer":
             spec = copy.deepcopy(spec)
-            for field_name in V2_ANSWER_FIELDS:
-                spec["parameters"]["properties"].pop(field_name, None)
+            if answer_contract:
+                # v2 replaces the wording, because "citing what was retrieved"
+                # now means something specific -- naming a set, not listing ids
+                # in prose.
+                spec["parameters"]["properties"]["text"]["description"] = (
+                    "the answer, in prose. Cite sets in `papers_from`/`value_from` "
+                    "rather than writing ids or counts into this text.")
+            else:
+                for field_name in V2_ANSWER_FIELDS:
+                    spec["parameters"]["properties"].pop(field_name, None)
         specs.append(spec)
     return specs
 
