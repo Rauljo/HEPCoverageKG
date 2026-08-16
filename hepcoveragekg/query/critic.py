@@ -256,9 +256,14 @@ what the candidate is, then decide.\
 # before choosing. Ignoring the question stops being possible: there is a slot
 # for it that has to be filled.
 #
-# Two worked examples, because a small model takes far more from a demonstration
-# than from a definition -- and both examples are DROPS, since keeping is the
-# failure mode being corrected.
+# Three worked examples, because a small model takes far more from a
+# demonstration than from a definition -- and the BALANCE of them matters as
+# much as their content. Two drops alone fixed the over-keeping (all-drop
+# controls went 38.9% -> 6.7% and 86.7% -> 3.3%) and immediately created the
+# opposite fault: the model began splitting "pileup reweighting" from "pileup
+# modelling", which the aliases layer has already adjudicated as one thing, and
+# an all-keep control fell to 58.3%. Examples teach a direction, so they have to
+# point both ways.
 SMALL_PROMPT = """\
 Decide whether each candidate helps answer one question.
 
@@ -283,6 +288,15 @@ EXAMPLE, question "Which analyses apply a jet energy scale uncertainty?":
   candidate "PYTHIA 8.230"
   {{"i": 2, "is": "the Pythia generator, version 8.230",
    "asks": "a jet energy scale uncertainty", "rung": "unrelated"}}
+
+EXAMPLE, question "Which analyses include a pileup modelling uncertainty?":
+  candidate "Pileup reweighting uncertainty"
+  {{"i": 3, "is": "a pileup reweighting uncertainty",
+   "asks": "a pileup modelling uncertainty", "rung": "exact"}}
+The same thing is written many ways. Different WORDING for one thing is
+"exact"; a different THING is "unrelated". Reweighting and modelling of pileup
+are one uncertainty under two names, while Pythia and jet energy scale are two
+different things.
 
 CANDIDATES:
 {candidates}
