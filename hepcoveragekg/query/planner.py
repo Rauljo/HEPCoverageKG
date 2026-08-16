@@ -529,6 +529,17 @@ class Session:
     # than the false negatives this is aimed at.
     abstention_challenged: bool = False
 
+    # Set when a citation was rejected, with the reason. Recorded rather than
+    # silently dropped: a refused citation means the answer carries no number,
+    # and that has to be visible in the trace.
+    citation_refused: str = ""
+
+    # (number written in the prose, number the citation resolved to) when they
+    # disagree. An answer that contradicts itself should never be scored as if
+    # it had one number.
+    citation_disagrees: Optional[tuple] = None
+    citation_corrected: bool = False
+
     # One `critic.Review` per search, when the critic is on. Kept whole rather
     # than reduced to a count: the ablation needs to know WHICH candidates were
     # flagged down and why, and a drop that leaves no trace is the failure the
@@ -690,6 +701,11 @@ _ID_ARGS = ("entity_ids", "object_ids", "subject_a", "subject_b")
 # paper itself contains 187. The other 185 hang off `assertion.paper_id`, which
 # only `contents_of` reads.
 _ARXIV_ID = re.compile(r"^\d{4}\.\d{4,5}$")
+
+# The count an answer states in prose, for checking it against what it cited.
+_CLAIMED_IN_TEXT = re.compile(
+    r"\b(\d[\d,]*)\s+(?:distinct\s+|different\s+|unique\s+)?"
+    r"(?:papers?|analyses|analysis|studies)\b", re.I)
 PAPER_ID_PREFIX = "hepkg:paper:arxiv:"
 
 # Which entity tool means which `contents_of` call when handed a paper.
@@ -1094,6 +1110,23 @@ def resolve_citations(session: "Session", args: dict,
         name = str(args.get(key) or "").strip()
         if not name or name not in session.sets:
             continue
+        # A RAW search set is not an answer. Measured on 2026-08-16: 441 of 650
+        # citations pointed at one, and the resolved value had a median of 35
+        # against a gold median of 2 -- because a raw set is everything the
+        # search touched, so citing it reports retrieval BREADTH as the count.
+        # That is the footprint failure `set_f1` already had, reappearing here.
+        #
+        # Only a set the model has narrowed may be cited for a value: `_kept`
+        # (the critic's) or `_refined` (its own). Refusing is the right response
+        # rather than resolving anyway -- an unusable number that looks like an
+        # answer is worse than no number, and the caller turns this into a
+        # corrective message the way the invented-id guard does.
+        if kind == "value" and not name.endswith(("_kept", "_refined")):
+            session.citation_refused = (
+                f"value_from={name} is a raw search set, so its paper count is "
+                f"how wide the search was, not the answer. Narrow it first with "
+                f"`refine`, then cite that -- or give the number in the text.")
+            continue
         # A set holds ENTITY ids. Both the paper list and the count are about
         # PAPERS -- "how many analyses" means distinct papers, and the number of
         # entities is an artefact of how many spellings the graph happens to
@@ -1108,6 +1141,17 @@ def resolve_citations(session: "Session", args: dict,
         else:
             session.answer_value = float(len(papers))
     session.answer_cited = ", ".join(cited)
+
+    # If the prose states a number AND a citation resolved to a different one,
+    # the answer disagrees with itself. Observed live: value=24 beside the text
+    # "There are 22 analyses that define the region 2l SS Signal Region."
+    # Neither is preferred silently -- the disagreement is the finding.
+    if session.answer_value is not None:
+        stated = _CLAIMED_IN_TEXT.search(session.answer or "")
+        if stated:
+            spoken = float(stated.group(1).replace(",", ""))
+            if spoken != session.answer_value:
+                session.citation_disagrees = (spoken, session.answer_value)
 
 
 def _client():

@@ -684,11 +684,15 @@ def test_the_answer_cites_a_set_instead_of_listing_papers(conn, index):
     cannot select wrongly."""
     chat = scripted(
         _response([_call("search", {"text": "Pythia"})]),
+        _response([_call("refine", {"entity_set": "set_1", "drop_ids": [],
+                                    "reason": "all belong"})]),
         _response([_call("answer", {"text": "These analyses use Pythia.",
-                                    "papers_from": "set_1", "value_from": "set_1",
+                                    "papers_from": "set_1",
+                                    "value_from": "set_1_refined",
                                     "answerable": True, "reason": "answered"})]),
     )
-    s = planner.answer(conn, index, "which analyses use Pythia?", chat=chat)
+    s = planner.answer(conn, index, "which analyses use Pythia?", chat=chat,
+                       answer_contract=True)
     assert s.answer_papers == ["p1"], "the paper list came from the set, not the prose"
     assert s.answer_value == 1.0, "the count is papers, never the number of entities"
     assert "papers=set_1" in s.answer_cited and "value=set_1" in s.answer_cited
@@ -709,10 +713,12 @@ def test_the_count_is_papers_not_entities(conn, index):
     many analyses" means distinct PAPERS, so citing must resolve through them."""
     chat = scripted(
         _response([_call("search", {"text": "Pythia"})]),
-        _response([_call("answer", {"text": "x", "value_from": "set_1",
+        _response([_call("refine", {"entity_set": "set_1", "drop_ids": [],
+                                    "reason": "all belong"})]),
+        _response([_call("answer", {"text": "x", "value_from": "set_1_refined",
                                     "answerable": True, "reason": "answered"})]),
     )
-    s = planner.answer(conn, index, "how many?", chat=chat)
+    s = planner.answer(conn, index, "how many?", chat=chat, answer_contract=True)
     assert s.answer_value == 1.0 and len(s.sets["set_1"]) >= 1
 
 
@@ -841,3 +847,63 @@ def test_building_one_contract_cannot_mutate_the_other():
     before = _fingerprint(planner.tools_for(False))
     planner.tools_for(True)
     assert _fingerprint(planner.tools_for(False)) == before
+
+
+def test_citing_a_raw_search_set_for_a_number_is_refused(conn, index):
+    """A raw set is everything the search touched. Measured on 2026-08-16: 441 of
+    650 citations pointed at one, and the resolved value had a median of 35
+    against a gold median of 2 -- retrieval BREADTH reported as the answer."""
+    chat = scripted(
+        _response([_call("search", {"text": "Pythia"})]),
+        _response([_call("answer", {"text": "x", "value_from": "set_1",
+                                    "answerable": True, "reason": "answered"})]),
+        _response([_call("refine", {"entity_set": "set_1", "drop_ids": [],
+                                    "reason": "checked"})]),
+        _response([_call("answer", {"text": "x", "value_from": "set_1_refined",
+                                    "answerable": True, "reason": "answered"})]),
+    )
+    s = planner.answer(conn, index, "how many?", chat=chat, answer_contract=True)
+    assert s.citation_corrected is True, "the model must be told, not silently ignored"
+    assert s.answer_value == 1.0, "and it recovers by citing the narrowed set"
+
+
+def test_a_refused_citation_does_not_end_the_session_with_a_bare_answer(conn, index):
+    chat = scripted(
+        _response([_call("search", {"text": "Pythia"})]),
+        _response([_call("answer", {"text": "38 papers", "value_from": "set_1",
+                                    "answerable": True, "reason": "answered"})]),
+        _response([_call("answer", {"text": "I cannot narrow it further.",
+                                    "answerable": True, "reason": "answered"})]),
+    )
+    s = planner.answer(conn, index, "how many?", chat=chat, answer_contract=True)
+    assert s.answer == "I cannot narrow it further."
+    assert s.answer_value is None, "no number is better than a wrong one"
+
+
+def test_prose_and_citation_disagreeing_is_recorded(conn, index):
+    """Observed live: value=24 beside "There are 22 analyses that define the
+    region 2l SS Signal Region." An answer that contradicts itself must not be
+    scored as though it had one number."""
+    chat = scripted(
+        _response([_call("search", {"text": "Pythia"})]),
+        _response([_call("refine", {"entity_set": "set_1", "drop_ids": [],
+                                    "reason": "x"})]),
+        _response([_call("answer", {"text": "There are 22 analyses.",
+                                    "value_from": "set_1_refined",
+                                    "answerable": True, "reason": "answered"})]),
+    )
+    s = planner.answer(conn, index, "how many?", chat=chat, answer_contract=True)
+    assert s.citation_disagrees == (22.0, 1.0)
+
+
+def test_agreeing_prose_and_citation_records_no_disagreement(conn, index):
+    chat = scripted(
+        _response([_call("search", {"text": "Pythia"})]),
+        _response([_call("refine", {"entity_set": "set_1", "drop_ids": [],
+                                    "reason": "x"})]),
+        _response([_call("answer", {"text": "There is 1 paper.",
+                                    "value_from": "set_1_refined",
+                                    "answerable": True, "reason": "answered"})]),
+    )
+    s = planner.answer(conn, index, "how many?", chat=chat, answer_contract=True)
+    assert s.citation_disagrees is None

@@ -214,6 +214,17 @@ def execute(state: PlannerState, config=None) -> PlannerState:
             session.reason = claimed
             session.stopped_because = f"answered ({claimed})"
             planner.resolve_citations(session, args, _papers_resolver(runtime))
+            # A refused citation is corrected once, like an invented id: the
+            # model gets told why and can narrow the set or state the number.
+            if session.citation_refused and not session.citation_corrected:
+                session.citation_corrected = True
+                state["messages"].append({
+                    "role": "tool", "tool_call_id": call["id"],
+                    "content": "ERROR: " + session.citation_refused})
+                session.citation_refused = ""
+                session.answer = ""
+                session.stopped_because = ""
+                continue
             return state
 
         # Papers handed to an entity tool go to `contents_of` before the id

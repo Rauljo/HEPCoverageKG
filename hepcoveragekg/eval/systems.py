@@ -68,6 +68,8 @@ class Answer:
     recovered_calls: int = 0   # tool calls the SERVER's parser missed and we recovered
     cited: str = ""            # which handles the answer pointed at, if any
     abstention_challenged: bool = False
+    citation_corrected: bool = False
+    citation_disagrees: list = field(default_factory=list)
     invented_ids: list[str] = field(default_factory=list)
     nudged: bool = False
 
@@ -223,6 +225,8 @@ def from_session(session, conn=None) -> Answer:
         recovered_calls=getattr(session, "recovered_calls", 0),
         cited=getattr(session, "answer_cited", ""),
         abstention_challenged=bool(getattr(session, "abstention_challenged", False)),
+        citation_corrected=bool(getattr(session, "citation_corrected", False)),
+        citation_disagrees=list(getattr(session, "citation_disagrees", None) or []),
         invented_ids=list(getattr(session, "invented_ids", [])),
         nudged=bool(getattr(session, "nudged", False)),
     )
