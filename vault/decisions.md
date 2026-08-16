@@ -1766,3 +1766,55 @@ bridge's apparent 3x-noise deltas were a real regression, not an underestimated 
 code is comparable with phase 1's arms again -- so the 2x2 can use phase 1's `ranked/v1` as its
 control rather than needing it re-run. Had the regression gone unnoticed, every v1-vs-v2 comparison
 would have carried a one-line prompt change inside it and been read as the answer contract's effect.
+
+### D-064 (2026-08-16) — phase 1: the critic works, shuffled beats ranked, and the widen fix fires
+Three arms, `repeats=3`, aligned on 1,627 (qid, repeat) triples all three answered. Scored with the
+current scorers (the run files needed rescoring first -- see the caution below).
+
+| metric | off | ranked | shuffled |
+|---|---|---|---|
+| count correct | 0.233 | **0.288** | **0.304** |
+| set F1 | 0.146 | **0.331** | **0.330** |
+| set precision | 0.127 | 0.268 | 0.263 |
+| set recall | 0.442 | 0.673 | 0.676 |
+| retrieval reach | 0.908 | 0.887 | 0.887 |
+| abstained | 0.036 | 0.049 | 0.034 |
+| **widened searches** | -- | **224** | **180** |
+
+Against the measured between-run noise floor of **0.0008** (D-063), the counting gains are 70-90x the
+bar and the set F1 gain is 200x. Paired on set questions: **106 better / 43 worse** for ranked,
+93 / 39 for shuffled.
+
+**The signature holds**: retrieval reach falls 2 points while set F1 more than doubles. The critic
+removes junk without losing the papers that matter.
+
+**The widen fix works.** 224 and 180 widened searches against **zero** across 1,074 searches before
+D-063's decay ratio. A critic marking ~76% unrelated can now widen when relevance has not decayed by
+the tail, which an absolute threshold made impossible.
+
+**Shuffled beats ranked on counting** (0.304 vs 0.288) and abstains less (0.034 vs 0.049); on set
+questions they tie. That is the second independent measurement pointing the same way -- D-062 saw it
+on 37 searches with one repeat, this is 1,627 triples with three -- so **the default should change to
+shuffled**. Ranked was chosen to protect the best candidate from the lost-in-the-middle effect; the
+protection costs more than it saves, and the mechanism proposed then still fits: in rank order each
+chunk is homogeneous and the model calibrates within it, while a shuffled chunk holds a mix that can
+be judged against the question.
+
+#### A reporting error worth recording, because it was avoidable
+Phase 1's numbers were first read straight from the run files, which still carried the **old
+footprint-based `set_f1`** -- the metric retired the day before. That produced "set F1 slightly worse
+with the critic", reported as contradicting the previous day's rescore, with the honest-sounding
+caveat that I did not know which was right.
+
+There was no contradiction. One dataset had been rescored and the other had not. **The check that was
+skipped is trivial**: confirm both sides were scored by the same code before comparing them.
+`rescore` exists precisely so stored answers can be re-read under a new metric, and it costs no GPU.
+
+*A second, quieter fault in the same analysis*: `scores.get("set_named_none", 0)` reported **0%** for
+runs where the metric did not exist, which reads as a measurement rather than an absence. The real
+figure is 20-27%. **A missing metric must never default to a value that looks like data** -- the same
+failure shape as a silently dropped critic record (D-060) and a name-only schema check (D-063).
+
+*Consequence for the harness*: run records should carry the scorer version alongside `git_sha`,
+`config_hash` and the database identity already noted as missing. Four things now identify a
+measurement, and only two of them are recorded.
