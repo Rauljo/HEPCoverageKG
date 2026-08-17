@@ -491,6 +491,8 @@ def _cmd_eval(args) -> int:
             use_critic=args.critic,
             critic_seed=args.critic_seed,
             answer_contract=args.answer_contract,
+            contract=args.contract,
+            force_critic_set=args.force_critic_set,
         )
     else:
         print(f"unknown system {args.system!r}", file=sys.stderr)
@@ -658,6 +660,15 @@ def build_parser() -> argparse.ArgumentParser:
     p_eval.add_argument("--answer-contract", action="store_true",
                         help="planner: cite sets in the answer, allow `refine`, "
                              "and challenge an abstention held against evidence")
+    p_eval.add_argument("--contract", default="", choices=["", "v1", "v2", "v3"],
+                        help="planner: answer contract. v3 keeps only citing the "
+                             "paper set and the challenged abstention")
+    # The critic judges every candidate and the planner then uses its verdict
+    # for only 58% of counts. This makes "is the critic better than the
+    # planner's discretion?" measurable.
+    p_eval.add_argument("--force-critic-set", action="store_true",
+                        help="planner: substitute the critic's kept set wherever "
+                             "a raw search set is passed to a tool")
     p_eval.add_argument("--critic-seed", type=int, default=None,
                         help="planner: shuffle the candidates the critic sees, "
                              "with this seed. Omit for retrieval order.")

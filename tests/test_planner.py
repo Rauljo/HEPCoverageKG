@@ -940,3 +940,56 @@ def test_citing_a_step_that_holds_no_number_is_refused(conn, index):
     planner.resolve_citations(s, {"value_from": "step_1"})
     assert s.answer_value is None
     assert "does not name a result that holds a number" in s.citation_refused
+
+
+# -- v3: the lean contract, and forcing the critic's set ---------------------
+
+def test_v3_keeps_the_paper_citation_and_drops_what_measured_badly():
+    """Citing a count reported `count(predicate, set)` faithfully over a set that
+    was too broad -- 36 papers where the gold was 2 -- and the model's prose
+    guess beat it 0.314 to 0.186. `refine` competed with the critic for one job
+    and won 67% to 18%. Both go; citing the paper set stays."""
+    fields = lambda c: set(  # noqa: E731
+        [t for t in planner.tools_for(contract=c) if t["name"] == "answer"][0]
+        ["parameters"]["properties"])
+    assert "papers_from" in fields("v3")
+    assert "value_from" not in fields("v3")
+    assert "refine" not in {t["name"] for t in planner.tools_for(contract="v3")}
+    assert "refine" in {t["name"] for t in planner.tools_for(contract="v2")}
+
+
+def test_v1_is_still_frozen_under_the_new_contract_argument():
+    assert _fingerprint(planner.tools_for(contract="v1")) == V1_TOOL_FINGERPRINT
+    assert _fingerprint(planner.tools_for()) == V1_TOOL_FINGERPRINT
+
+
+def test_forcing_the_critic_set_substitutes_the_kept_handle(conn, index):
+    """The critic judges every candidate and the planner then used its verdict
+    for 58% of counts, running 39% over the raw set instead. This makes "is the
+    critic better than the planner's discretion" measurable."""
+    sets = {"set_1": ["a", "b", "c"], "set_1_kept": ["a"]}
+    seen = {}
+
+    def spy(conn_, predicate, object_ids):
+        seen["ids"] = list(object_ids)
+        return T.QueryResult(shape="count", rows=[{"papers": len(object_ids)}])
+
+    import hepcoveragekg.query.templates as templates
+    original = templates.count
+    templates.count = spy
+    try:
+        planner.build_executor(conn, index, sets, force_critic_set=True)(
+            "count", {"predicate": "p", "object_set": "set_1"})
+        assert seen["ids"] == ["a"], "the kept set was used"
+        planner.build_executor(conn, index, sets)(
+            "count", {"predicate": "p", "object_set": "set_1"})
+        assert seen["ids"] == ["a", "b", "c"], "off by default, the raw set stands"
+    finally:
+        templates.count = original
+
+
+def test_forcing_does_nothing_when_the_critic_never_ran(conn, index):
+    sets = {"set_1": ["a", "b"]}
+    execute = planner.build_executor(conn, index, sets, force_critic_set=True)
+    result = execute("count", {"predicate": "uses_generator", "object_set": "set_1"})
+    assert result is not None, "no kept set means no substitution, not an error"

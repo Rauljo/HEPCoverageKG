@@ -415,27 +415,53 @@ TOOL_SPECS: list[dict] = [
 V2_TOOLS = ("refine",)
 V2_ANSWER_FIELDS = ("papers_from", "value_from")
 
+# v3 keeps only the part of the contract that MEASURED well and drops the two
+# that did not. Evidence, 2026-08-17:
+#
+#   citing papers     kept -- untested, and the mechanism a citation is for
+#   citing a count    DROPPED. It reports `count(predicate, set)` faithfully,
+#                     and the set is too broad: 36 papers where the gold is 2.
+#                     The model's prose guess beat it, 0.314 to 0.186. Being
+#                     more truthful about a wrong set is worse than estimating.
+#   `refine`          DROPPED. It competes with the critic for one job, and the
+#                     model prefers its own: 67% of counts ran over
+#                     `set_N_refined` against 18% over the critic's `set_N_kept`.
+#                     Two mechanisms doing the same thing, introduced together,
+#                     so neither can be attributed.
+#   abstention        kept -- fired 48 times, effect still unmeasured
+#
+# So v3 is one claim: cite what you found instead of retyping it, and defend an
+# abstention you make while holding evidence.
+V3_ANSWER_FIELDS = ("papers_from",)
 
-def tools_for(answer_contract: bool = False) -> list[dict]:
-    """The tool schemas for one run. `answer_contract` turns the v2 answer on."""
+
+def tools_for(answer_contract: bool = False, contract: str = "") -> list[dict]:
+    """The tool schemas for one run.
+
+    `contract` is "v1" (default), "v2" (everything) or "v3" (the lean version).
+    `answer_contract=True` still means v2, so existing callers do not move.
+    """
     import copy
+
+    contract = contract or ("v2" if answer_contract else "v1")
+    keep = {"v1": (), "v2": V2_ANSWER_FIELDS, "v3": V3_ANSWER_FIELDS}[contract]
 
     specs = []
     for spec in TOOL_SPECS:
-        if spec["name"] in V2_TOOLS and not answer_contract:
+        if spec["name"] in V2_TOOLS and contract != "v2":
             continue
         if spec["name"] == "answer":
             spec = copy.deepcopy(spec)
-            if answer_contract:
+            for field_name in V2_ANSWER_FIELDS:
+                if field_name not in keep:
+                    spec["parameters"]["properties"].pop(field_name, None)
+            if contract != "v1":
                 # v2 replaces the wording, because "citing what was retrieved"
                 # now means something specific -- naming a set, not listing ids
                 # in prose.
                 spec["parameters"]["properties"]["text"]["description"] = (
-                    "the answer, in prose. Cite sets in `papers_from`/`value_from` "
-                    "rather than writing ids or counts into this text.")
-            else:
-                for field_name in V2_ANSWER_FIELDS:
-                    spec["parameters"]["properties"].pop(field_name, None)
+                    "the answer, in prose. Cite the set of papers in `papers_from` "
+                    "rather than writing arXiv ids into this text.")
         specs.append(spec)
     return specs
 
@@ -859,7 +885,8 @@ def _render_rows(rows: list[dict], max_rows: int) -> str:
 
 def build_executor(conn, index, sets: Optional[dict] = None,
                    critic: Optional[Callable] = None,
-                   answer_contract: bool = False) -> Callable[[str, dict], Any]:
+                   answer_contract: bool = False,
+                   force_critic_set: bool = False) -> Callable[[str, dict], Any]:
     """Bind the tools to this database, index and set of named results.
 
     Returned as a closure so the planner never holds a connection itself and
@@ -885,6 +912,20 @@ def build_executor(conn, index, sets: Optional[dict] = None,
         and cannot be mistyped into something that silently returns nothing.
         """
         name = args.get(set_arg)
+        # THE CRITIC JUDGES, THEN THE PLANNER DECLINES IT.
+        #
+        # Measured 2026-08-17: of 767 `count` calls in a critic-on arm, 58% used
+        # `set_N_kept` and **39% used the raw set** -- four counts in ten threw
+        # the critic's verdicts away. That is the likeliest reason its counting
+        # gain (+0.063) is so much smaller than its set-F1 gain (x2.3): on set
+        # questions the kept handle gets used, on counts it often does not.
+        #
+        # Under this flag a set with a judged counterpart is silently replaced by
+        # it, so "does the critic judge better than the planner's discretion?"
+        # becomes a measurement rather than a hope. Off by default: it takes a
+        # decision away from the model, and that has to be earned.
+        if force_critic_set and name and f"{name}_kept" in sets:
+            name = f"{name}_kept"
         if name:
             if name not in sets:
                 raise ValueError(
@@ -1311,7 +1352,7 @@ def _build_critic(question: str, session: Session, use_critic, seed=None):
 
 def _prepare(conn, index, question, max_rounds, max_places, max_rows,
              minimal_prompt, chat, thread_id, use_critic=None, critic_seed=None,
-             answer_contract=False):
+             answer_contract=False, contract="", force_critic_set=False):
     """The state and runtime config a run needs. Shared by answer() and stream()."""
     session = Session(question=question)
     if chat is None:
@@ -1340,9 +1381,10 @@ def _prepare(conn, index, question, max_rounds, max_places, max_rows,
         "execute": build_executor(conn, index, session.sets,
                                   critic=_build_critic(question, session, use_critic,
                                                        critic_seed),
-                                  answer_contract=answer_contract),
+                                  answer_contract=answer_contract,
+                                  force_critic_set=force_critic_set),
         "tools": [{"type": "function", "function": spec}
-                  for spec in tools_for(answer_contract)],
+                  for spec in tools_for(answer_contract, contract)],
     }
     runtime["answer_contract"] = bool(answer_contract)
     config = {"configurable": runtime, "recursion_limit": max_rounds * 3 + 6}
@@ -1363,6 +1405,8 @@ def stream(
     use_critic: Any = None,
     critic_seed: Optional[int] = None,
     answer_contract: bool = False,
+    contract: str = "",
+    force_critic_set: bool = False,
 ):
     """Yield `(node_name, session)` after each node completes.
 
@@ -1375,7 +1419,7 @@ def stream(
     session, state, config = _prepare(conn, index, question, max_rounds,
                                       max_places, max_rows, minimal_prompt,
                                       chat, thread_id, use_critic, critic_seed,
-                                      answer_contract)
+                                      answer_contract, contract, force_critic_set)
     started = time.perf_counter()
     app = graph_module.build(checkpointer=checkpointer)
     for update in app.stream(state, config=config, stream_mode="updates"):
@@ -1399,6 +1443,8 @@ def answer(
     use_critic: Any = None,
     critic_seed: Optional[int] = None,
     answer_contract: bool = False,
+    contract: str = "",
+    force_critic_set: bool = False,
 ) -> Session:
     """Answer one question, returning the answer and the whole trace.
 
@@ -1419,7 +1465,7 @@ def answer(
     session, state, config = _prepare(conn, index, question, max_rounds,
                                       max_places, max_rows, minimal_prompt,
                                       chat, thread_id, use_critic, critic_seed,
-                                      answer_contract)
+                                      answer_contract, contract, force_critic_set)
     graph_module.build(checkpointer=checkpointer).invoke(state, config=config)
 
     session.seconds = time.perf_counter() - started
