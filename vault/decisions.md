@@ -1869,3 +1869,65 @@ landing near 0.235 would mean the gate was fitted rather than passed.
 
 *The gate itself is now 2 for 2* -- it caught the reason-vs-label prompt bug on the 72B, and here it
 turned "spend twenty hours finding out" into three cheap iterations that fixed the thing.
+
+### D-065 addendum — the 8B judge measured on real questions: most of the benefit, a third of the cost
+Full arm, `repeats=3`, 72B answering throughout. Aligned across all three arms.
+
+**Counting** (conceptB-00/01 + paperA-200, 1,342 triples):
+
+| arm | count correct | seconds | kept | critic calls |
+|---|---|---|---|---|
+| critic off | 0.2352 | 14.6 | -- | 0 |
+| critic **72B** | **0.2982** | 93.7 | 24.2% | 3,091 |
+| critic **8B** | **0.2709** | 44.0 | 36.9% | 3,572 |
+
+**Set questions** (conceptB-02, which holds all 109, 315 triples):
+
+| arm | set F1 | set recall | set precision | reach | seconds |
+|---|---|---|---|---|---|
+| critic off | 0.1459 | 0.4424 | 0.1269 | 0.9083 | 35.1 |
+| critic **72B** | **0.3311** | 0.6733 | 0.2675 | 0.8868 | 182.9 |
+| critic **8B** | **0.2896** | 0.5929 | 0.2491 | 0.8899 | 86.9 |
+
+**The trade, both ways:**
+
+| | share of the 72B's gain | share of its added cost | efficiency |
+|---|---|---|---|
+| counting | 57% | 37% | **1.5x** |
+| set questions | **78%** | **35%** | **2.2x** |
+
+*It is more permissive* -- 36.9% kept against the 72B's 24.2% -- which is exactly why it captures less
+of the gain: it removes less junk. The direction is right and the aggression is lower.
+
+*And it is faster per question even with the 72B at TP=1*: 44.0s against 93.7s on counting, 86.9s
+against 182.9s on sets. The earlier hedge that the topology change would be "roughly neutral" was
+wrong; shedding 48% of calls to a small model on its own card beats halving the answerer's KV cache,
+and by a wide margin. **The user's instinct was right and my arithmetic was one-sided.**
+
+*Consequence for D-061's scaling problem.* At 2,969 papers the critic's call volume is the quantity
+that grows, and bisecting a 5,000-candidate list is only affordable with a cheap judge. This makes
+that architecture viable rather than hypothetical -- and it is the same conclusion from the other
+direction: the expensive model should answer, the cheap one should filter.
+
+### D-065 addendum — the shard split accidentally stratified by question shape
+`split -n l/3` on the Tier B file produced:
+
+```
+conceptB-00: 146 count,   0 set
+conceptB-01: 145 count,   0 set
+conceptB-02:  36 count, 109 set     <- every set question
+```
+
+The generator emits counting questions first and set questions last, so splitting by LINE split by
+SHAPE. Consequences, all of which bit:
+
+- every comparison run on shards 00/01 had **zero** set questions, and `set_f1` came back `nan`
+  correctly while I read it as a missing metric
+- shard 02 was also the **slowest** (it was at 72% when phase 1's 16-hour wall hit), so the set
+  questions were the ones disproportionately lost -- which is why set F1 there had small n and odd
+  values
+- any per-shard timing comparison conflates shard identity with question shape
+
+*Fix*: shards must be built by interleaving (`split -n r/3`, round-robin) rather than by contiguous
+lines, so each carries the same mix. **A split that is not random is a stratification**, and this one
+was invisible because the file happened to be ordered.
