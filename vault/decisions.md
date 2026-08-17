@@ -1931,3 +1931,69 @@ SHAPE. Consequences, all of which bit:
 *Fix*: shards must be built by interleaving (`split -n r/3`, round-robin) rather than by contiguous
 lines, so each carries the same mix. **A split that is not random is a stratification**, and this one
 was invisible because the file happened to be ordered.
+
+---
+
+### D-066 (2026-08-17) — the supervisor's first 50 verdicts: precision 0.12, and the misses were found by cheap retrieval
+The first externally-authored gold this project has had. 50 rows, all **gf-01** -- the hardest
+question in the set, a three-way conjunction (SEARCH **and** b-tagged jets **and** missing transverse
+momentum) and the one D-058 already documented failing in five distinct forms.
+
+|  | he says yes | no | unsure |
+|---|---|---|---|
+| **we said YES** | 3 | **22** | 4 |
+| **we said NO** | **5** | 12 | 4 |
+
+**Strict precision 0.120, recall 0.375.** Of 25 confident positives, 3 were upheld.
+
+#### The finding that matters most is not the precision
+All five false negatives carry `found_by=none` -- the reader found nothing, so the judge never had a
+chance to be wrong. But the sheet showed him, for every miss, the sentences our **hybrid retrieval**
+surfaced (BM25 + dense over the paper's sentences, the same retrieval the query layer uses), because
+a miss cannot be reviewed without something to look at.
+
+**In at least three of the five, he answered YES from those sentences alone.** Row 10 is the clearest:
+
+> "The experimental signature of this search, for all signal topologies, consists of multiple jets,
+> one or two of which are $b$-tagged, no electrons and muons, and large missing transverse momentum."
+
+Search, b-tagged, MET -- all three conditions, one clause -- and we reported *WE FOUND NO EVIDENCE*.
+His comment is "Huge failure here. How is this not identified as a paper that matches?" and it is
+entirely fair.
+
+**So a single-shot cheap retrieval found what a two-model LLM cascade reading the whole paper in
+windows did not.** That is the same shape as three other findings this week and they now form one
+thesis: *retrieval is not this system's bottleneck, judgement is.*
+
+- the query layer reaches 91.7% of gold papers and names 22.8% in the answer
+- the critic wrote correct reasons and attached wrong labels (D-060)
+- the 8B judge described candidates instead of comparing them (D-065)
+- and here, the reader misses what a BM25+dense pass finds in one shot
+
+#### What his notes add beyond the verdicts
+**A distinction we did not encode.** Rows 12, 17, 22 and 26 all say a version of: *"in the strict
+interpretation of this evidence alone the answer is no; in the sense of whether I should keep looking
+at this paper, it is yes."* That is **evidence-sufficient** versus **paper-true**, and it is a
+different axis from yes/no. Four of the eight `unsure` verdicts are this, not genuine uncertainty.
+
+**A schema gap he is already fixing.** Row 1: the answer is *yes for a validation region and no for a
+signal region*, and "this distinction is lost in the current schema". He has opened an MR
+(gfacini/HEPKG_promopt_tests PR #6). Region ROLE -- signal / control / validation -- is not
+represented, and several of his verdicts turn on it.
+
+**A defect to chase.** Row 21: *"'What our model said' does not match what is in the quote."*
+
+**A caveat on his own method, which he volunteered**: he judged some early rows against the full
+paper before deciding he should judge only the extracted text. So the first rows are a mix, and the
+precision above is a floor rather than a clean number.
+
+#### What follows
+1. *Do not "fix" precision by tightening the judge.* The 22 false positives and the 5 misses have
+   different causes, and the misses are the expensive ones -- a false negative is a false claim about
+   coverage, which is the output this project exists to produce.
+2. *Test the cheap retrieval as a reader.* If BM25+dense over sentences finds what the cascade misses,
+   it belongs in the reader, not only in the review sheet. That is measurable on the 5 misses today
+   and on all 202 rows when the rest of the review lands.
+3. *Encode `evidence_sufficient` separately from `true_in_paper`.* His four `unsure` verdicts are
+   answers to a question we never asked.
+4. *Region role belongs in the schema*, and his MR is the specification.
