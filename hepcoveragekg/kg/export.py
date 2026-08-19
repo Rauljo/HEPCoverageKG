@@ -57,7 +57,35 @@ def export_csvs(conn: sqlite3.Connection, out_dir: Path) -> None:
             c.canonical_id AS "id:ID",
             e.kind,
             e.label,
-            'Canonical' AS ":LABEL"
+            -- The kind becomes a SECOND Neo4j label, so the browser colours a
+            -- generator differently from a systematic or a detector object.
+            -- Neo4j colours by label and not by property, so without this every
+            -- concept is one shade and a picture of 60 nodes says nothing about
+            -- how the graph is organised. `;` separates labels in bulk import.
+            'Canonical;' || COALESCE(
+                 CASE e.kind
+                   WHEN 'detector_object'        THEN 'DetectorObject'
+                   WHEN 'systematic_uncertainty' THEN 'Systematic'
+                   WHEN 'physics_process'        THEN 'Process'
+                   WHEN 'statistical_method'     THEN 'StatMethod'
+                   WHEN 'background_method'      THEN 'BackgroundMethod'
+                   WHEN 'event_region'           THEN 'Region'
+                   WHEN 'model_parameter'        THEN 'ModelParameter'
+                   WHEN 'object_definition'      THEN 'ObjectDefinition'
+                   WHEN 'selection_requirement'  THEN 'Selection'
+                   WHEN 'collision_system'       THEN 'CollisionSystem'
+                   WHEN 'result_quantity'        THEN 'ResultQuantity'
+                   WHEN 'bsm_model'              THEN 'BSMModel'
+                   WHEN 'generator'              THEN 'Generator'
+                   WHEN 'background'             THEN 'Background'
+                   WHEN 'observable'             THEN 'Observable'
+                   WHEN 'sample'                 THEN 'Sample'
+                   WHEN 'channel'                THEN 'Channel'
+                   WHEN 'dataset'                THEN 'Dataset'
+                   WHEN 'benchmark'              THEN 'Benchmark'
+                   WHEN 'result'                 THEN 'Result'
+                   WHEN 'paper'                  THEN 'PaperNode'
+                 END, 'OtherKind') AS ":LABEL"
         FROM (
             SELECT DISTINCT canonical_id FROM entity_canonical
             UNION
@@ -109,6 +137,28 @@ def export_csvs(conn: sqlite3.Connection, out_dir: Path) -> None:
             'RESOLVES_TO' AS ":TYPE"
         FROM entity_occurrence eo
         LEFT JOIN entity_canonical ec ON eo.entity_id = ec.entity_id
+    """)
+
+    # 2b. MENTIONS (Paper -> Canonical), the shortcut across the occurrence layer
+    #
+    # The real path is Paper -> Occurrence -> Canonical, and that middle node is
+    # the whole point of the alias layer: it holds the words a paper actually
+    # used. But for a picture, four hops between two papers is a hairball, and
+    # the shortcut says the thing a reader wants -- these papers are about the
+    # same concept.
+    #
+    # DISTINCT because a paper writes one concept several ways: without it,
+    # "Misidentified lepton (MisID) background" and "W+jets and multijet
+    # background with misidentified leptons" would draw two identical edges from
+    # one paper and the count on screen would be wrong.
+    _write_csv(conn, out_dir / "edges_mentions.csv", """
+        SELECT DISTINCT
+            eo.paper_id AS ":START_ID",
+            COALESCE(ec.canonical_id, eo.entity_id) AS ":END_ID",
+            'MENTIONS' AS ":TYPE"
+        FROM entity_occurrence eo
+        LEFT JOIN entity_canonical ec ON eo.entity_id = ec.entity_id
+        WHERE eo.paper_id IS NOT NULL
     """)
 
     # 3. ASSERTIONS (Occurrence -> Occurrence | LiteralValue)

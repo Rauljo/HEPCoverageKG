@@ -32,6 +32,7 @@ neo4j-admin database import full "$DB_NAME" \
     --nodes="$GRAPH_DIR/nodes_literal.csv" \
     --relationships="$GRAPH_DIR/edges_has_occurrence.csv" \
     --relationships="$GRAPH_DIR/edges_resolves_to.csv" \
+    --relationships="$GRAPH_DIR/edges_mentions.csv" \
     --relationships="$GRAPH_DIR/edges_assertion.csv" \
     --multiline-fields=true \
     --overwrite-destination=true
