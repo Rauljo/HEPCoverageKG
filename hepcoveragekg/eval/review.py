@@ -534,3 +534,94 @@ def single_paper_items(rows: list[dict], questions: list[dict],
             "_by": "single-paper run",
         })
     return items
+
+
+def decomposed_condition_items(rows: list[dict], papers: set, conn=None,
+                               start_row: int = 1) -> list[dict]:
+    """One row per UNRESOLVED CONDITION, from a decomposed multi-condition run.
+
+    Batch 2's gf-01 rows were built by `split_items` from the SWEEP, which asks
+    the three-part question as one question and stores one sentence. That hands
+    a reviewer a single quote for a three-part claim -- the failure this file's
+    own driver warns about, and the one the judge itself committed in D-058.
+
+    Two decomposed runs exist and neither was used. They carry a verdict and a
+    quote per condition, so the sheet can ask the question a physicist answers
+    in seconds -- "does this paper require missing transverse momentum?" --
+    instead of one he cannot answer at all.
+
+    Only the conditions the run failed to resolve are asked. A condition it
+    settled confidently is not where the disagreement lives, and his time is the
+    binding constraint on this entire evaluation. On the 19 gf-01 papers that is
+    35 rows rather than 57.
+
+    This is also the measurement D-069 left open: decomposition refused 17 of 21
+    false claims and all 3 true ones, on n=3. Per-condition verdicts are what
+    turn that into a number.
+    """
+    items: list[dict] = []
+    row = start_row
+    for r in rows:
+        if r["paper_id"] not in papers:
+            continue
+        for cond, verdict in sorted((r.get("conditions") or {}).items()):
+            if verdict.get("answer") is True:
+                continue
+            quote = verdict.get("quote") or ""
+            items.append({
+                "row": row, "qid": f"{r['qid']}-cond", "question": cond,
+                "paper_id": r["paper_id"], "quote": quote,
+                "candidates": ([] if quote else
+                               (candidate_sentences(conn, r["paper_id"], cond)
+                                if conn is not None else [])),
+                "_machine": verdict.get("answer") is True,
+                "_judge": verdict.get("answer"), "_why": "",
+                "_by": "decomposed run",
+            })
+            row += 1
+    return items
+
+
+def value_items(rows: list[dict], questions: list[dict],
+                start_row: int = 1) -> list[dict]:
+    """The questions that ask for a VALUE, reframed as a claim to be checked.
+
+    Gabriel wrote the same note on every one of these: *"Not a yes/no question.
+    What to do here?"* -- and then stopped, leaving gf-13, gf-14 and gf-15
+    unanswered. He was right. The sheet showed him a sentence from the paper and
+    a yes/no box beside a question asking "what signal efficiency does the cut
+    retain?", which has no yes and no no.
+
+    The fix is not a new answer vocabulary; it is asking a different question.
+    We hold an answer for each of these -- `judge_best_answer` -- so the item
+    becomes *"we say X. Is that right?"*, which IS a yes/no, keeps the existing
+    app and TSV unchanged, and turns a wasted row into a check on the one thing
+    a value question can test: whether the value is correct.
+
+    A wrong value gets caught by the notes box, which is where he already writes
+    corrections.
+    """
+    text = {q["qid"]: (q.get("per_paper") or q["text"]) for q in questions}
+    items: list[dict] = []
+    row = start_row
+    for r in sorted(rows, key=lambda x: x.get("qid", "")):
+        answer = (r.get("judge_best_answer") or "").strip()
+        if not answer:
+            continue
+        asked = text.get(r["qid"], r.get("qid", ""))
+        items.append({
+            "row": row,
+            "qid": r["qid"],
+            "question": (f"{asked}\n\nWE ANSWER: {answer}\n\n"
+                         "Is that answer correct? (notes: the right value, if not)"),
+            "paper_id": r["paper_id"],
+            "quote": r.get("quote") or "",
+            "quotes": [q for q in (r.get("all_quotes") or []) if q][:3],
+            "candidates": [],
+            "_machine": True,
+            "_judge": r.get("answer"),
+            "_why": r.get("downgraded") or "",
+            "_by": "value run",
+        })
+        row += 1
+    return items
