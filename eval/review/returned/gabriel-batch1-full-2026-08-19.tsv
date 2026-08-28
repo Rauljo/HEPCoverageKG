@@ -1,0 +1,201 @@
+# sheet=v1	answered=199	total=202	returned=2026-08-19T14:13:34.618Z
+row	question_id	paper	verdict	notes
+1	gf-01	2106.01676	unsure	The evidence presented is not conclusive because it does not say which regions have the selection. Looking at the paper Table 2 shows that the signal regions require N b-jets = 0 but VRtt WZ in Table 7 has b-jets and MET selection. We should be abel to cover both types of queries - looking at what was covered in signal regions vs what was covered in validation or control regions. The answer here is yes for VR but no for SR. This distinction is lost in the current schema so that needs to be fixed (making MRs now). If we restrict the questions to SRs then the answer is no but the evidence presented makes it seems like yes but a careful ask of SR vs CR this is unsure.
+2	gf-01	2201.11585	no	MET only, no b-tag. When I look at the paper, the sentence about b-tagging scale factors should have been edited, but okay, it is there.
+3	gf-01	2211.08028	yes	
+4	gf-01	2103.06956	no	No mention of MET selection (so no), but also not sure if a measurement or a search (unsure).
+5	gf-01	2403.01556	no	Non-standard signature in an emerging jet search uses a b-tagging selection at some point (b-jet contamination estimate) but explicit b-jet selection. No MET.
+6	gf-01	2511.11853	no	no mention of MET
+7	gf-01	2602.18611	no	It implies b-jet and MET selection but I would not call this evidence.
+8	gf-01	2207.12246	no	
+9	gf-01	2010.14293	no	
+10	gf-01	2004.14060	yes	Huge failure here. Search, b-tagged, and MET are all in the first evidence section above. How is this not identified as a paper that matches? Looking into the paper, it uses the standard b-tagging algorithms requiring 2 b-jets in the SRs and also uses a less-common track-jet b-tagging algorithm. Most if not all SRs require at least 2 b-jets.
+11	gf-01	2308.02285	no	Title says measurement. The MET discussion is for transverse mass which is a common w-selection cut.
+12	gf-01	2012.03799	unsure	I agree that there is no explicit evidence for b-tagged jets, but with events with top quark pairs and with exactly one isolated charged lepton there has to be b-jets. It is expected from what is listed but not explicitly listed. In the strict interpretation of evidence in this sentence alone, the answer is no, in the sense of if I should keep looking at this paper in more detail to answer this question, the answer is yes.
+13	gf-01	2106.01676	no	
+14	gf-01	2202.08676	no	
+15	gf-01	2604.27044	no	Confirmed. No implication from signatures listed that this would have MET. Confirmed in paper that MET selection is used for a tt CR, not in SR.
+16	gf-01	2307.01094	unsure	It seems from here that there is a MET and b-jet selection, but the b-jet selection is for a veto. I would be hesitant to call a paper on this evidence for b-jet requirements. More information is needed to see if there are regions that look for the signal in top-enriched selections.
+17	gf-01	2102.01444	unsure	Definitely a search using b-jets. The MET selection is unclear but there is a MET significance cut which usually implies a MET cut (especially since the cut is > not <). More evidence is needed to see what the MET cut value is, but my guess is there is one applied (more likely than not applied). In the strict interpretation of evidence in this sentence alone, the answer is no, in the sense of if I should keep looking at this paper in more detail to answer this question, the answer is yes.
+18	gf-01	2506.13565	no	No MET, none traditionally expected from what is shown
+19	gf-01	2010.14293	no	search, MET, but no mention of b-tagging
+20	gf-01	2302.05225	no	b-jets explicitly rejected - checked paper, no SRs using b-jets
+21	gf-01	2112.03161	no	What our model said does not match what is in the quote.
+22	gf-01	2208.12095	unsure	MET selection implied by mentioning single-lepton topologies but not discussed. In the strict interpretation of evidence in this sentence alone, the answer is no, in the sense of if I should keep looking at this paper in more detail to answer this question, the answer is yes. Not sure if this is a measurement or a search.
+23	gf-01	2510.07527	no	no MET requirements mentioned
+24	gf-01	2511.11853	no	No MET cut mention.
+25	gf-01	2404.06204	no	
+26	gf-01	2205.05120	unsure	Signature might imply it - H decaying to bb gives b-jets. W->lv or Z->vv would require MET. But no evidence here. In the strict interpretation of evidence in this sentence alone, the answer is no, in the sense of if I should keep looking at this paper in more detail to answer this question, the answer is yes.
+27	gf-01	2402.08486	no	No MET mentioned
+28	gf-01	2302.05225	no	
+29	gf-01	2407.10549	yes	
+30	gf-01	2401.07090	no	
+31	gf-01	2012.08600	unsure	first evidence says b-tagged jets are counted, MET is used and the paper is a search. It is not clear if the regions with b-tagged jets are in an SR or a CR so I used unsure.
+32	gf-01	2004.14060	unsure	In a top squark pair final state with at least two jets, one expects some b-jets. Strictly speaking, there is not direct evidence of b-tagged jets, however there are expectations of b-tagged jets given the evidence.
+33	gf-01	2006.05880	yes	This paper definitely has b-jet and MET selection. Since on top of the evidence, it says The closest sentences in this paper were: I want to point out that there were more sentences about MET not included. Given the three statements here, it is unclear if there is a MET selection (neither stated nor not stated), so strictly it is a no but for the paper (which is implied to follow the same judgement), it is a yes
+34	gf-01	2009.14537	no	
+35	gf-01	2510.07527	no	Is a search. Not sure about selections. No evidence presented for them.
+36	gf-01	2206.09466	no	only evidence of using b-tagging
+37	gf-01	2004.04545	no	only evidence of using b-tagging
+38	gf-01	2201.11585	no	only evidence of using b-tagging
+39	gf-01	2012.03799	yes	It is not clear if it is a search or measurement but given signals not signal, I am fairly sure it is a search.
+40	gf-01	2107.12553	yes	
+41	gf-01	2012.08600	no	
+42	gf-01	2006.05880	no	No mention of MET.
+43	gf-01	2207.00348	no	MET and b-tagging used but seems to be a measurement measure Higgs boson properties
+44	gf-01	2509.22535	no	No mention of MET or search.
+45	gf-01	2202.08676	yes	Complex paper in terms of number of SRs but last evidence here nails it. significant missing energy. is MET. Seems cuts might be through a BDT.
+46	gf-01	2209.07327	no	No mention of MET of if a search.
+47	gf-01	2106.14246	no	
+48	gf-01	2508.13900	no	
+49	gf-01	2405.18661	no	tricky paper as contains a large review.
+50	gf-01	2508.13900	yes	Unless used in different regions, MET and b-tagging both mentioned in terms of a search.
+51	gf-01	2403.01556	no	
+52	gf-01	2008.05928	no	
+53	gf-02	2209.07327	yes	
+54	gf-02	2404.06204	yes	
+55	gf-02	2004.01678	yes	
+56	gf-02	2509.22535	no	
+57	gf-02	2604.27044	yes	
+58	gf-02	2208.12095	yes	
+59	gf-02	2012.01581	no	
+60	gf-02	2202.08676	yes	
+61	gf-02	2403.01556	no	
+62	gf-02	2011.07812	yes	
+63	gf-02	2511.11853	yes	
+64	gf-02	2508.13900	no	
+65	gf-02	2307.01094	yes	
+66	gf-02	2503.19420	no	
+67	gf-03	2011.07812	yes	
+68	gf-03	2112.03161	no	
+69	gf-03	2110.11231	no	
+70	gf-03	2208.12095	no	
+71	gf-03	2102.01444	yes	
+72	gf-03	2006.05880	yes	
+73	gf-03	2211.08028	yes	
+74	gf-03	2004.04545	no	
+75	gf-03	2106.01676	yes	
+76	gf-04	2308.02285	yes	
+77	gf-04	2010.14293	no	
+78	gf-04	2404.06204	yes	
+79	gf-04	2208.12095	yes	Unfolding is only done for measurements.
+80	gf-04	2312.04450	yes	
+81	gf-04	2110.11231	yes	
+82	gf-04	2205.05120	no	
+83	gf-04	2302.05225	no	
+84	gf-04	2001.06899	yes	
+85	gf-04	2004.14060	no	This is a common sentence used to describe the jet calibration.
+86	gf-04	2402.08486	yes	Cross sections are measured at the particle level in a fiducial phase space is a clear give away
+87	gf-04	2207.12246	yes	unfolded
+88	gf-04	2604.27044	no	
+89	gf-04	2103.04956	yes	
+90	gf-04	2401.05299	yes	
+91	gf-04	2106.14246	no	
+92	gf-04	2309.14442	yes	
+93	gf-05	2509.22535	no	
+94	gf-05	2510.07527	unsure	might be implied
+95	gf-05	2302.05225	yes	
+96	gf-05	2012.08600	yes	
+97	gf-05	2405.18661	no	
+98	gf-05	2012.03799	no	
+99	gf-05	2103.06956	yes	
+100	gf-05	2205.05120	yes	
+101	gf-05	2009.04363	yes	
+102	gf-05	2602.18611	yes	
+103	gf-05	2407.10549	unsure	Yes, but it is not the SM Higgs.
+104	gf-05	2006.05880	yes	
+105	gf-05	2503.19420	yes	
+106	gf-05	2103.04956	no	
+107	gf-05	2403.01556	no	
+108	gf-05	2201.11585	no	
+109	gf-05	2605.14245	yes	
+110	gf-05	2007.02873	yes	
+111	gf-05	2004.01678	no	
+112	gf-05	2004.04545	yes	
+113	gf-05	2511.11853	no	
+114	gf-05	2112.03161	yes	
+115	gf-05	2109.13808	no	
+116	gf-05	2604.27044	yes	
+117	gf-05	2111.08340	yes	
+118	gf-05	2307.01094	no	
+119	gf-05	2008.05928	yes	
+120	gf-05	2209.07327	no	
+121	gf-05	2106.01676	no	
+122	gf-05	2206.09466	no	
+123	gf-05	2504.13081	no	
+124	gf-07	2209.07327	no	
+125	gf-07	2102.01444	yes	
+126	gf-07	2312.04450	no	
+127	gf-07	2110.11231	yes	
+128	gf-07	2503.19420	no	
+129	gf-07	2012.03799	yes	Why $tar{t}+Z$ not $t\bar{t}+Z$ in the quote here?
+130	gf-07	2010.14293	no	
+131	gf-07	2402.08486	no	
+132	gf-07	2006.05880	yes	
+133	gf-07	2106.14246	yes	
+134	gf-07	2207.00348	no	
+135	gf-07	2103.04956	no	
+136	gf-07	2508.13900	no	
+137	gf-07	2506.13565	no	
+138	gf-07	2509.22535	yes	
+139	gf-07	2112.00895	no	Note has nothing to do with this quote. ttZ-enriched is not mentioned.
+140	gf-07	2008.05928	no	
+141	gf-07	2004.14060	no	
+142	gf-07	2004.01678	no	
+143	gf-07	2007.02873	no	
+144	gf-07	2401.07090	no	
+145	gf-07	2403.01556	no	
+146	gf-07	2302.05225	no	Note again does not match quote.
+147	gf-07	2303.15340	no	
+148	gf-07	2111.08340	no	
+149	gf-07	2401.05299	yes	
+150	gf-07	2202.08676	yes	
+151	gf-07	2011.07812	no	
+152	gf-07	2001.06899	no	
+153	gf-07	2012.08600	no	
+154	gf-07	2408.03744	no	
+155	gf-07	2103.06956	yes	
+156	gf-07	2511.11853	no	
+157	gf-07	2009.04363	no	
+158	gf-07	2206.09466	no	In the analysis, but do not see a CR. Again note does not match quote (only 1 sentence, not two)
+159	gf-07	2107.12553	no	
+160	gf-07	2604.27044	no	
+161	gf-07	2112.03161	no	
+162	gf-07	2308.02285	no	
+163	gf-08	2404.06204	yes	
+164	gf-08	2506.13565	yes	
+165	gf-08	2004.01678	no	
+166	gf-08	2205.05120	no	This is picking up two leptons but it is never two electron or two muons it is either both of those or one of them with a hadronic decaying tau
+167	gf-08	2112.00895	no	W bosons decay to a charged and neutral lepton so the W decays are either e or mu and not two of each which the question asks.
+168	gf-08	2402.08486	yes	
+169	gf-08	2006.05880	yes	The first quote mentions 2 leptons in the trigger which is a clue. But then other sentences in the paper say it explicitly that a pair of same flavour (SF) opposite sign (OS) leptons are needed to reconstruct the Z.
+170	gf-08	2009.14537	yes	
+171	gf-08	2103.04956	yes	This talks about creating Zs from leptons which implies the cuts in the question. Despite what the note says, three mutually exclusive subchannels are not discussed in the selected sentence.
+172	gf-08	2111.08340	no	
+173	gf-08	2401.05299	yes	
+174	gf-08	2308.02285	no	W decays to only one charged lepton.
+175	gf-08	2405.18661	yes	
+176	gf-08	2201.11585	yes	
+177	gf-08	2403.01556	no	
+178	gf-08	2012.08600	yes	
+179	gf-08	2001.06899	yes	
+180	gf-08	2208.12095	no	
+181	gf-08	2011.07812	yes	
+182	gf-08	2408.03744	yes	This quote implies a leptonic Z decay but does not say the explicit lepton criteria.
+183	gf-08	2211.08028	no	The dilepton selection is in the CR not the SR so if we are asking for SR only, the answer is No. If for any region, it is yes
+184	gf-08	2309.14442	no	It is not clear from this sentence if two leptons are required or one. Looking at the paper itself, it is one. Top quarks almost always decay into a W boson and a b quark. We consider events in which one W boson decays into a pair of quarks, and the other W boson decays into a charged lepton (electron or muon) and a neutrino.
+185	gf-08	2511.11853	no	
+186	gf-01-condition	2201.11585	yes	There is a veto on b-tagged jets. Kind of ambiguous for this exercise but it is applied. Finally, a veto on all other types of loosely identified objects (electrons, muons, photons, tau_h candidates, and b-tagged jets), as described in Section 4, is applied.
+187	gf-01-condition	2511.11853	yes	This odd one has a cut on p^miss_T/m_ll but the second quote says -dependent event selection requirements on p_T^miss
+188	gf-01-condition	2202.08676	yes	Table 1 has upper bounds on p_T^miss. CMS uses p_T^miss more so we need to be sure the model understands MET and pTmiss are the same thing.
+189	gf-01-condition	2510.07527	no	This is a combination paper. The underlying papers are probably of more interest but this is a corner case that needs to be dealt with carefully.
+190	gf-01-condition	2403.01556	yes	The second quote says it explicitly - Jets that are consistent with the fragmentation of b quarks (b jets) are identified using the DeepJet discriminator
+191	gf-01-condition	2211.08028	yes	Third quote says it Jets which contain b-hadrons are identified and b-tagged using a multivariate algorithm (MV2c10) that exploits the impact parameters
+192	gf-01-condition	2106.14246	yes	The event selection uses b-tagged jets but as a veto to reduce ttbar contributions.
+193	gf-01-condition	2006.05880	yes	first quote Identification of jets containing b-hadrons (b-tagging) is performed with a multivariate discriminant, actually 2nd too Jets are considered as b-tagged if they fulfil a requirement corresponding to a 77% average efficiency
+194	gf-01-condition	2506.13565	no	
+195	gf-01-condition	2307.01094	yes	For a veto.
+196	gf-06	2006.05880	unsure	Not a yes/no question. What to do here? Question not answered but information is in extracted quotes.
+197	gf-10	2001.06899	unsure	Not a yes/no question. What to do here? The answer is not given but the answer is extracted in the quotes.
+198	gf-11	2001.06899	unsure	Not a yes/no question. What to do here?
+199	gf-12	2006.05880	unsure	Not a yes/no question. What to do here?

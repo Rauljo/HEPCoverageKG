@@ -29,6 +29,11 @@ from pathlib import Path
 from typing import Union
 
 from hepcoveragekg.facets import CARD_FIELDS, RENAMED_KINDS, signatures
+from hepcoveragekg.facets.region_role import (
+    REGION_ROLE_FIELD,
+    REGION_ROLE_VOCABULARY_VERSION,
+    region_role,
+)
 from hepcoveragekg.facets.vocabulary import (
     FACET_VOCABULARY_VERSION,
     canonicalize_entity,
@@ -133,6 +138,80 @@ def derive_facets(conn, *, vocabulary: str = FACET_VOCABULARY_VERSION) -> dict:
         "occurrences_tagged": len({(r[0], r[1]) for r in rows}),
         "entities_tagged": len({r[1] for r in rows}),
         "coverage": coverage,
+    }
+
+
+# --------------------------------------------------------------------------
+# Region roles
+# --------------------------------------------------------------------------
+# Kept OUT of `facet_rows` and given its own vocabulary version on purpose.
+# CARD_FIELDS mirrors upstream's `_CARD_FIELDS` and the parity test compares our
+# derivation against upstream's frozen snapshot card for card; adding a kind
+# there would make us fail the check that exists to catch drift. Region role is
+# our own extension answering a gap the supervisor found (D-066), not a port, so
+# it derives separately, deletes within its own vocabulary scope, and leaves
+# parity alone.
+
+def region_role_rows(
+    conn, vocabulary: str = REGION_ROLE_VOCABULARY_VERSION
+) -> tuple[list[tuple], Counter, Counter]:
+    """(rows, per-source totals, per-source matched) for `event_region`.
+
+    Reads `entity_occurrence` for the same reason `facet_rows` does: the role is
+    a property of what one paper said about the region, and 2 of the 771 regions
+    carry different attributes in different papers.
+    """
+    rows: list[tuple] = []
+    total: Counter = Counter()
+    by_source: Counter = Counter()
+
+    seen: set[tuple[str, str]] = set()
+    for row in conn.execute(
+        "SELECT DISTINCT paper_id, entity_id, label, attributes"
+        "  FROM entity_occurrence WHERE kind = 'event_region'"
+    ):
+        key = (row["paper_id"], row["entity_id"])
+        if key in seen:
+            continue
+        seen.add(key)
+        total["event_region"] += 1
+
+        role, source = region_role(row["label"], row["attributes"])
+        if role is None:
+            continue
+        by_source[source] += 1
+        # `version` carries the rung, so a downstream query can ask for
+        # attribute-asserted roles only without re-deriving anything.
+        rows.append((row["paper_id"], row["entity_id"], REGION_ROLE_FIELD,
+                     role, source, vocabulary))
+
+    return rows, total, by_source
+
+
+def derive_region_roles(
+    conn, *, vocabulary: str = REGION_ROLE_VOCABULARY_VERSION
+) -> dict:
+    """Replace this vocabulary's region-role rows. Returns a coverage report."""
+    rows, total, by_source = region_role_rows(conn, vocabulary)
+
+    with kg_store.transaction(conn):
+        conn.execute("DELETE FROM entity_facet WHERE vocabulary = ?", (vocabulary,))
+        conn.executemany(
+            "INSERT OR IGNORE INTO entity_facet"
+            " (paper_id, entity_id, field, value, version, vocabulary) VALUES (?,?,?,?,?,?)",
+            rows,
+        )
+
+    regions = total["event_region"]
+    matched = sum(by_source.values())
+    return {
+        "vocabulary": vocabulary,
+        "regions": regions,
+        "matched": matched,
+        "missed": regions - matched,
+        "hit_rate": matched / regions if regions else 0.0,
+        "by_source": dict(by_source),
+        "by_role": dict(Counter(r[3] for r in rows)),
     }
 
 

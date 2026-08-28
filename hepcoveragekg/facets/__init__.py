@@ -60,3 +60,21 @@ CARD_FIELDS: dict[str, str] = {
 
 # The kinds whose value is a rename rather than a tag: exactly zero or one.
 RENAMED_KINDS = ("detector_object", "generator")
+
+# Every facet field the QUERY layer can navigate, and the entity kinds behind
+# each. CARD_FIELDS above stays exactly upstream's set because the parity test
+# compares our derivation against their snapshot card for card -- so our own
+# extensions are added here instead, where they cannot make that check fail.
+FIELD_KINDS: dict[str, tuple[str, ...]] = {
+    **{field: tuple(sorted(k for k, f in CARD_FIELDS.items() if f == field))
+       for field in set(CARD_FIELDS.values())},
+    "region_roles": ("event_region",),
+}
+
+# Which vocabulary version holds each field's rows. Extensions derive on their
+# own version so they can be rebuilt without touching the ported layer, which
+# means a caller asking for a field must not have to know this.
+FIELD_VOCABULARY: dict[str, str] = {
+    **{field: "facets-v1" for field in set(CARD_FIELDS.values())},
+    "region_roles": "region-roles-v1",
+}

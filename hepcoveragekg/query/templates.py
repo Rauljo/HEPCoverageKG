@@ -377,7 +377,7 @@ def contents_of(conn, paper_ids: str | list[str],
 
 def facets(conn, field: str, values: str | list[str], mode: str = "all",
            category: Optional[str] = None, experiment: Optional[str] = None,
-           vocabulary: str = "facets-v1") -> QueryResult:
+           vocabulary: Optional[str] = None) -> QueryResult:
     """Papers whose analysis card carries these closed-vocabulary values.
 
     The cheap rung of the ladder (S-68). No model call, no retrieval, no
@@ -406,6 +406,13 @@ def facets(conn, field: str, values: str | list[str], mode: str = "all",
     its label and every fact and simply never appears here -- so a result that
     did not say what it omitted would read as complete when it is not.
     """
+    # Extensions derive on their own vocabulary version (region_roles lives in
+    # region-roles-v1), and a caller naming a field should not have to know
+    # which. An explicit argument still wins.
+    from hepcoveragekg.facets import FIELD_VOCABULARY
+    if vocabulary is None:
+        vocabulary = FIELD_VOCABULARY.get(field, "facets-v1")
+
     wanted = [values] if isinstance(values, str) else list(values)
     if not wanted:
         return QueryResult(shape="facets", note="no values given")
@@ -612,9 +619,9 @@ def _facet_coverage_note(conn, field: str, vocabulary: str) -> str:
     `object_definition` in another drags the second kind in -- inflating the
     denominator (515 rather than 486 for `objects`) and understating coverage.
     """
-    from hepcoveragekg.facets import CARD_FIELDS
+    from hepcoveragekg.facets import FIELD_KINDS
 
-    kinds = sorted(k for k, f in CARD_FIELDS.items() if f == field)
+    kinds = list(FIELD_KINDS.get(field, ()))
     if not kinds:
         return f"unknown facet field '{field}'"
 

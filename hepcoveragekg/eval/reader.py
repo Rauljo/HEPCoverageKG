@@ -686,7 +686,37 @@ PAPER TEXT ({paper_id}, section: {section})
 # A lone backslash that does not begin one of JSON's escape sequences. LaTeX is
 # made of these -- \mathup, \overline, \approx, \hskip -- and a model quoting a
 # physics sentence copies them through verbatim.
-_BAD_ESCAPE = re.compile(r'\\\\|\\(?!["\\/bfnrtu])')
+# A backslash that JSON will mis-read, in a corpus written in LaTeX.
+#
+# The first version exempted `b f n r t u` as valid JSON escapes -- which is
+# true, and which is exactly wrong here, because those are the letters LaTeX
+# collides with: \bar, \tau, \nu, \rho, \frac. Measured on one sweep's raw
+# output: 2,702 `\t` as \text, 722 `\r` as \rvert, 406 `\b` as \bar, 73 `\n` as
+# \nu -- against 38,640 `\n` that really were newlines.
+#
+# The discriminator is what FOLLOWS. `\n{` is a newline; `\nu$` is a Greek
+# letter. So an escape letter counts as valid only when a letter does NOT follow
+# it, and `\u` stays exempt outright since a LaTeX command starting `u` would
+# still be a well-formed unicode escape and guessing there is worse than
+# leaving it.
+#
+# Left unfixed this silently corrupts stored quotes: `$b\bar{b}$` becomes
+# `$b<backspace>ar{b}$`, which the supervisor caught in his review before we
+# did.
+#
+# One refinement on top of that: an escape directly after another whitespace
+# escape is part of a whitespace RUN, so `a\n\nb` keeps both newlines even
+# though a letter follows the second.
+#
+# What stays unresolvable is a lone real newline before a word -- `\ntwo` and
+# `\nu` are the same three characters and no local rule separates them. This
+# leans toward LaTeX, because the two mistakes are not equal: escaping a real
+# newline prints a visible `\n` and loses nothing, while missing LaTeX destroys
+# characters outright. Across the sweep corpus the ambiguous shape never
+# occurred -- all 106 `\n`+letter were `\nu`, and 0 were prose.
+_WS_RUN = r'(?<!\\n)(?<!\\t)(?<!\\r)(?<!\\f)'
+_BAD_ESCAPE = re.compile(
+    r'\\\\|' + _WS_RUN + r'\\(?!["\\/u])(?!(?:[bfnrt])(?![A-Za-z]))')
 
 
 def _repair_latex_escapes(span: str) -> str:

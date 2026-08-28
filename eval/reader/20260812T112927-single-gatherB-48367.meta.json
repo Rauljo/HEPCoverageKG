@@ -1,0 +1,18 @@
+{
+  "model": "Qwen/QwQ-32B-AWQ",
+  "repeats": 3,
+  "temperature": 0.3,
+  "cascade": false,
+  "mode": "extraction",
+  "reads": 7,
+  "yes": 3,
+  "no": 2,
+  "split": 2,
+  "failed": 0,
+  "escalated": 0,
+  "calls": 366,
+  "call_errors": 3,
+  "call_unparsed": 95,
+  "call_error_rate": 0.008,
+  "call_usable_rate": 0.732
+}

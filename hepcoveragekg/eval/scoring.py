@@ -59,6 +59,11 @@ _CLAIMED = re.compile(r"\b(\d[\d,]*)\s+(?:distinct\s+|different\s+|unique\s+)?"
 # planner writes 11 papers at the median and 15 at most.
 MAX_LISTABLE = 15
 
+# Papers in the corpus. Used only to report how much of it a partial human gold
+# actually covers, so a strong `judged_f1` cannot be read as a strong result
+# over the whole corpus when it was measured on a third of it.
+CORPUS_PAPERS = 60
+
 
 def responded(q: Question, a: Answer) -> dict:
     """Did it produce an answer at all, did it decline, and does the prose agree?
@@ -157,6 +162,8 @@ def set_f1(q: Question, a: Answer) -> Optional[dict]:
     """
     if q.shape != "set" or q.truth.kind == "subset" or not q.truth.papers:
         return None
+    if q.truth.universe:
+        return None      # partial human gold -- `judged_set_f1` owns these
     truth = set(q.truth.papers)
     if len(truth) > MAX_LISTABLE:
         return None          # unlistable in prose; abstain rather than mismeasure
@@ -171,6 +178,51 @@ def set_f1(q: Question, a: Answer) -> Optional[dict]:
     f1 = 0.0 if precision + recall == 0 else 2 * precision * recall / (precision + recall)
     return {"set_precision": precision, "set_recall": recall, "set_f1": f1,
             "set_named_none": 0.0 if named else 1.0}
+
+
+def judged_set_f1(q: Question, a: Answer) -> Optional[dict]:
+    """Set scoring against gold that is PARTIAL BY CONSTRUCTION.
+
+    Gabriel judged 199 (question, paper) pairs, but only papers our system had
+    already surfaced. So the corpus splits three ways, not two:
+
+        he said yes   -> a positive
+        he said no    -> a negative, and naming it is a real false positive
+        never judged  -> UNKNOWN, and naming it is not evidence of anything
+
+    Scoring this with `set_f1` would treat all 40-odd unjudged papers as
+    negatives and charge the system for every one it named -- measuring how the
+    review sheet was sampled rather than how the system answered. Restricting
+    both sides to the judged universe is the only honest cut.
+
+    Precision is clean under this restriction. **Recall is not**: a paper the
+    system never surfaced was never put in front of him, so it could not become
+    a gold positive, and the misses that would hurt most are invisible here by
+    construction. `judged_coverage` travels with the result to keep that in
+    view -- it is the fraction of the corpus that carries any verdict at all.
+
+    Metric names are distinct from `set_f1` on purpose. The last time two
+    different measures shared a name (`set_f1` scoring the retrieval footprint)
+    it produced a month of uninterpretable numbers; see `retrieval_reach`.
+    """
+    if q.shape != "set" or not q.truth.universe or not q.truth.papers:
+        return None
+    universe = set(q.truth.universe)
+    truth = set(q.truth.papers) & universe
+    if not truth or len(truth) > MAX_LISTABLE:
+        return None
+    named = set(_arxiv_ids_in(a.text))
+    got = (named or set(a.papers)) & universe
+    coverage = len(universe) / CORPUS_PAPERS if CORPUS_PAPERS else 0.0
+    if not got:
+        return {"judged_precision": 0.0, "judged_recall": 0.0, "judged_f1": 0.0,
+                "judged_named_none": 1.0, "judged_coverage": coverage}
+    tp = len(truth & got)
+    precision = tp / len(got)
+    recall = tp / len(truth)
+    f1 = 0.0 if precision + recall == 0 else 2 * precision * recall / (precision + recall)
+    return {"judged_precision": precision, "judged_recall": recall, "judged_f1": f1,
+            "judged_named_none": 0.0 if named else 1.0, "judged_coverage": coverage}
 
 
 def retrieval_reach(q: Question, a: Answer) -> Optional[dict]:
@@ -363,7 +415,7 @@ def tool_use(q: Question, a: Answer) -> Optional[dict]:
 
 
 def default_scorers() -> list[Scorer]:
-    return [cost, responded, faithfulness, exact_count, set_f1,
+    return [cost, responded, faithfulness, exact_count, set_f1, judged_set_f1,
             retrieval_reach, claimed_count,
             known_positive_recall, label_recall, entity_retrieved, tool_use]
 

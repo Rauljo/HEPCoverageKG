@@ -70,6 +70,14 @@ class Truth:
     kind: str = "none"
     value: Any = None
     papers: list[str] = field(default_factory=list)
+    # The papers a HUMAN actually adjudicated, for gold that is partial by
+    # construction. Gabriel judged only the papers our system surfaced, so a
+    # paper outside this list has no verdict -- it is not a negative, it is
+    # unknown, and counting it as a false positive would measure the sheet's
+    # sampling rather than the system. Empty means "the whole corpus is the
+    # universe", which is what SQL-derived truth gets.
+    universe: list[str] = field(default_factory=list)
+
     # Entity ids the answer must cover, for `labels`-kind questions. Ids rather
     # than the label text, because matching prose against a label like
     # "Simultaneous binned maximum-likelihood fit to SR m_bb distributions..."
@@ -123,6 +131,7 @@ def parse(record: dict) -> Question:
         kind=truth_raw.get("kind", "none"),
         value=truth_raw.get("value"),
         papers=list(truth_raw.get("papers") or []),
+        universe=list(truth_raw.get("universe") or []),
         items=list(truth_raw.get("items") or []),
     )
 

@@ -1037,6 +1037,30 @@ def test_repairing_escapes_is_idempotent_and_never_breaks_valid_json():
     assert R._repair_latex_escapes(once) == once
 
 
+def test_latex_commands_that_collide_with_json_escapes_survive():
+    """`\\bar` is a valid JSON escape for backspace, so the first repair -- which
+    exempted `b f n r t u` as legitimate -- decoded `$b\\bar{b}$` into
+    `$b<backspace>ar{b}$` and stored that. The supervisor found it in his review
+    before we did: 12 of 202 sheet rows carried a mangled quote.
+
+    Those exempted letters are the ones HEP LaTeX uses most: \\bar, \\tau,
+    \\text, \\nu, \\rho, \\frac."""
+    for command, escape in [("bar{b}", "\\b"), ("tau", "\\t"), ("nu", "\\n"),
+                            ("rvert", "\\r"), ("frac{1}{2}", "\\f")]:
+        raw = '{"q": "a $\\%s$ pair"}' % command
+        out = json.loads(R._repair_latex_escapes(raw))["q"]
+        assert "\\" + command in out, f"{escape} destroyed: {out!r}"
+        assert not any(c in out for c in "\x08\x0c\t\r"), f"control char in {out!r}"
+
+
+def test_real_whitespace_escapes_are_still_whitespace():
+    """The rule is what FOLLOWS: `\\n{` is a newline, `\\nu$` is a Greek letter.
+    Getting this backwards would escape every newline in every reply."""
+    assert json.loads(R._repair_latex_escapes(r'{"q": "one\n{two"}'))["q"] == "one\n{two"
+    assert json.loads(R._repair_latex_escapes(r'{"q": "a\n\nb"}'))["q"] == "a\n\nb"
+    assert json.loads(R._repair_latex_escapes(r'{"q": "é x"}'))["q"] == "é x"
+
+
 def test_a_genuinely_truncated_reply_is_still_rejected():
     """Recovery must not turn into invention: a reply cut off mid-sentence has
     no verdict in it, and guessing one would manufacture evidence."""

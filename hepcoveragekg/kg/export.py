@@ -57,12 +57,17 @@ def export_csvs(conn: sqlite3.Connection, out_dir: Path) -> None:
             c.canonical_id AS "id:ID",
             e.kind,
             e.label,
-            -- The kind becomes a SECOND Neo4j label, so the browser colours a
-            -- generator differently from a systematic or a detector object.
-            -- Neo4j colours by label and not by property, so without this every
-            -- concept is one shade and a picture of 60 nodes says nothing about
-            -- how the graph is organised. `;` separates labels in bulk import.
-            'Canonical;' || COALESCE(
+            -- The kind is the node's ONLY label.
+            --
+            -- It was `Canonical;Generator` first, which does give the node two
+            -- labels -- and the browser still drew every concept in one colour,
+            -- because a node with several labels is styled by one of them and
+            -- they all shared `Canonical`. A single label per node is the only
+            -- version where colour actually means kind.
+            --
+            -- The cost is that `(:Canonical)` no longer matches anything, so
+            -- queries key on the `id` property or on a kind label directly.
+            COALESCE(
                  CASE e.kind
                    WHEN 'detector_object'        THEN 'DetectorObject'
                    WHEN 'systematic_uncertainty' THEN 'Systematic'

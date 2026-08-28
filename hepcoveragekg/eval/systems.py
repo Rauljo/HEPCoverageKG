@@ -24,11 +24,12 @@ difference that does not exist.
 from __future__ import annotations
 
 import hashlib
+import inspect
 import json
 import os
 import time
 from dataclasses import dataclass, field
-from typing import Any, Optional, Protocol, runtime_checkable
+from typing import Any, Callable, Optional, Protocol, runtime_checkable
 
 from .questions import Question
 
@@ -101,6 +102,58 @@ def config_hash(config: dict) -> str:
 
 
 # --------------------------------------------------------------------------
+# effective configuration
+# --------------------------------------------------------------------------
+# Arguments that are plumbing rather than configuration: they carry no setting,
+# and two of them (`chat`, `checkpointer`) are live objects whose repr changes
+# per process, which would give every run a different config hash.
+_NOT_CONFIG = frozenset({"conn", "index", "question", "chat", "checkpointer",
+                         "thread_id"})
+
+# Environment variables that change what the system DOES. These never passed
+# through `planner.answer`, so recording only its arguments would still leave a
+# run unable to say which judge model it used or how wide it was allowed to
+# search. Value is (variable, default-when-unset).
+_ENV_CONFIG: tuple[tuple[str, str], ...] = (
+    ("LLM_MODEL_NAME", ""),
+    ("SEARCH_BREADTH_MAX", "240"),
+    ("LLM_MAX_COMPLETION_TOKENS", "800"),
+    ("CRITIC_MODEL", "NousResearch/Meta-Llama-3.1-8B-Instruct"),
+    ("CRITIC_BASE_URL", ""),
+)
+
+
+def effective_config(func: Callable, overrides: dict) -> dict:
+    """Every knob's ACTUAL value, defaults included.
+
+    The bug this replaces: `config = {**planner_kwargs}` recorded only what the
+    caller happened to override, so a run using defaults recorded nothing about
+    them. 25 of 44 stored runs name no arm at all, and the three knobs the
+    ablation study turns on are exactly the ones that were invisible --
+    `critic_seed` (None is ranked, an int is shuffled), `contract`, and the
+    `CRITIC_BASE_URL` that decides whether the 8B judge or the 72B one runs.
+    Reconstructing which arm produced a run meant reading job scripts.
+
+    Derived from the signature rather than a hand-kept list, so a knob added to
+    `planner.answer` next month is recorded without anyone remembering to.
+    """
+    config: dict = {}
+    for name, param in inspect.signature(func).parameters.items():
+        if name in _NOT_CONFIG or param.kind in (param.VAR_POSITIONAL, param.VAR_KEYWORD):
+            continue
+        value = overrides.get(name, param.default)
+        config[name] = None if value is inspect.Parameter.empty else value
+
+    for var, fallback in _ENV_CONFIG:
+        config[f"env.{var}"] = os.environ.get(var, fallback)
+
+    # A derived flag, because it is the arm name a human uses and reading it off
+    # `critic_seed is None` at analysis time is how it gets misread.
+    config["critic_order"] = "ranked" if config.get("critic_seed") is None else "shuffled"
+    return config
+
+
+# --------------------------------------------------------------------------
 # the stub -- S-22's point made concrete
 # --------------------------------------------------------------------------
 
@@ -139,12 +192,15 @@ class PlannerSystem:
         self._conn = conn
         self._index = index
         self._kwargs = planner_kwargs
+        from ..query import planner
+        # The EFFECTIVE configuration -- every knob, defaults included, plus the
+        # environment variables that change behaviour. Recording only
+        # `planner_kwargs` left a run unable to name its own arm; see
+        # `effective_config`.
         self.config = {
             "kind": "planner",
             "model": os.environ.get("LLM_MODEL_NAME", ""),
-            # The prompt is part of the configuration: PURPOSE full vs minimal
-            # is an ablation axis, so a run that changes it must hash differently.
-            **planner_kwargs,
+            **effective_config(planner.answer, planner_kwargs),
         }
 
     def answer(self, q: Question) -> Answer:

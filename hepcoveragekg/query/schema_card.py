@@ -250,7 +250,7 @@ def _facet_fields(conn) -> list[tuple[str, list[str], int, int]]:
     Silently absent when the layer has not been derived: the query layer must
     keep working on a database that predates the facets tables.
     """
-    from hepcoveragekg.facets import CARD_FIELDS
+    from hepcoveragekg.facets import FIELD_KINDS
 
     try:
         rows = conn.execute(
@@ -267,7 +267,7 @@ def _facet_fields(conn) -> list[tuple[str, list[str], int, int]]:
 
     out: list[tuple[str, list[str], int, int]] = []
     for field_name in sorted(values):
-        kinds = sorted(k for k, f in CARD_FIELDS.items() if f == field_name)
+        kinds = list(FIELD_KINDS.get(field_name, ()))
         if not kinds:
             continue
         marks = ",".join("?" * len(kinds))

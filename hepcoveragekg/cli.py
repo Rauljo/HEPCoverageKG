@@ -201,6 +201,22 @@ def _cmd_facets(args) -> int:
               f"{(total - missed) / total:5.1%}" if total else "")
         return 0
 
+    if args.action == "region-roles":
+        info = facets_derive.derive_region_roles(conn)
+        print(f"region roles derive ({info['vocabulary']}) — "
+              f"{info['matched']}/{info['regions']} regions ({info['hit_rate']:.0%})")
+        for role, n in sorted(info["by_role"].items(), key=lambda kv: -kv[1]):
+            print(f"  {role:14} {n:5}")
+        # Which rung supplied the role. An attribute is what the extraction
+        # asserted; a label is read off the region's name, and if that rung ever
+        # proves unreliable this is the number that says how much rests on it.
+        src = info["by_source"]
+        print(f"  {'from attribute':14} {src.get('attribute', 0):5}")
+        print(f"  {'from label':14} {src.get('label', 0):5}")
+        print(f"  {'untagged':14} {info['missed']:5}   "
+              "(not a role: superbins, excluded regions, is_signal_region=False)")
+        return 0
+
     if args.action == "signatures":
         info = facets_derive.derive_signatures(conn)
         print(f"signatures derive ({info['vocabulary']})")
@@ -570,9 +586,10 @@ def build_parser() -> argparse.ArgumentParser:
         "facets", help="derive the closed-vocabulary facet and signature layers")
     p_facets.add_argument(
         "action",
-        choices=["derive", "signatures", "gaps", "card"],
-        help="derive: entity facet tags. signatures: rebuilt cut trees. "
-             "gaps: labels the vocabulary misses. card: one paper's analysis card.",
+        choices=["derive", "region-roles", "signatures", "gaps", "card"],
+        help="derive: entity facet tags. region-roles: signal/control/validation"
+             " /fiducial/preselection per region. signatures: rebuilt cut trees."
+             " gaps: labels the vocabulary misses. card: one paper's analysis card.",
     )
     p_facets.add_argument("--kind", default="detector_object",
                           help="gaps: which entity kind to list (default detector_object)")

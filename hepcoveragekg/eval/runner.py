@@ -208,6 +208,17 @@ def run(questions: QuestionSet, system: System, *, repeats: int = 1,
         repeats=repeats,
     )
 
+    # Say the arm out loud at the top of the job log. The config is in the file
+    # either way, but a 20-hour job that turns out to have run the wrong arm is
+    # discovered on submission or not until the results disagree -- and the
+    # second one costs the twenty hours.
+    log = logging.getLogger(__name__)
+    log.info("run %s  %s  config %s", meta.run_id, system.name, meta.config_hash)
+    for key in ("use_critic", "critic_order", "contract", "force_critic_set",
+                "env.CRITIC_MODEL", "env.SEARCH_BREADTH_MAX"):
+        if key in meta.config:
+            log.info("    %-24s %s", key, meta.config[key])
+
     n = 0
     consecutive_errors = 0
     aborted = False

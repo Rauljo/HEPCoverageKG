@@ -1,0 +1,18 @@
+{
+  "model": "mistralai/Mistral-Small-24B-Instruct-2501",
+  "repeats": 3,
+  "temperature": 0.3,
+  "cascade": false,
+  "mode": "extraction",
+  "reads": 7,
+  "yes": 3,
+  "no": 3,
+  "split": 1,
+  "failed": 0,
+  "escalated": 0,
+  "calls": 366,
+  "call_errors": 0,
+  "call_unparsed": 51,
+  "call_error_rate": 0.0,
+  "call_usable_rate": 0.861
+}

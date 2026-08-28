@@ -147,13 +147,42 @@ def test_the_supervisors_tier1_gold_answers_reproduce():
     assert q5 == {"2006.05880", "2504.13081"}
 
 
+def _rows_in(conn, vocabulary):
+    return conn.execute("SELECT COUNT(*) FROM entity_facet WHERE vocabulary = ?",
+                        (vocabulary,)).fetchone()[0]
+
+
 def test_derive_is_idempotent():
+    """Counted WITHIN the vocabulary, not over the whole table.
+
+    `entity_facet` holds more than one vocabulary now -- region roles derive on
+    `region-roles-v1` so they can be rebuilt without touching the ported layer.
+    Asserting on the table total would have made that a failure; asserting per
+    vocabulary keeps idempotence AND proves the delete scope, which is the thing
+    that could actually break."""
     conn = _real_db()
     first = facets_derive.derive_facets(conn)
-    rows_after_first = conn.execute("SELECT COUNT(*) FROM entity_facet").fetchone()[0]
+    rows_after_first = _rows_in(conn, first["vocabulary"])
     second = facets_derive.derive_facets(conn)
-    rows_after_second = conn.execute("SELECT COUNT(*) FROM entity_facet").fetchone()[0]
+    rows_after_second = _rows_in(conn, second["vocabulary"])
     assert first["rows"] == second["rows"] == rows_after_first == rows_after_second
+
+
+def test_region_roles_derive_beside_the_ported_facets_without_disturbing_them():
+    """The two derivations share a table and must not clobber each other."""
+    conn = _real_db()
+    facets_derive.derive_facets(conn)
+    ported = _rows_in(conn, "facets-v1")
+
+    first = facets_derive.derive_region_roles(conn)
+    second = facets_derive.derive_region_roles(conn)
+    assert first == second, "region-role derivation is not idempotent"
+    assert _rows_in(conn, "region-roles-v1") == first["matched"]
+    assert _rows_in(conn, "facets-v1") == ported, "region roles deleted ported rows"
+
+    facets_derive.derive_facets(conn)
+    assert _rows_in(conn, "region-roles-v1") == first["matched"], \
+        "re-deriving the ported facets deleted the region roles"
 
 
 def test_derive_never_touches_the_source_tables():
