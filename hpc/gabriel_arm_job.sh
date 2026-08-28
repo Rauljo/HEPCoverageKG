@@ -20,12 +20,30 @@
 #   ARM=shuffled-72b    critic on, shuffled,         judge = the answerer
 #   ARM=shuffled-8b     critic on, shuffled,         judge = Llama-3.1-8B
 #
-# EVERYTHING ELSE IS HELD AT THE PROPOSED FREEZE: contract v3 and
-# force-critic-set on. One axis at a time, or the result is uninterpretable --
-# D-062 lost a week to a one-line prompt change that moved the control.
-# `force-critic-set` is a no-op without a critic, so the off arm is unaffected
-# and "critic off" vs "critic on" remains a clean comparison of the pipeline as
-# it would ship.
+# EVERYTHING ELSE IS HELD AT ITS RECORDED DEFAULT. One axis at a time, or the
+# result is uninterpretable -- D-062 lost a week to a one-line prompt change
+# that moved the control while an arm was being read.
+#
+#   contract v3          ON.  Measured as an arm: +0.059 set F1, 27% faster.
+#                        (Its two separately-measured mechanisms -- citing a
+#                        count, and `refine` -- were both DROPPED. What is left
+#                        is kept on principle and unattributed. The arm-level
+#                        number is real; the attribution is not.)
+#   force-critic-set     OFF. 91aeb1c: "off by default -- it takes a decision
+#                        away from the model, and that has to be earned by the
+#                        measurement it makes possible." It measured flat on
+#                        quality and merely faster, so switching it on here
+#                        would hold a knob at a value the record does not
+#                        support, and would do it inside the arms meant to
+#                        judge the critic.
+#
+# That leaves a known cost, stated rather than hidden: with force off, 39% of
+# counts in a critic-on arm run over the RAW set and discard the critic's
+# verdicts -- four counts in ten. It is the likeliest reason the critic's
+# counting gain (+0.063) is so much smaller than its set-F1 gain (x2.3). So
+# these arms measure the critic AS IT CURRENTLY SHIPS, not the critic at its
+# best. If a critic arm wins, one follow-up arm with force on is the next
+# question, and it is one arm, not a redesign.
 #
 # THE GOLD IS PARTIAL, BY CONSTRUCTION. Gabriel only ever saw papers our system
 # surfaced, so `judged_set_f1` scores inside the judged universe -- a paper he
@@ -61,15 +79,15 @@ case "$ARM" in
   off)
     ;;
   ranked-72b)
-    FLAGS="$FLAGS --critic --force-critic-set" ;;
+    FLAGS="$FLAGS --critic" ;;
   shuffled-72b)
-    FLAGS="$FLAGS --critic --force-critic-set --critic-seed 20260815" ;;
+    FLAGS="$FLAGS --critic --critic-seed 20260815" ;;
   ranked-8b)
-    FLAGS="$FLAGS --critic --force-critic-set"
+    FLAGS="$FLAGS --critic"
     export CRITIC_BASE_URL="http://${GPU_HOST}:8001/v1"
     export CRITIC_MODEL="NousResearch/Meta-Llama-3.1-8B-Instruct" ;;
   shuffled-8b)
-    FLAGS="$FLAGS --critic --force-critic-set --critic-seed 20260815"
+    FLAGS="$FLAGS --critic --critic-seed 20260815"
     export CRITIC_BASE_URL="http://${GPU_HOST}:8001/v1"
     export CRITIC_MODEL="NousResearch/Meta-Llama-3.1-8B-Instruct" ;;
   *) echo "unknown ARM=$ARM"; exit 2 ;;
