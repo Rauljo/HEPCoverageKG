@@ -2,8 +2,11 @@
 #SBATCH -p COMPUTE
 #SBATCH --exclude=compute-0-1
 #SBATCH --job-name=garm
+# 24h, not 12: eight questions finish in minutes, but the same script runs the
+# 200-question sets, where a critic arm writes ~0.8 records a minute under
+# six-way contention -- 600 records is thirteen hours before any tail.
 #SBATCH --output=/home/xucabrjs/HEPCoverageKG/logs/garm_%j.out
-#SBATCH --time=12:00:00
+#SBATCH --time=24:00:00
 #SBATCH --mem=16G
 #SBATCH --cpus-per-task=4
 # =============================================================================
