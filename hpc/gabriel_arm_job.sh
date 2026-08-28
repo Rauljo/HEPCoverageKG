@@ -65,6 +65,9 @@ set -euo pipefail
 module load Python/3.9.6-GCCcore-11.2.0
 cd /home/xucabrjs/HEPCoverageKG
 
+# The planner loads .env itself; the gate below needs the key too.
+if [ -f .env ]; then set -a; . ./.env; set +a; fi
+
 GPU_HOST="${GPU_HOST:-compute-gpu-0-1}"
 export LLM_BASE_URL="http://${GPU_HOST}:${VLLM_PORT:-8000}/v1"
 
@@ -96,9 +99,17 @@ esac
 # Fail before spending a GPU hour rather than after. A missing 8B endpoint on a
 # -8b arm silently falls back to the 72B in `_critic_client`, which would put
 # two different arms under one label -- the exact failure D-070 exists to stop.
+#
+# The probe MUST authenticate. vLLM is served with --api-key, so an unauthorised
+# /v1/models returns 401, `curl -f` treats that as failure, and the gate would
+# refuse to start against a perfectly healthy server. The key goes in over
+# stdin via `curl -K -`, never as an argument, so it cannot appear in `ps` or
+# in the job log.
 case "$ARM" in
   *-8b)
-    if ! curl -sf --max-time 10 "${CRITIC_BASE_URL}/models" >/dev/null; then
+    if ! printf 'header = "Authorization: Bearer %s"\nurl = "%s/models"\n' \
+           "$LLM_API_KEY" "$CRITIC_BASE_URL" \
+         | curl -sf --max-time 10 -o /dev/null -K -; then
       echo "FATAL: judge endpoint ${CRITIC_BASE_URL} is not answering."
       echo "       serve_split.sh must be running, or this arm would quietly"
       echo "       run the 72B and be recorded as the 8B."
