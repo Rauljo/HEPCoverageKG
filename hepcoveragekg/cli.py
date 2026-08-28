@@ -494,8 +494,16 @@ def _cmd_eval(args) -> int:
         return 0
 
     # --- run ---------------------------------------------------------------
+    from hepcoveragekg.eval import free_sql
+
     if args.system == "stub":
         system = systems.StubSystem()
+    elif args.system == "free-sql":
+        # The control. Same runner, same scorers, same model -- one tool that
+        # takes SQL instead of nine typed ones. See eval/free_sql.py.
+        from hepcoveragekg.query import templates
+        system = free_sql.FreeSQLSystem(templates.read_only(args.db),
+                                        max_rounds=args.max_rounds)
     elif args.system == "planner":
         from hepcoveragekg.query import retrieve, templates
         conn = templates.read_only(args.db)
@@ -652,7 +660,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_eval.add_argument("other", nargs="?",
                         help="compare: the second run file. score: the question file")
     p_eval.add_argument("--system", default="stub",
-                        help="stub (default, needs nothing) or planner (needs a live model)")
+                        help="stub (default, needs nothing), planner, or free-sql "
+                             "-- the control: one SQL tool instead of the typed ones")
     p_eval.add_argument("--repeats", type=int, default=1,
                         help="run each question N times; 3+ before comparing anything (S-52)")
     p_eval.add_argument("--max-rounds", type=int, default=6)
