@@ -101,6 +101,13 @@ def by_tag(records: Iterable[Record], tag: str = "needs") -> dict[str, dict[str,
     return {k: summarise(v) for k, v in sorted(groups.items())}
 
 
+# The metrics worth showing in a per-tag breakdown. `judged_*` are the human-gold
+# measures (D-072) and belong here for the same reason `set_f1` does -- a metric
+# absent from the breakdown is a metric nobody reads.
+HEADLINE = ("count_correct", "set_f1", "judged_f1", "judged_precision",
+            "judged_recall", "faithfulness", "answered", "seconds")
+
+
 def render(meta: dict, records: list[Record], *, tag: str = "shape") -> str:
     """The human-readable report for one run."""
     lines: list[str] = []
@@ -133,7 +140,7 @@ def render(meta: dict, records: list[Record], *, tag: str = "shape") -> str:
     lines.append(f"by {tag}")
     for key, group in by_tag(records, tag).items():
         parts = [f"{n}={m.mean:.3g}" for n, m in group.items()
-                 if n in ("count_correct", "set_f1", "faithfulness", "answered", "seconds")]
+                 if n in HEADLINE]
         n_records = next(iter(group.values())).total if group else 0
         lines.append(f"  {key:<18} ({n_records:>3})  " + "  ".join(parts))
 
