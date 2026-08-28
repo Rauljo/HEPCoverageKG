@@ -19,6 +19,8 @@
 #   ARM=ranked-8b       critic on, retrieval order,  judge = Llama-3.1-8B
 #   ARM=shuffled-72b    critic on, shuffled,         judge = the answerer
 #   ARM=shuffled-8b     critic on, shuffled,         judge = Llama-3.1-8B
+#   ARM=shuffled-72b-forced  as shuffled-72b, but the critic's kept set is
+#                       substituted wherever a raw set is passed to a tool
 #
 # EVERYTHING ELSE IS HELD AT ITS RECORDED DEFAULT. One axis at a time, or the
 # result is uninterpretable -- D-062 lost a week to a one-line prompt change
@@ -89,6 +91,21 @@ case "$ARM" in
     FLAGS="$FLAGS --critic"
     export CRITIC_BASE_URL="http://${GPU_HOST}:8001/v1"
     export CRITIC_MODEL="NousResearch/Meta-Llama-3.1-8B-Instruct" ;;
+  shuffled-72b-forced)
+    # The sixth arm, added 2026-08-28 to settle a contradiction rather than
+    # argue it. Mechanism and measurement disagree about --force-critic-set:
+    #
+    #   mechanism  the kept set reaches the SAME gold papers as the raw set in
+    #              96.7% of 396 stored search steps, losing 1.54% of gold-paper
+    #              reachings -- while shrinking what gets counted 4-7x
+    #              (68 -> 9 entities, 61 -> 17). Counting over the raw set means
+    #              counting entities the critic just called unrelated.
+    #   measurement the arm came out flat on quality, only faster.
+    #
+    # The likeliest reconciliation is dilution: only 39% of counts used the raw
+    # set, so an effect on those was averaged over every question. Pairing this
+    # against shuffled-72b isolates it on one axis.
+    FLAGS="$FLAGS --critic --critic-seed 20260815 --force-critic-set" ;;
   shuffled-8b)
     FLAGS="$FLAGS --critic --critic-seed 20260815"
     export CRITIC_BASE_URL="http://${GPU_HOST}:8001/v1"
