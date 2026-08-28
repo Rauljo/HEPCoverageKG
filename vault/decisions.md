@@ -1997,3 +1997,277 @@ precision above is a floor rather than a clean number.
 3. *Encode `evidence_sufficient` separately from `true_in_paper`.* His four `unsure` verdicts are
    answers to a question we never asked.
 4. *Region role belongs in the schema*, and his MR is the specification.
+
+### D-067 (2026-08-25) — the LaTeX corruption Gabriel found: the D-059 repair exempted exactly the wrong letters
+
+Gabriel's review sheet showed `$b\bar{b}$` stored as `$b<backspace>ar{b}$`, in 12 of 202 rows. The
+database was never wrong -- 0 backspaces in `source_block.text` (31,051), `evidence.quote` (8,482) or
+`assertion.object_value` (14,188). The corruption was introduced when the reader parsed the model's
+reply, and it survived into every file derived from that run.
+
+**Cause.** D-059 added `_repair_latex_escapes` to rescue LaTeX from a backslash JSON cannot read. Its
+regex exempted `b f n r t u` because those *are* legitimate JSON escapes. They are also the letters
+HEP LaTeX collides with most. Measured on one sweep's raw output:
+
+| escape | as LaTeX | example | as real whitespace |
+|---|---|---|---|
+| `\t` | 3,030 | `\tilde` 919, `\to` 892, `\text` 491, `\tau` 204 | 0 |
+| `\r` | 906 | `\raise` 732, `\rightarrow` 129, `\rho` 24 | 0 |
+| `\b` | 471 | `\bar` 469 | 0 |
+| `\n` | 106 | `\nu` 106 | **38,640** |
+| `\f` | 1 | `\frac` | 0 |
+
+So `\bar` decoded to a backspace and three characters vanished.
+
+**Fix.** The discriminator is what FOLLOWS: `\n{` is a newline, `\nu$` is a Greek letter. An escape
+letter counts as valid only when a letter does not follow it; `\u` stays exempt outright. Plus one
+refinement -- an escape directly after another whitespace escape is part of a whitespace run, so
+`a\n\nb` keeps both newlines.
+
+**What stays unresolvable.** A lone real newline before a word: `\ntwo` and `\nu` are the same three
+characters and no local rule separates them. The repair leans toward LaTeX, because the two mistakes
+are not equal -- escaping a real newline prints a visible `\n` and loses nothing, while missing LaTeX
+destroys characters. In the corpus the ambiguous shape never occurred: all 106 `\n`+letter were `\nu`.
+
+**Back-repair, and the mistake inside it.** 1,297 escapes were restored across 18 existing files. The
+first attempt applied the letter rule to every field and ate 34 `\nThis`, 32 `\nThese`, 22 `\nIf you
+need m...` -- genuine paragraph breaks in free-form answers. Restored from backup and rescoped: the
+letter rule applies only to fields holding verbatim paper text (`quote`, `quotes`, `evidence`,
+`source_block`, `span`), where a paragraph break cannot occur and 100% of the hits were LaTeX.
+Backspace and formfeed are healed everywhere, since neither is ever legitimate.
+
+**The general lesson.** A repair that has to guess needs its scope narrowed to where the guess is
+safe, not its heuristic sharpened. The same rule was right in quotes and wrong in prose.
+
+**Reach.** Only the sweep-derived files carried it; `gf01-full` has 0, because D-059's partial fix
+landed between the two runs. Batch 1 is already sent and is not being regenerated -- the 12 affected
+rows are a display defect in a sheet Gabriel has already judged, and his verdicts on them stand.
+
+### D-068 (2026-08-25) — region role: the distinction was already in the graph, spelled 33 ways
+
+Gabriel's row 1: the answer is *yes for a validation region and no for a signal region*, and "this
+distinction is lost in the current schema" (D-066). It was not lost. It was un-normalised.
+
+Across 781 region occurrences the extraction wrote a role under **three keys** -- `role` (488),
+`region_role` (82), `is_signal_region` (10) -- in **33 spellings**: `SR`, `signal_region`, `signal
+region`, `signal`, `signal-region-component`, `discovery signal region`, `SR (counting)` all mean one
+thing. So this is a normalisation, not a re-extraction: cheaper, and it invents nothing.
+
+**Five canonical roles**: signal, control, validation, fiducial, preselection.
+
+**Two rungs, attribute first.** The attribute is what the extractor asserted and wins; the label is a
+fallback for the 193 regions with no role attribute, where the name states it in prose ("Orthogonal
+validation region, m_ll in [70,105] GeV"). The rung travels with the value in `version`, so a claim
+can be restricted to asserted roles later.
+
+*Both rungs fire on 365 regions and agree on 363 (99%).* That is the validation: two independent
+readings of the same fact, derived differently, converging. The 2 disagreements both go to the
+attribute correctly -- "Baseline H->4l ZZ-candidate selection" is labelled like a preselection but
+asserted `signal_region`.
+
+**Coverage 640/781 (82%)** -- 572 from attributes, 68 from labels. signal 295, control 199, fiducial
+72, validation 51, preselection 23. 51 papers have a signal region, 41 a control region, 15 a
+validation region, and **13 have all three**.
+
+**Two judgement calls, recorded not hidden**: `sideband`/`SB` -> control (a sideband exists to
+estimate a background from data, which is what a control region does); `baseline` -> preselection.
+
+**What it refuses to guess.** `model-independent superbin` (7), `aggregate of superbins`, `excluded
+region`, `extra_jet_definition`, `full_phase_space`, and `is_signal_region: False` -- which says only
+what the region is *not*. This is the field the supervisor is going to check; inventing structure in
+it would be the worst possible place to be clever.
+
+**Why it derives on its own vocabulary version.** `CARD_FIELDS` mirrors upstream's `_CARD_FIELDS` and
+the parity test compares our derivation against their frozen snapshot card for card. Adding
+`event_region` there would fail the check that exists to catch drift. So region roles derive on
+`region-roles-v1` with their own delete scope, and the query layer resolves field -> kinds and field
+-> vocabulary through a new `FIELD_KINDS` / `FIELD_VOCABULARY` map, so a caller naming a field never
+has to know which vocabulary holds it.
+
+`facets("region_roles", ["signal","control","validation"], mode="all")` now answers the question that
+was unanswerable. CLI: `facets region-roles`.
+
+### D-069 (2026-08-25) — decomposition, measured: it kills the false yes and the true yes together
+
+The conjunction problem (D-058) says precision falls as conditions are conjoined. Gabriel's 199
+verdicts measure it, counting only rows where the system actually cited a sentence:
+
+| conditions | questions | claimed | right | precision |
+|---|---|---|---|---|
+| 1 | gf-02, gf-03, gf-04 | 21 | 19 | **0.90** |
+| 2 | gf-05, gf-07, gf-08 | 78 | 36 | **0.46** |
+| 3 | gf-01 | 31 | 5 | **0.16** |
+
+Roughly halving per added condition, and falling faster than independent errors would predict
+(0.90^2 = 0.81, 0.90^3 = 0.73) -- the conditions are not independent, later ones are harder.
+
+**The mechanism already exists and was not wired to where it mattered.** `reader.read_conditions`
+asks one condition at a time, ANDs them in code, and records `missing` -- which condition failed, not
+just "no". But the sheet Gabriel judged was built from the SWEEP, and the sweep asks the whole
+conjunction as one question. Verified in the files: sweep gf-01 rows carry no `conditions` key; the
+later `gf01-full` run carries it on all 60.
+
+**So the direct A/B was run, and here is what it says.** On the 24 judged papers where the compound
+question cited a sentence -- 3 right, 21 wrong -- the decomposed run flags a missing condition on:
+
+- **17 of the 21 Gabriel says NO** -- it would correctly refuse 81% of the false claims
+- **3 of the 3 Gabriel says YES** -- it would also refuse every true one
+
+That is not the clean win the trend table implies. Decomposition converts *wrong yes* into *wrong
+no*, because the reader cannot find the evidence for an individual condition either. It fixes the
+compounding without fixing the retrieval underneath it, and a false negative is the more expensive
+error for a coverage map -- it is a false claim that nothing is there.
+
+*n = 3 on the yes side. This is a direction, not a rate.*
+
+**What follows.** Decomposition is not adoptable on this evidence alone. The gap-fill sheet is the
+test that settles it: put the DECOMPOSED answers in front of Gabriel for the same gf-01 papers, with
+the per-condition quotes, and the trade becomes measurable rather than inferred.
+
+**A correction to how the sheet has been read.** `gabriel-review.tsv` mixes two row types -- rows
+where the system cited a sentence and rows saying "WE FOUND NO EVIDENCE. The closest sentences
+were...". Pooling them and calling yes/(yes+no) "precision" mixes a precision with a base rate. Split:
+precision **0.46** on 130 claimed rows; on the 55 abstention rows the system missed **18 real yes
+(33%)**. Overall accuracy 97/185 = **0.52**. The per-question precision table already reported was the
+claimed-only cut and stands.
+
+### D-070 (2026-08-25) — a run must be able to name its own arm
+
+`PlannerSystem.config` was `{**planner_kwargs}` -- only what the caller **overrode**. Every knob left
+at its default recorded nothing, so 25 of 44 stored runs name no arm, and the knobs the ablation turns
+on are precisely the defaulted ones: `critic_seed` (None = ranked, int = shuffled), `contract`, and
+the `CRITIC_BASE_URL` that decides whether the 8B judge runs or the 72B one. Which arm produced a
+result had to be reconstructed from job scripts and notes. The whole ablation table is currently
+attributable to memory rather than to artefacts.
+
+**Fixed by recording the EFFECTIVE configuration** -- every parameter's actual value, defaults
+included -- derived from `inspect.signature(planner.answer)` rather than a hand-kept list, so a knob
+added next month is recorded without anyone remembering to. Plus the five environment variables that
+change behaviour and never passed through the function at all (`CRITIC_MODEL`, `SEARCH_BREADTH_MAX`,
+`LLM_MODEL_NAME`, `LLM_MAX_COMPLETION_TOKENS`, `CRITIC_BASE_URL`), and a derived `critic_order`
+because "ranked"/"shuffled" is the name a human uses and re-deriving it from `critic_seed is None` at
+analysis time is how it gets misread.
+
+Excluded as plumbing: `conn`, `index`, `question`, `thread_id`, and -- importantly -- `chat` and
+`checkpointer`, which are live per-process objects whose repr would give every run a different hash
+and silently destroy the comparison the hash exists for.
+
+**The guard is a test, not a convention.** `test_every_knob_on_the_planner_is_recorded` fails if a
+parameter is added to `planner.answer` without a decision about whether it is configuration. The cost
+of forgetting is a week of unattributable runs, and it is silent.
+
+The arm is also logged at the top of the job log: a 20-hour job that ran the wrong arm should be
+caught on submission, not when the results disagree.
+
+*Nothing before today can be retrofitted. Runs prior to this commit keep whatever they recorded, and
+the arm labels in D-062..D-065 rest on the job scripts.*
+
+### D-071 (2026-08-25) — what to test Gabriel's questions on
+
+Proposal was: run his questions across critic on/off, shuffled on/off, big/small judge, rather than
+only on a frozen configuration.
+
+**The knobs do not reach the runs as they stand.** Critic, ordering and judge size are QUERY-LAYER
+knobs. Gabriel's sheet was produced by the READER, per paper. Running critic on/off over those rows
+gives byte-identical output.
+
+**The version that works**: convert his 199 per-paper verdicts into **8 set-valued query-layer
+questions with human gold** -- "which papers are searches using b-tagged jets and MET?", gold = the
+papers he marked yes. Then all three knobs bite, and the query layer is measured against human ground
+truth instead of our synthetic gold, which is a strictly better test than the freeze-only plan.
+
+**Two limits, both scoreable around.** He only judged papers our system surfaced, so recall against
+this gold is inflated -- restrict scoring to the judged subset and precision is clean. And 8 questions
+is thin, so the unit is the (question, paper) pair, ~185 of them, paired across arms.
+
+Full 2x2x2 = 8 arms, 8 questions, 3 repeats ~ 5 GPU-hours. Cheap enough to run all eight rather than
+pick.
+
+### D-072 (2026-08-25) — Gabriel's verdicts as a query-layer question set, and what partial gold costs
+
+Built `eval/questions/gabriel-gold-2026-08-25.jsonl`: 8 set-valued questions, gold written by a
+physicist. His per-paper reader questions reworded from "does THIS paper" to "which analyses", and
+nothing else -- the physics must not drift or the verdicts stop applying.
+
+| question | gold | judged | unsure | conflicted | conditions |
+|---|---|---|---|---|---|
+| gf-01 | 3 | 28 | 4 | **7** | 3 |
+| gf-01-condition | 8 | 10 | 0 | 0 | 1 |
+| gf-02 | 9 | 14 | 0 | 0 | 1 |
+| gf-03 | 5 | 9 | 0 | 0 | 1 |
+| gf-04 | 11 | 17 | 0 | 0 | 1 |
+| gf-05 | 15 | 29 | 2 | 0 | 2 |
+| gf-07 | 9 | 39 | 0 | 0 | 2 |
+| gf-08 | 13 | 23 | 0 | 0 | 2 |
+
+**Three things get excluded from the gold, each for a different reason.**
+
+*Conflicts (7, all gf-01).* 199 rows cover only 186 distinct (question, paper) pairs -- the sheet
+asked about 13 papers twice, and he answered differently on 7. Three are a flat **yes against a no**:
+2006.05880, 2202.08676, 2508.13900. Keying a dict by paper keeps whichever row came last and puts a
+coin-flip into the ground truth. Disagreement is treated as UNRESOLVED and leaves both the gold and
+the universe. That every conflict is on the three-part conjunction is itself evidence for D-069: the
+question is genuinely ambiguous, not carelessly answered.
+
+*`unsure` (14).* Four are "the evidence is thin but the paper is probably true" (D-066) -- a different
+axis from yes/no. Scoring them either way invents a verdict he declined to give.
+
+*Open questions (gf-06, gf-10..gf-15).* One row each, and they ask for a value, not a set.
+
+**A new scorer, because neither existing one is honest here.** He was only shown papers our system
+surfaced, so the corpus splits three ways: yes, no, and **never judged**. `set_f1` would treat all
+~40 unjudged papers as negatives and charge for every one named -- measuring how the sheet was sampled
+rather than how the system answered. `Truth.universe` carries the judged papers and
+`scoring.judged_set_f1` restricts both sides to them. Metric names deliberately distinct from
+`set_f1`: two measures under one name is exactly what made a month of numbers uninterpretable before
+(see `retrieval_reach`).
+
+**Precision under this restriction is clean. Recall is not, and cannot be.** A paper the system never
+surfaced was never put in front of him, so it could not become a gold positive -- the misses that
+would hurt most are invisible by construction. `judged_coverage` travels with every result: the
+judged universe is 15-65% of the corpus depending on the question, 23% for gf-02.
+
+**The split is `dev`, and that is a real cost.** These are the best labels in the project and the
+instinct is to lock them as `test` (S-10). But the immediate use is choosing between eight ablation
+arms, and choosing on a set is developing against it; marking them `test` and running the ablation
+anyway would launder that. **Batch 1 is spent on selection. The held-out human evaluation must be
+batch 2 -- the questions Gabriel has not returned yet -- and it must not be looked at until the arm is
+frozen.**
+
+### D-072 addendum — "he contradicted himself" was my misreading; the strongest verdict wins
+
+Raul pushed back: if one quote says yes and another says no, the paper is yes, because a quote said
+yes. He is right, and checking the sheet settles it -- **all 13 duplicated (question, paper) pairs
+carry DIFFERENT cited sentences**, none is a repeat.
+
+A sheet row is (question, paper, ONE cited sentence). So `no` is a statement about the SENTENCE --
+this quote does not establish the claim -- not about the paper. If another quote establishes it, the
+paper is yes. Treating the pair as a contradiction and dropping the paper cost gf-01 **five of its
+eight gold papers**.
+
+`resolve` now takes the strongest verdict, yes > unsure > no. `unsure` still leaves the gold and the
+universe: no row established the claim and he declined to reject it.
+
+    gf-01  2006.05880   ['yes','no']      -> yes
+    gf-01  2202.08676   ['no','yes']      -> yes
+    gf-01  2508.13900   ['no','yes']      -> yes
+    gf-01  2004.14060   ['yes','unsure']  -> yes
+    gf-01  2012.03799   ['unsure','yes']  -> yes
+    gf-01  2012.08600   ['unsure','no']   -> unsure  (dropped)
+    gf-01  2106.01676   ['unsure','no']   -> unsure  (dropped)
+
+gf-01's gold: 3 -> **8**. The duplication itself is the review builder's missing dedupe by
+(qid, paper), already on the list to fix -- the sheet should show one row per paper carrying all its
+candidate sentences.
+
+**D-069's conjunction table, recomputed per paper rather than per row:**
+
+| conditions | claimed | right | precision |
+|---|---|---|---|
+| 1 | 21 | 19 | 0.90 |
+| 2 | 78 | 36 | 0.46 |
+| 3 | 27 | 8 | **0.30** (was 0.16 per row) |
+
+The finding survives -- precision still roughly halves per added condition -- but the three-condition
+point was overstated at row level, because a paper with a supporting second quote was counted as a
+miss. **0.16 was wrong; 0.30 is the number.**
