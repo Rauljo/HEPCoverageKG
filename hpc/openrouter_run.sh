@@ -84,6 +84,18 @@ echo "budget  : \$$LLM_BUDGET_USD hard stop"
 echo "questions: $QUESTIONS x $REPEATS"
 echo
 
-.venv/bin/python -m hepcoveragekg.cli eval run "$QUESTIONS" \
-    --system planner --repeats "$REPEATS" \
-    --contract v3 --critic --critic-seed 20260815
+# SYSTEM=planner (default) or SYSTEM=free-sql, the control. free-sql takes no
+# critic flags -- there are no search candidates to judge, only rows -- so the
+# planner-only arguments are omitted rather than passed and ignored.
+case "${SYSTEM:-planner}" in
+  free-sql)
+    echo "system  : free-sql (SQL + search, no critic)"
+    .venv/bin/python -m hepcoveragekg.cli eval run "$QUESTIONS" \
+        --system free-sql --repeats "$REPEATS" ;;
+  planner)
+    echo "system  : planner (typed tools, contract v3, critic on)"
+    .venv/bin/python -m hepcoveragekg.cli eval run "$QUESTIONS" \
+        --system planner --repeats "$REPEATS" \
+        --contract v3 --critic --critic-seed 20260815 ;;
+  *) echo "unknown SYSTEM=${SYSTEM}"; exit 2 ;;
+esac

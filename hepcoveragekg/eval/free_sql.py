@@ -376,6 +376,7 @@ class FreeSQLSystem:
     def _client_chat(self):
         if self._chat is not None:
             return self._chat
+        from ..query import budget as budget_mod
         from ..query.planner import MAX_COMPLETION_TOKENS, _client
         client, model = _client()
         self.config["model"] = model
@@ -384,8 +385,12 @@ class FreeSQLSystem:
             return client.chat.completions.create(
                 model=model, messages=messages, tools=tools,
                 temperature=0.0, max_tokens=MAX_COMPLETION_TOKENS)
-        self._chat = chat
-        return chat
+
+        # The SAME hard cap the planner gets. This system builds its own client,
+        # so it would otherwise run uncapped against a metered endpoint -- the
+        # control spending money the treatment cannot.
+        self._chat = budget_mod.guard(chat, budget_mod.from_env(model))
+        return self._chat
 
     def _search(self, args: dict) -> tuple[str, list[str]]:
         """The planner's own retrieval, rendered for a model that will then
