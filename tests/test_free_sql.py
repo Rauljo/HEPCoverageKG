@@ -1,6 +1,7 @@
 """The free-SQL control: safety, fairness, and not scoring zero on a technicality."""
 from __future__ import annotations
 
+import json
 import sqlite3
 
 import pytest
@@ -148,3 +149,78 @@ def test_running_out_of_rounds_is_not_an_error(conn):
     assert not a.answered and not a.error
     assert a.rounds == 2
     assert a.papers == ["2001.06899", "2106.01676"], "what it touched is still recorded"
+
+
+# --------------------------------------------------------------------------
+# the upgraded control: two tools, and persistence to match the planner's
+# --------------------------------------------------------------------------
+
+def _scripted(replies):
+    """A model that returns a canned sequence of (tool_name, args) or None."""
+    state = {"i": 0, "offered": None}
+
+    def chat(messages, tools):
+        state["offered"] = [t["function"]["name"] for t in tools]
+        i = state["i"]; state["i"] += 1
+        spec = replies[i] if i < len(replies) else None
+        if spec is None:
+            msg = type("M", (), {"content": "no data found", "tool_calls": None})()
+        else:
+            name, args = spec
+            call = type("T", (), {"id": str(i), "function": type("F", (), {
+                "name": name, "arguments": json.dumps(args)})()})()
+            msg = type("M", (), {"content": "", "tool_calls": [call]})()
+        return type("R", (), {"choices": [type("C", (), {"message": msg})()],
+                              "usage": None})()
+    return chat, state
+
+
+def test_it_only_offers_search_when_it_has_an_index(conn):
+    """Without an index it is the SQL-only control; with one it is the
+    same-raw-materials control. The config has to say which ran."""
+    chat, state = _scripted([None])
+    F.FreeSQLSystem(conn, chat=chat).answer(Question(qid="q", text="x"))
+    assert state["offered"] == ["sql"]
+    assert F.FreeSQLSystem(conn, chat=chat).config["tools"] == ["sql"]
+
+
+def test_the_ladder_fires_only_when_nothing_was_found(conn):
+    """Same gate as the planner's: rounds to spare, and empty-handed. A run that
+    found rows and chose to answer is left alone."""
+    chat, _ = _scripted([None, None, None, None, None])
+    a = F.FreeSQLSystem(conn, chat=chat, max_rounds=6).answer(
+        Question(qid="q", text="x"))
+    assert a.rounds > 1, "it should have been pushed back at least once"
+
+    # found something -> answered immediately, no pushback
+    chat2, _ = _scripted([("sql", {"query": "SELECT arxiv_id FROM paper"}), None])
+    b = F.FreeSQLSystem(conn, chat=chat2, max_rounds=6).answer(
+        Question(qid="q", text="x"))
+    assert b.answered and b.papers
+
+
+def test_the_ladder_is_finite(conn):
+    """It cannot loop: three rungs, each once, then the answer goes through."""
+    chat, _ = _scripted([None] * 12)
+    a = F.FreeSQLSystem(conn, chat=chat, max_rounds=6).answer(
+        Question(qid="q", text="x"))
+    assert a.rounds <= 6
+    assert len(F.FREE_LADDER) == 3
+
+
+def test_persistence_can_be_turned_off_for_a_paired_arm(conn):
+    chat, _ = _scripted([None, None, None])
+    a = F.FreeSQLSystem(conn, chat=chat, persist=False).answer(
+        Question(qid="q", text="x"))
+    assert a.rounds == 1, "with persist off it answers at the first opportunity"
+
+
+def test_the_worked_examples_teach_the_join_path_that_actually_works(conn):
+    """21 of 241 queries in the first run died on `entity.paper_id`, which does
+    not exist. The examples and the schema both say so now."""
+    prompt = F.SYSTEM_PROMPT.format(schema=F.schema_brief(conn),
+                                    examples=F.WORKED_EXAMPLES)
+    assert "entity has NO paper_id" in prompt
+    assert "entity_occurrence" in prompt
+    assert "entity_canonical" in prompt, "0 of 241 queries used it"
+    assert "GROUP BY kind" in prompt

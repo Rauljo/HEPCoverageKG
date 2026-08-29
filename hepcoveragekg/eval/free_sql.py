@@ -56,6 +56,29 @@ STATEMENT_SECONDS = 15.0
 # WITH cannot be a write in SQLite. The barrier was never the regex.
 _READ_ONLY = re.compile(r"^\s*(select|with)\b", re.I)
 
+SEARCH_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "search",
+        "description": (
+            "Find entities by meaning as well as by spelling: BM25 over labels "
+            "fused with dense embeddings. Returns entity_id, label and kind, "
+            "best first. Use it when you do not know how the papers spell "
+            "something -- 'missing transverse momentum' finds MET and ETmiss, "
+            "which no LIKE will. Feed the entity_ids into SQL."),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string", "description": "what to look for, in your own words"},
+                "kind": {"type": "string",
+                         "description": "optional entity kind filter -- usually leave it out"},
+                "limit": {"type": "integer", "description": "how many hits (default 20)"},
+            },
+            "required": ["text"],
+        },
+    },
+}
+
 SQL_TOOL = {
     "type": "function",
     "function": {
@@ -121,6 +144,11 @@ def schema_brief(conn) -> str:
             parts.append(f"  {kind}: " + " | ".join(labels))
 
     parts.append(
+        "\nentity has NO paper_id column. Papers come from entity_occurrence,\n"
+        "  which is (paper_id, entity_id, kind, label) -- one row per paper that\n"
+        "  mentions the entity. entity.label is a rollup and can differ from the\n"
+        "  per-paper label.")
+    parts.append(
         "\nWHAT MAKES THIS HARD\n"
         "  Labels are written as the papers write them and are NOT unified.\n"
         "  'Pythia 8.230', 'PYTHIA8' and 'Pythia 8.2' are three rows and one\n"
@@ -134,10 +162,53 @@ def schema_brief(conn) -> str:
     return "\n".join(parts)
 
 
+WORKED_EXAMPLES = """
+WORKED EXAMPLES (the join paths that actually work here)
+
+Q: how many analyses used Pythia?
+   search("Pythia")                       -> entity_ids for every spelling
+   SELECT COUNT(DISTINCT eo.paper_id) FROM entity_occurrence eo
+    WHERE eo.entity_id IN ('hepkg:generator:pythia8_v8p212', ...)
+   -- or, when the word is distinctive enough that spelling does not vary:
+   SELECT COUNT(DISTINCT paper_id) FROM entity_occurrence
+    WHERE kind='generator' AND lower(label) LIKE '%pythia%'
+
+Q: which analyses use b-tagged jets in their event selection?
+   -- find out which KIND holds the term before filtering on it
+   SELECT kind, COUNT(*) FROM entity WHERE lower(label) LIKE '%b-tag%' GROUP BY kind
+   -- then
+   SELECT DISTINCT eo.paper_id FROM entity_occurrence eo
+    WHERE eo.kind='detector_object' AND lower(eo.label) LIKE '%b%tag%'
+
+Q: which papers estimate a background with an ABCD method?
+   SELECT DISTINCT a.paper_id FROM assertion a
+     JOIN entity e ON e.entity_id = a.object_id
+    WHERE a.predicate='background_uses_method' AND lower(e.label) LIKE '%abcd%'
+
+SPELLINGS ARE NOT UNIFIED, and there are two ways to cope:
+   `search` finds them by meaning -- prefer it when the concept has many names.
+   `entity_canonical` maps an entity to its cluster, so joining through it
+   groups spellings that were merged:
+     SELECT ec.canonical_id, COUNT(DISTINCT eo.paper_id)
+       FROM entity_occurrence eo JOIN entity_canonical ec USING (entity_id)
+      GROUP BY ec.canonical_id
+   It covers 663 of 5,114 entities, so it is a help and not a guarantee.
+"""
+
 SYSTEM_PROMPT = """You answer questions about a knowledge graph of 60 high-energy
-physics papers by writing SQL against it.
+physics papers. You have two tools and may use either, in any order, as often as
+you like:
+
+  search(text)  -- find entities by MEANING. Use it when you do not know how the
+                   papers spell something.
+  sql(query)    -- read anything, aggregate anything, join anything.
+
+The usual shape is: `search` to find the entity_ids a question is about, then
+`sql` to count or join over them. Neither tool alone is enough for most
+questions.
 
 {schema}
+{examples}
 
 HOW TO WORK
 - Call `sql` to look. Look more than once.
@@ -247,15 +318,50 @@ def papers_in(result: SqlResult) -> list[str]:
     return sorted(found)
 
 
-class FreeSQLSystem:
-    """A System, so it plugs into the same runner as everything else."""
+#: Offered once each, when a run is about to answer having found nothing. The
+#: planner gets a widening ladder (query/widen.py) for exactly this failure, so
+#: the control gets one too -- persistence on one side only would rig the next
+#: comparison, and 191 of 207 runs stopped after a single query.
+FREE_LADDER = (
+    "You have not tried `search` yet. It finds entities by meaning, so it "
+    "returns things no LIKE will: 'missing transverse momentum' finds MET and "
+    "ETmiss. Try it before concluding the graph is empty.",
+    "Your last query returned nothing. Drop its narrowest condition -- usually "
+    "the kind filter or the most specific LIKE -- and run it again. "
+    "`SELECT kind, COUNT(*) FROM entity WHERE label LIKE '%...%' GROUP BY kind` "
+    "turns a guess about where a term lives into a fact.",
+    "You have not looked through entity_canonical. Spellings that were merged "
+    "into one cluster are only grouped by joining through it.",
+)
 
-    def __init__(self, conn, *, name: str = "free-sql", model: Optional[str] = None,
-                 chat=None, max_rounds: int = MAX_ROUNDS) -> None:
+
+class FreeSQLSystem:
+    """A System, so it plugs into the same runner as everything else.
+
+    Two tools now, not one. `search` is the SAME BM25+dense index the planner
+    uses, and giving it away is deliberate: with SQL alone the control was
+    losing partly because it could not match 'missing transverse momentum'
+    against a label reading 'ETmiss', which is a fact about retrieval technology
+    and not about typed graphs.
+
+    That changes the claim under test, for the better. Not "typed tools beat raw
+    SQL" -- easy to win and easy to dismiss as giving the baseline a worse search
+    engine -- but **"typed structure beats flat access to the same raw
+    materials"**. Both sides now have the corpus, the index and the model. What
+    the control still does not have is the typed layer itself: predicate-aware
+    hops, the critic, the empty-hop diagnostics, automatic canonical expansion,
+    and the answer contract. That difference is the experiment.
+    """
+
+    def __init__(self, conn, index=None, *, name: str = "free-sql",
+                 model: Optional[str] = None, chat=None,
+                 max_rounds: int = MAX_ROUNDS, persist: bool = True) -> None:
         self.name = name
         self._conn = conn
+        self._index = index
         self._chat = chat
         self._max_rounds = max_rounds
+        self._persist = persist
         self._schema = schema_brief(conn)
         self.config = {
             "kind": "free-sql",
@@ -263,7 +369,8 @@ class FreeSQLSystem:
             "max_rounds": max_rounds,
             "max_rows": MAX_ROWS,
             "statement_seconds": STATEMENT_SECONDS,
-            "tools": ["sql"],
+            "tools": ["sql"] + (["search"] if index is not None else []),
+            "persist": bool(persist),
         }
 
     def _client_chat(self):
@@ -280,10 +387,27 @@ class FreeSQLSystem:
         self._chat = chat
         return chat
 
+    def _search(self, args: dict) -> tuple[str, list[str]]:
+        """The planner's own retrieval, rendered for a model that will then
+        write SQL against the ids."""
+        from ..query import retrieve
+        try:
+            hits = retrieve.search(self._index, args.get("text", ""), conn=self._conn,
+                                   kind=args.get("kind") or None,
+                                   limit=int(args.get("limit") or 20))
+        except Exception as exc:                      # noqa: BLE001
+            return f"ERROR: {type(exc).__name__}: {exc}", []
+        if not hits:
+            return "0 hits.", []
+        lines = ["entity_id | kind | label"]
+        lines += [f"{h.entity_id} | {h.kind} | {h.label}" for h in hits]
+        return "\n".join(lines) + f"\n({len(hits)} hits)", [h.entity_id for h in hits]
+
     def answer(self, q: Question) -> Answer:
         chat = self._client_chat()
         messages: list[dict[str, Any]] = [
-            {"role": "system", "content": SYSTEM_PROMPT.format(schema=self._schema)},
+            {"role": "system", "content": SYSTEM_PROMPT.format(
+                schema=self._schema, examples=WORKED_EXAMPLES)},
             {"role": "user", "content": q.text},
         ]
         started = time.time()
@@ -291,6 +415,7 @@ class FreeSQLSystem:
         entities: set[str] = set()
         calls = prompt_tokens = completion_tokens = 0
         rounds = 0
+        widenings = 0
         # EVERY query and what it returned. Without this, "free SQL lost" is
         # unfalsifiable: a fair defeat and a broken prompt look identical from
         # the score alone, and the first thing anyone will ask about this
@@ -300,7 +425,8 @@ class FreeSQLSystem:
 
         try:
             for rounds in range(1, self._max_rounds + 1):
-                reply = chat(messages, [SQL_TOOL])
+                tools = [SQL_TOOL] + ([SEARCH_TOOL] if self._index is not None else [])
+                reply = chat(messages, tools)
                 calls += 1
                 usage = getattr(reply, "usage", None)
                 if usage:
@@ -310,6 +436,20 @@ class FreeSQLSystem:
                 choice = reply.choices[0].message
                 tool_calls = getattr(choice, "tool_calls", None)
                 if not tool_calls:
+                    # About to answer having found nothing, with rounds to
+                    # spare. Same gate as the planner's: concrete, finite, once
+                    # each, and it stops when the ladder does.
+                    rounds_left = self._max_rounds - rounds
+                    if (self._persist and not touched and not entities
+                            and rounds_left >= 2 and widenings < len(FREE_LADDER)):
+                        messages.append({"role": "user", "content": (
+                            f"Before you answer -- you have {rounds_left} rounds "
+                            f"left and have found nothing.\n\n"
+                            f"{FREE_LADDER[widenings]}\n\n"
+                            "Either try that, or answer and say what you looked "
+                            "for and where.")})
+                        widenings += 1
+                        continue
                     return Answer(
                         text=choice.content or "", answered=bool(choice.content),
                         papers=sorted(touched), steps=steps, entity_ids=sorted(entities),
@@ -328,6 +468,15 @@ class FreeSQLSystem:
                         args = json.loads(call.function.arguments or "{}")
                     except ValueError:
                         args = {}
+                    if call.function.name == "search":
+                        body, hits = self._search(args)
+                        entities.update(hits)
+                        steps.append({"tool": "search", "round": rounds,
+                                      "args": args, "rows": len(hits),
+                                      "error": None, "preview": body[:200]})
+                        messages.append({"role": "tool", "tool_call_id": call.id,
+                                         "content": body[:6000]})
+                        continue
                     query = args.get("query", "")
                     result = run_sql(self._conn, query)
                     touched.update(papers_in(result))

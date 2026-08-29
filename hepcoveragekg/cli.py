@@ -501,9 +501,13 @@ def _cmd_eval(args) -> int:
     elif args.system == "free-sql":
         # The control. Same runner, same scorers, same model -- one tool that
         # takes SQL instead of nine typed ones. See eval/free_sql.py.
-        from hepcoveragekg.query import templates
-        system = free_sql.FreeSQLSystem(templates.read_only(args.db),
-                                        max_rounds=args.max_rounds)
+        from hepcoveragekg.query import retrieve, templates
+        conn = templates.read_only(args.db)
+        # The SAME index the planner uses. Withholding it would make this a
+        # comparison of search technology rather than of typed structure.
+        index = retrieve.build(conn, cache="data/processed/retrieval_index.npz")
+        system = free_sql.FreeSQLSystem(conn, index, max_rounds=args.max_rounds,
+                                        persist=not args.no_persist)
     elif args.system == "planner":
         from hepcoveragekg.query import retrieve, templates
         conn = templates.read_only(args.db)
@@ -696,6 +700,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_eval.add_argument("--force-critic-set", action="store_true",
                         help="planner: substitute the critic's kept set wherever "
                              "a raw search set is passed to a tool")
+    p_eval.add_argument("--no-persist", action="store_true",
+                        help="free-sql: turn OFF its widening ladder (on by "
+                             "default, to match the planner's persist arm)")
     p_eval.add_argument("--persist", action="store_true",
                         help="planner: before abstaining while holding rows, "
                              "offer one concrete untried route. Finite ladder "
