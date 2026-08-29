@@ -237,6 +237,12 @@ class FreeSQLSystem:
         touched: set[str] = set()
         calls = prompt_tokens = completion_tokens = 0
         rounds = 0
+        # EVERY query and what it returned. Without this, "free SQL lost" is
+        # unfalsifiable: a fair defeat and a broken prompt look identical from
+        # the score alone, and the first thing anyone will ask about this
+        # control is whether it was a straw man. The transcripts are the answer,
+        # so they have to exist before the run rather than after the argument.
+        steps: list[dict] = []
 
         try:
             for rounds in range(1, self._max_rounds + 1):
@@ -252,7 +258,8 @@ class FreeSQLSystem:
                 if not tool_calls:
                     return Answer(
                         text=choice.content or "", answered=bool(choice.content),
-                        papers=sorted(touched), llm_calls=calls, rounds=rounds,
+                        papers=sorted(touched), steps=steps,
+                        llm_calls=calls, rounds=rounds,
                         prompt_tokens=prompt_tokens, completion_tokens=completion_tokens,
                         seconds=time.time() - started)
 
@@ -267,18 +274,26 @@ class FreeSQLSystem:
                         args = json.loads(call.function.arguments or "{}")
                     except ValueError:
                         args = {}
-                    result = run_sql(self._conn, args.get("query", ""))
+                    query = args.get("query", "")
+                    result = run_sql(self._conn, query)
                     touched.update(papers_in(result))
+                    steps.append({
+                        "tool": "sql", "round": rounds, "args": {"query": query},
+                        "rows": len(result.rows), "error": result.error or None,
+                        "truncated": result.truncated,
+                        "preview": result.render()[:200],
+                    })
                     messages.append({"role": "tool", "tool_call_id": call.id,
                                      "content": result.render()[:6000]})
         except Exception as exc:                  # noqa: BLE001
             return Answer(text="", answered=False, seconds=time.time() - started,
-                          papers=sorted(touched), llm_calls=calls, rounds=rounds,
+                          papers=sorted(touched), steps=steps,
+                          llm_calls=calls, rounds=rounds,
                           error=f"{type(exc).__name__}: {exc}")
 
         # Out of rounds with no prose. Not an error -- it looked and never
         # concluded, which is a real behaviour and should score as one.
-        return Answer(text="", answered=False, papers=sorted(touched),
+        return Answer(text="", answered=False, papers=sorted(touched), steps=steps,
                       llm_calls=calls, rounds=self._max_rounds,
                       prompt_tokens=prompt_tokens, completion_tokens=completion_tokens,
                       seconds=time.time() - started)
