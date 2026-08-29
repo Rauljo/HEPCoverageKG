@@ -456,6 +456,18 @@ def tools_for(answer_contract: bool = False, contract: str = "") -> list[dict]:
                 if field_name not in keep:
                     spec["parameters"]["properties"].pop(field_name, None)
             if contract != "v1":
+                # An answer with no text is not an answer. The schema never said
+                # so -- there was no `required` array at all -- and Qwen filled
+                # `text` anyway, so nothing surfaced it. gpt-5.6-luna called
+                # `answer` with no arguments on 24 of 24 questions: `answered`
+                # went True, `text` stayed empty, and `judged_f1` then scored the
+                # 54-paper retrieval footprint at 0.635, which read like a win.
+                #
+                # Applied to v2 and v3 ONLY. v1 is the frozen control, pinned at
+                # fingerprint aa028ae68fd37d83, and a schema change there would
+                # silently move the baseline every earlier result is measured
+                # against -- the D-062 failure exactly.
+                spec["parameters"]["required"] = ["text", "reason"]
                 # v2 replaces the wording, because "citing what was retrieved"
                 # now means something specific -- naming a set, not listing ids
                 # in prose.
@@ -575,6 +587,11 @@ class Session:
     widenings_used: set = field(default_factory=set)
     widenings_offered: int = 0
     widenings_taken: int = 0
+
+    # An `answer` call carrying neither text nor a citation was asked to try
+    # again, once. Recorded so a run that needed asking is distinguishable from
+    # one that answered first time.
+    answer_retried: bool = False
 
     # Set when a citation was rejected, with the reason. Recorded rather than
     # silently dropped: a refused citation means the answer carries no number,
@@ -1263,25 +1280,54 @@ def _critic_client():
     base = os.environ.get("CRITIC_BASE_URL")
     if not base:
         return _client()
+    # ITS OWN KEY. The critic reused LLM_API_KEY, which is fine while both
+    # endpoints are the same local vLLM and wrong the moment the planner moves
+    # to a hosted model: the OpenRouter key went to the local server, every
+    # chunk came back 401, and `judge_candidates` did what it is designed to do
+    # with a failure -- default every candidate to KEPT. The run then carried on
+    # labelled critic-on while running critic-off. That is the mislabelling
+    # D-070 exists to prevent, arriving through a different door.
     return OpenAI(
         base_url=base,
-        api_key=os.environ.get("LLM_API_KEY", "dummy"),
+        api_key=os.environ.get("CRITIC_API_KEY")
+                 or os.environ.get("LLM_API_KEY", "dummy"),
         timeout=float(os.environ.get("LLM_TIMEOUT", 120)),
         max_retries=int(os.environ.get("LLM_MAX_RETRIES", 3)),
     ), os.environ.get("CRITIC_MODEL", "NousResearch/Meta-Llama-3.1-8B-Instruct")
 
 
 def _client():
-    """OpenAI-compatible client, configured exactly as the aliases layer's."""
+    """OpenAI-compatible client, configured exactly as the aliases layer's.
+
+    OpenRouter works through this unchanged -- it speaks the same protocol -- so
+    a hosted frontier model is a matter of three environment variables and not
+    of a second code path:
+
+        LLM_BASE_URL=https://openrouter.ai/api/v1
+        LLM_MODEL_NAME=openai/gpt-4o
+        LLM_API_KEY=<key, from .env, never an argument>
+
+    `max_retries` drops to 1 off-cluster. Against a free local server three
+    retries of an 18,899-token prompt cost a minute; against a metered one they
+    cost three times the money for a request that already failed.
+    """
     from openai import OpenAI
     from dotenv import load_dotenv
 
     load_dotenv()
+    base = os.environ.get("LLM_BASE_URL", "http://localhost:8000/v1")
+    remote = "openrouter" in base or "api.openai" in base
+    headers = {}
+    if "openrouter" in base:
+        # OpenRouter attributes usage to these; harmless elsewhere.
+        headers = {"HTTP-Referer": "https://github.com/Rauljo/HEPCoverageKG",
+                   "X-Title": "HEPCoverageKG"}
     return OpenAI(
-        base_url=os.environ.get("LLM_BASE_URL", "http://localhost:8000/v1"),
+        base_url=base,
         api_key=os.environ.get("LLM_API_KEY", "dummy"),
         timeout=float(os.environ.get("LLM_TIMEOUT", 120)),
-        max_retries=int(os.environ.get("LLM_MAX_RETRIES", 3)),
+        max_retries=int(os.environ.get("LLM_MAX_RETRIES", 1 if remote else 3)),
+        default_headers=headers or None,
     ), os.environ.get("LLM_MODEL_NAME", "Qwen/Qwen2.5-72B-Instruct-AWQ")
 
 
@@ -1371,12 +1417,19 @@ def _prepare(conn, index, question, max_rounds, max_places, max_rows,
     """The state and runtime config a run needs. Shared by answer() and stream()."""
     session = Session(question=question)
     if chat is None:
+        from hepcoveragekg.query import budget as budget_mod
         client, model = _client()
 
         def chat(msgs, tls):  # noqa: E306
             return client.chat.completions.create(
                 model=model, messages=msgs, tools=tls, temperature=0.0,
                 max_tokens=MAX_COMPLETION_TOKENS)
+
+        # A hard stop when LLM_BUDGET_USD is set, and nothing at all when it is
+        # not. The cap belongs here rather than in the runner because this is
+        # the only place every planner call passes through -- including the
+        # critic's, which is 48% of them and would otherwise spend uncounted.
+        chat = budget_mod.guard(chat, budget_mod.from_env(model))
 
     state = {
         "question": question,

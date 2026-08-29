@@ -2651,3 +2651,55 @@ moving target in a way the planner's is not.
 
 **What would settle it**: both systems on conceptB-200, stratified by conjunct count. If the gap is
 concentrated in the multi-condition questions there too, the claim holds at power.
+
+### D-080 (2026-08-29) — judged_set_f1 was scoring the retrieval footprint, and it inverts D-079
+
+A second planner model found a bug in the scorer, not in itself.
+
+`judged_set_f1` fell back to `a.papers` when an answer named no papers, then restricted to the judged
+universe. **The restriction makes the fallback nearly free**: intersecting a 58-paper retrieval
+footprint with a 10-paper judged universe recovers every gold paper automatically. gpt-5.6-luna
+scored **judged_f1 0.889 on gf-01-condition having written no answer at all.**
+
+This is the mistake D-062 found in `set_f1` -- "score the essay, not the library shelf" -- reproduced
+in `judged_set_f1` a week later by the same hand, and made worse rather than better by the universe
+restriction that was supposed to make the scorer honest.
+
+**Fixed** by asking where the papers came from. Ids named in prose count. A CITED set counts, because
+citing a set instead of retyping ids is v3's entire design and `resolve_citations` puts that set into
+`a.papers`. A raw footprint counts for nothing.
+
+**Re-scored, on Gabriel's human gold:**
+
+| system | old | corrected |
+|---|---|---|
+| typed planner, Qwen-72B | 0.477 | **0.423** |
+| free-SQL + search, Qwen-72B | 0.455 | **0.455** |
+| typed planner, gpt-5.6-luna | 0.677 | **0.382** |
+
+**free-SQL is unchanged, because it always named its papers.** The typed planner lost 0.054 of
+footprint credit and luna lost 0.295.
+
+**So D-079 inverts.** It reported the planner slightly ahead of the control, 0.477 to 0.455. Corrected,
+**the control is ahead: 0.455 to 0.423** -- at a quarter of the cost. The per-question finding in
+D-079 survives untouched, because it was computed the same way for both systems: they still fail on
+different questions, and the planner still wins gf-01, the three-part conjunction, where the control
+scores zero.
+
+**On gpt-5.6-luna.** Its real score is 0.382, the lowest of the three, and it is not a weak model --
+it found gf-01's answer in round 2 with the correct `facets` call. It explores instead of concluding,
+burns 5.9 of 6 rounds, and half the time never writes an answer. Our PURPOSE prompt has had weeks of
+tuning against Qwen's habits and none against anything else, which is the most likely explanation and
+is itself worth reporting.
+
+**What this run bought for under a dollar.** Four latent harness bugs, none of which Qwen could have
+revealed, and every one of which made results look BETTER:
+
+1. a run hitting `max_rounds` discarded everything and scored the footprint
+2. the critic ran on the wrong API key, 401 on every chunk, defaulting all candidates to kept -- a
+   run labelled critic-on that ran critic-off
+3. the `answer` tool had no `required` array, so a model could call it with nothing
+4. `judged_set_f1` scored the footprint
+
+Single-model evaluation does not merely limit generality. **It lets harness bugs hide behind one
+model's habits**, and every one of these flattered us.

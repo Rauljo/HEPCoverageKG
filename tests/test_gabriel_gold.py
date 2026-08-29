@@ -110,3 +110,44 @@ def test_the_questions_stay_his_questions(built):
         assert q["text"].lower().startswith("which analyses")
         assert q["truth_source"] == "gabriel"
         assert q["provenance"]["conditions"] >= 1
+
+
+def test_a_retrieval_footprint_is_not_an_answer():
+    """The mistake D-062 found in `set_f1`, reintroduced in `judged_set_f1` and
+    made WORSE by the universe restriction.
+
+    `got = (named or a.papers) & universe` means a system that retrieves
+    everything scores near-perfectly: intersecting a 58-paper footprint with a
+    10-paper judged universe recovers every gold paper for free. gpt-5.6-luna
+    scored judged_f1 0.889 on gf-01-condition that way, having written no answer
+    at all.
+    """
+    q = Q.parse({
+        "qid": "t", "text": "which analyses?", "shape": "set", "split": "dev",
+        "truth_source": "gabriel",
+        "truth": {"kind": "set", "papers": ["1111.1111", "2222.2222"],
+                  "universe": ["1111.1111", "2222.2222", "3333.3333"]},
+    })
+    # retrieved half the corpus, said nothing
+    footprint = Answer(text="", papers=["1111.1111", "2222.2222", "3333.3333",
+                                        "4444.4444", "5555.5555"])
+    assert scoring.judged_set_f1(q, footprint)["judged_f1"] == 0.0
+
+    # said it in prose -> scored on what it said
+    prose = Answer(text="1111.1111 and 2222.2222 do this.")
+    assert scoring.judged_set_f1(q, prose)["judged_f1"] == 1.0
+
+
+def test_a_cited_set_still_counts():
+    """v3's design is to cite a set instead of retyping ids, and
+    `resolve_citations` puts that set into `a.papers`. Refusing it would make the
+    contract unscoreable."""
+    q = Q.parse({
+        "qid": "t", "text": "which analyses?", "shape": "set", "split": "dev",
+        "truth_source": "gabriel",
+        "truth": {"kind": "set", "papers": ["1111.1111"],
+                  "universe": ["1111.1111", "2222.2222"]},
+    })
+    cited = Answer(text="The papers in set_1_kept.", papers=["1111.1111"],
+                   cited="papers=set_1_kept")
+    assert scoring.judged_set_f1(q, cited)["judged_f1"] == 1.0

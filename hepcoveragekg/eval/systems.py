@@ -120,6 +120,7 @@ _ENV_CONFIG: tuple[tuple[str, str], ...] = (
     ("LLM_MAX_COMPLETION_TOKENS", "800"),
     ("CRITIC_MODEL", "NousResearch/Meta-Llama-3.1-8B-Instruct"),
     ("CRITIC_BASE_URL", ""),
+    ("CRITIC_API_KEY_SET", ""),
 )
 
 
@@ -145,6 +146,10 @@ def effective_config(func: Callable, overrides: dict) -> dict:
         config[name] = None if value is inspect.Parameter.empty else value
 
     for var, fallback in _ENV_CONFIG:
+        if var == "CRITIC_API_KEY_SET":
+            # PRESENCE, never the value. A key in a run file is a key in git.
+            config["env.CRITIC_API_KEY_SET"] = bool(os.environ.get("CRITIC_API_KEY"))
+            continue
         config[f"env.{var}"] = os.environ.get(var, fallback)
 
     # A derived flag, because it is the arm name a human uses and reading it off

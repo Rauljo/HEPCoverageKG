@@ -91,7 +91,33 @@ def plan(state: PlannerState, config=None) -> PlannerState:
     state["round"] = state.get("round", 0) + 1
     session.rounds = state["round"]
 
-    response = runtime["chat"](state["messages"], runtime["tools"])
+    # THE LAST ROUND IS FOR ANSWERING, and only for answering.
+    #
+    # `after_execute` sends a run that reaches max_rounds straight to `finish`
+    # with whatever is in the session -- which, for a model that never called
+    # `answer`, is nothing. Every retrieved row, every token, discarded in
+    # silence. gpt-5.6-luna hit this on 24 of 24 questions: it found gf-01's
+    # answer in round 2 with facets(objects=[BJet,MET]) and then explored until
+    # the budget ran out, and the run scored 0.666 purely because the scorer
+    # fell back to the retrieval footprint. Qwen never showed it because Qwen
+    # stops at round 3.
+    #
+    # So on the final round the model is given the `answer` tool and no other,
+    # with a message saying why. It cannot keep searching, and the run ends with
+    # a conclusion drawn from what it actually found rather than with an empty
+    # string. A model with nothing to say can still answer "not in the graph",
+    # which is a real answer and scoreable; silence is neither.
+    tools = runtime["tools"]
+    if state["round"] >= state["max_rounds"]:
+        tools = [t for t in tools if t.get("function", {}).get("name") == "answer"] or tools
+        state["messages"] = state["messages"] + [{
+            "role": "user",
+            "content": (f"This is round {state['round']} of {state['max_rounds']} "
+                        "-- your last. No more searching: answer now from what "
+                        "you have already retrieved. If it is not enough, say "
+                        "so with `not_in_graph` and name what you looked for.")}]
+
+    response = runtime["chat"](state["messages"], tools)
     session.llm_calls += 1
     usage = getattr(response, "usage", None)
     if usage:
@@ -254,6 +280,24 @@ def execute(state: PlannerState, config=None) -> PlannerState:
                         suggestion=widened.message)})
                 session.steps.append(planner.Step(state["round"], "widen",
                                                   {"rung": widened.rung}))
+                continue
+
+            # A schema can be ignored, so the loop checks too. An `answer` with
+            # no text and no citation is not an answer: `answered` goes True,
+            # the text stays empty, and the scorer falls back to the retrieval
+            # footprint -- which is how a run that said nothing scored 0.635.
+            # Asked once, exactly like the nudge, then accepted and flagged.
+            if (not str(args.get("text", "")).strip()
+                    and not args.get("papers_from")
+                    and not session.answer_retried):
+                session.answer_retried = True
+                state["messages"].append({
+                    "role": "tool", "tool_call_id": call["id"],
+                    "content": ("That call carried no answer -- `text` was empty "
+                                "and no set was cited. Say it in prose, naming "
+                                "the papers, or cite a set in `papers_from`. If "
+                                "the graph does not hold it, answer that with "
+                                "reason=not_in_graph.")})
                 continue
 
             session.answer = str(args.get("text", "")).strip()
