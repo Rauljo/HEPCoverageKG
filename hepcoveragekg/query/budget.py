@@ -50,7 +50,27 @@ PRICES: dict[str, tuple[float, float]] = {
     "deepseek/deepseek-chat": (0.27, 1.10),
     "meta-llama/llama-3.3-70b-instruct": (0.12, 0.30),
     "qwen/qwen-2.5-72b-instruct": (0.12, 0.39),
+    # Fetched from OpenRouter's /models on 2026-08-29 rather than remembered.
+    # These postdate the assistant's training data, and a guessed price would
+    # leave the cap inert.
+    "openai/gpt-5.6-luna": (0.20, 1.20),
+    "openai/gpt-5.6-luna-pro": (0.20, 1.20),
+    "openai/gpt-5.6-sol": (2.00, 10.00),
+    "openai/gpt-5.6-sol-pro": (2.00, 10.00),
+    "openai/gpt-5.6-terra": (2.00, 12.00),
+    "openai/gpt-5.6-terra-pro": (2.00, 12.00),
 }
+
+#: Models that emit REASONING tokens, billed as output and invisible in the
+#: reply. The 419 completion tokens measured on Qwen is not a safe estimate for
+#: these: reasoning can be several thousand per call, so a preflight built from
+#: Qwen's numbers understates the bill, and `max_tokens` set for Qwen can leave
+#: no room for an answer after the reasoning is spent.
+REASONING_MODELS = frozenset({
+    "openai/gpt-5.6-luna", "openai/gpt-5.6-luna-pro",
+    "openai/gpt-5.6-sol", "openai/gpt-5.6-sol-pro",
+    "openai/gpt-5.6-terra", "openai/gpt-5.6-terra-pro",
+})
 
 
 def price_for(model: str) -> Optional[tuple[float, float]]:

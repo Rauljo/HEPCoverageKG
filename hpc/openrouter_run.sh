@@ -15,13 +15,17 @@
 # COST, from the measured 18,899 prompt tokens per record. Gabriel's 8 questions
 # x 3 repeats is ~466k input, ~12k output:
 #
+#     openai/gpt-5.6-luna           ~$0.10   (the default; $0.20/$1.20 per M)
 #     openai/gpt-4o                 ~$1.28
 #     anthropic/claude-sonnet-4     ~$1.57
-#     google/gemini-2.5-pro         ~$0.70
-#     deepseek/deepseek-chat        ~$0.14
 #     anthropic/claude-opus-4       ~$7.86   <- a third of the budget, once
 #
-# The fast set is 8.6x bigger: $10-13 on a frontier model. Do not start there.
+# Those completion figures come from Qwen, which does not emit reasoning
+# tokens. A reasoning model bills its thinking as output, so treat them as a
+# FLOOR: gpt-5.6-luna at 4k reasoning tokens per record is ~$0.21, not $0.10.
+#
+# The fast set is 8.6x bigger. On luna that is still under a dollar; on a
+# frontier model it is $10-13, so do not start there.
 #
 # LLM_BUDGET_USD is a HARD STOP, checked before every call. Set it. A malformed
 # loop retrying a 19k-token prompt is the whole account, unattended.
@@ -34,7 +38,7 @@ cd "${REPO:-$HOME/HEPCoverageKG}"
 if [ -f .env ]; then set -a; . ./.env; set +a; fi
 
 : "${OPENROUTER_API_KEY:?not set -- put it in .env, never on the command line}"
-MODEL="${OPENROUTER_MODEL:-openai/gpt-4o}"
+MODEL="${OPENROUTER_MODEL:-openai/gpt-5.6-luna}"
 QUESTIONS="${1:-eval/questions/gabriel-gold-2026-08-25.jsonl}"
 REPEATS="${REPEATS:-3}"
 
@@ -42,7 +46,19 @@ export LLM_BASE_URL="https://openrouter.ai/api/v1"
 export LLM_MODEL_NAME="$MODEL"
 export LLM_API_KEY="$OPENROUTER_API_KEY"
 export LLM_BUDGET_USD="${LLM_BUDGET_USD:-2.00}"
-export LLM_TIMEOUT="${LLM_TIMEOUT:-180}"
+export LLM_TIMEOUT="${LLM_TIMEOUT:-300}"
+
+# A REASONING model spends output tokens thinking before it answers, and those
+# come out of the same allowance. The planner's default is 800, tuned on Qwen,
+# which does not think: hand that to a reasoning model and it can spend the lot
+# reasoning and return an empty answer -- a full bill for no data. Raised here,
+# and the run records the value so a short-completion arm is distinguishable
+# from a broken one.
+case "$MODEL" in
+  *gpt-5.6-*|*o1*|*o3*|*reasoning*)
+    export LLM_MAX_COMPLETION_TOKENS="${LLM_MAX_COMPLETION_TOKENS:-8000}"
+    echo "reasoning model detected -- completion allowance raised to $LLM_MAX_COMPLETION_TOKENS" ;;
+esac
 
 # The critic stays local and free. Unset it to put the critic on the remote
 # model too -- and expect the bill to roughly double.
