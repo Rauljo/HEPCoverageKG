@@ -2467,3 +2467,47 @@ fixed, because it is invisible. Faithfulness on the previously-abstaining runs i
 
 `widenings_offered` and `widenings_taken` are recorded separately, because a mechanism the model
 ignores is a mechanism that does not work -- the same gap flagged for D-073's note.
+
+### D-077 (2026-08-29) — force-critic-set does nothing, and the 8B critic halves counting
+
+Both from the 72B pair on conceptB-200, stopped at 430/600 to free the server for iteration. Scored
+on the **426 records every arm completed**, so all four are paired on the same questions.
+
+| arm (planner is always the 72B) | count_correct | set F1 | answered | seconds |
+|---|---|---|---|---|
+| critic off | 0.034 | 0.182 | 0.930 | 20 |
+| 8B critic | 0.080 | 0.394 | 0.920 | 73 |
+| 72B critic | **0.144** | **0.433** | 0.880 | 150 |
+| 72B critic + force-set | 0.147 | 0.433 | 0.887 | 151 |
+
+**1. `--force-critic-set` is settled: it changes the plan and not the outcome.**
+
+    count questions  +0.0033   148 of 150 tied
+    set questions    +0.0002    46 of  49 tied
+
+It is not inert -- **417 of 426 traces differ** -- so the substitution really happens. It simply does
+not matter. That closes the question D-060's mechanism analysis opened (the kept set reaches the same
+gold papers 96.7% of the time while being 4-7x smaller), and it closes it against the mechanism:
+being handed a smaller, better-judged set does not change what the model then does with it. Leave it
+off, which is where the recorded default already was.
+
+**2. Moving the critic onto the 8B nearly halves counting accuracy: 0.144 -> 0.080.**
+
+That gap (-0.064) is almost the size of the entire critic-on effect (+0.071 on count). The 8B is
+2x faster, so the trade is real: **2x the wall clock for ~1.8x the counting accuracy.**
+
+**And Gabriel's gold said the opposite** -- -0.0035, "no difference". All eight of his questions are
+SET questions, where the gap is small (0.394 -> 0.433). The 8B critic's weakness is on COUNTING, and
+his set contains none. It is structurally incapable of seeing the difference.
+
+*Third time today a shape split reversed a conclusion*: ranked-vs-shuffled goes opposite ways between
+count and set questions (D-073's neighbourhood), the 8B critic looks fine on set and fails on count,
+and gf-08 failed on a path no other question exercises. **A single-shape evaluation set is not a
+smaller version of a mixed one -- it is a blind one**, and that is now the argument for the mixed
+fast set rather than a convenience.
+
+**Decision (Raul's, 2026-08-29): the 8B critic is the standard for iteration anyway**, because 90
+minutes per arm against 9 hours is what makes a day of implementation possible at all. The cost is
+recorded here rather than absorbed: anything that wins on the 8B critic has to be confirmed on the
+72B before it is believed, since a mechanism that only helps because the critic is weak will look
+good and then evaporate.
