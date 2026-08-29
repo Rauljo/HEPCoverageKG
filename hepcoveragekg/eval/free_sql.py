@@ -45,9 +45,16 @@ MAX_ROUNDS = 6
 STATEMENT_SECONDS = 15.0
 
 #: One statement, and it must read. `WITH` leads a CTE, which is still a read.
+#
+# There is deliberately NO keyword blacklist. The first version carried one, and
+# it rejected `WHERE label LIKE '%update%'` and `LIKE '%drop%'` -- ordinary reads
+# over a corpus whose labels contain English words. A control handicapped by a
+# false positive is not measuring what it claims to.
+#
+# Nothing is lost by removing it. The connection is opened read-only, so a write
+# raises whatever the string says, and a statement that must begin with SELECT or
+# WITH cannot be a write in SQLite. The barrier was never the regex.
 _READ_ONLY = re.compile(r"^\s*(select|with)\b", re.I)
-_FORBIDDEN = re.compile(
-    r"\b(insert|update|delete|drop|create|alter|attach|detach|pragma|vacuum|replace)\b", re.I)
 
 SQL_TOOL = {
     "type": "function",
@@ -98,12 +105,32 @@ def schema_brief(conn) -> str:
             continue
         parts.append(f"  {table}.{column}: " + ", ".join(vals))
 
+    # The typed agent is handed closed vocabularies and a retrieval index that
+    # matches across spellings. A SQL agent seeing only column names has to
+    # GUESS that a b-tagged jet is filed as `detector_object` and written
+    # "b-tagged jet (MV2c10, 77%)". Guessing our filing conventions is not the
+    # skill under test, so a few real labels per kind are shown.
+    parts.append("\nWHAT LABELS LOOK LIKE (entity.label, by kind)")
+    kinds = [r[0] for r in conn.execute(
+        "SELECT kind FROM entity GROUP BY kind ORDER BY COUNT(*) DESC LIMIT 10")]
+    for kind in kinds:
+        labels = [str(r[0])[:52] for r in conn.execute(
+            "SELECT label FROM entity WHERE kind = ? AND label IS NOT NULL"
+            " ORDER BY LENGTH(label) LIMIT 3", (kind,))]
+        if labels:
+            parts.append(f"  {kind}: " + " | ".join(labels))
+
     parts.append(
         "\nWHAT MAKES THIS HARD\n"
         "  Labels are written as the papers write them and are NOT unified.\n"
         "  'Pythia 8.230', 'PYTHIA8' and 'Pythia 8.2' are three rows and one\n"
         "  generator. `entity_canonical` and `same_as` exist and may help.\n"
-        "  A paper is identified by paper.arxiv_id.")
+        "  A paper is identified by paper.arxiv_id.\n"
+        "  ONE CONCEPT LIVES UNDER SEVERAL KINDS. 'b-tagged jet' appears as a\n"
+        "  detector_object, an event_region, a channel and a\n"
+        "  systematic_uncertainty. Filtering on entity.kind before you have\n"
+        "  checked which kinds actually hold your term is the fastest way to\n"
+        "  get 0 rows from a graph that has the answer.")
     return "\n".join(parts)
 
 
@@ -113,8 +140,12 @@ physics papers by writing SQL against it.
 {schema}
 
 HOW TO WORK
-- Call `sql` to look. Look more than once: check what a column actually contains
-  before you trust a WHERE clause, and widen it when a match returns nothing.
+- Call `sql` to look. Look more than once.
+- WHEN A QUERY RETURNS 0 ROWS, SUSPECT YOUR FILTERS BEFORE YOU CONCLUDE THE
+  DATA IS ABSENT. Drop the narrowest condition and run it again. In particular,
+  find out which kinds hold your term before filtering on kind:
+      SELECT kind, COUNT(*) FROM entity WHERE label LIKE '%b-tag%' GROUP BY kind
+  is one call and it turns a guess into a fact.
 - Counting questions want a number. Questions asking which analyses or which
   papers want arXiv ids, and you must WRITE THE IDS OUT in your final answer.
 - When you have the answer, reply in prose with no further tool call.
@@ -155,8 +186,6 @@ def run_sql(conn, query: str, max_rows: int = MAX_ROWS,
         return SqlResult(error="one statement at a time, please")
     if not _READ_ONLY.match(text):
         return SqlResult(error="only SELECT (or WITH ... SELECT) is allowed")
-    if _FORBIDDEN.search(text):
-        return SqlResult(error="only read-only SELECT is allowed")
 
     # A cartesian join over assertion x entity_occurrence is one plausible token
     # away, and this runs unattended for hours.

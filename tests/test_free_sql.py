@@ -41,6 +41,18 @@ def test_a_write_never_runs(conn, query):
     assert F.run_sql(conn, query).error
 
 
+@pytest.mark.parametrize("query", [
+    "SELECT label FROM entity WHERE label LIKE '%update%'",
+    "SELECT COUNT(*) FROM entity WHERE label LIKE '%drop%'",
+    "SELECT label FROM entity WHERE label LIKE '%created%'",
+])
+def test_an_ordinary_read_is_not_mistaken_for_a_write(conn, query):
+    """The first version carried a keyword blacklist and rejected these -- reads
+    over a corpus whose labels contain English words. A control handicapped by a
+    false positive is not measuring what it claims to."""
+    assert not F.run_sql(conn, query).error
+
+
 def test_the_connection_is_the_real_barrier(conn):
     """If the string checks were fooled, the connection must still refuse."""
     with pytest.raises(sqlite3.OperationalError):
