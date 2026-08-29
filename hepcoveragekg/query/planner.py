@@ -1263,9 +1263,17 @@ def _critic_client():
     base = os.environ.get("CRITIC_BASE_URL")
     if not base:
         return _client()
+    # ITS OWN KEY. The critic reused LLM_API_KEY, which is fine while both
+    # endpoints are the same local vLLM and wrong the moment the planner moves
+    # to a hosted model: the OpenRouter key went to the local server, every
+    # chunk came back 401, and `judge_candidates` did what it is designed to do
+    # with a failure -- default every candidate to KEPT. The run then carried on
+    # labelled critic-on while running critic-off. That is the mislabelling
+    # D-070 exists to prevent, arriving through a different door.
     return OpenAI(
         base_url=base,
-        api_key=os.environ.get("LLM_API_KEY", "dummy"),
+        api_key=os.environ.get("CRITIC_API_KEY")
+                 or os.environ.get("LLM_API_KEY", "dummy"),
         timeout=float(os.environ.get("LLM_TIMEOUT", 120)),
         max_retries=int(os.environ.get("LLM_MAX_RETRIES", 3)),
     ), os.environ.get("CRITIC_MODEL", "NousResearch/Meta-Llama-3.1-8B-Instruct")

@@ -37,6 +37,13 @@ set -euo pipefail
 cd "${REPO:-$HOME/HEPCoverageKG}"
 if [ -f .env ]; then set -a; . ./.env; set +a; fi
 
+# Capture the LOCAL vLLM key BEFORE LLM_API_KEY is overwritten with OpenRouter's.
+# The critic talks to the local server and needs this one; inheriting the
+# OpenRouter key gives it 401 on every chunk, and `judge_candidates` then does
+# what it is built to do with a failure -- default every candidate to KEPT. The
+# run continues, labelled critic-on, having run critic-off.
+LOCAL_LLM_KEY="${LLM_API_KEY:-}"
+
 : "${OPENROUTER_API_KEY:?not set -- put it in .env, never on the command line}"
 MODEL="${OPENROUTER_MODEL:-openai/gpt-5.6-luna}"
 QUESTIONS="${1:-eval/questions/gabriel-gold-2026-08-25.jsonl}"
@@ -65,6 +72,11 @@ esac
 GPU_HOST="${GPU_HOST:-compute-gpu-0-1}"
 export CRITIC_BASE_URL="${CRITIC_BASE_URL:-http://${GPU_HOST}:8001/v1}"
 export CRITIC_MODEL="${CRITIC_MODEL:-NousResearch/Meta-Llama-3.1-8B-Instruct}"
+# The critic talks to the LOCAL vLLM and needs the LOCAL key. Without this it
+# inherits LLM_API_KEY -- now the OpenRouter key -- gets 401 on every chunk, and
+# defaults every candidate to kept: a run labelled critic-on that ran critic-off.
+export CRITIC_API_KEY="${CRITIC_API_KEY:-$LOCAL_LLM_KEY}"
+: "${CRITIC_API_KEY:?no local vLLM key found in .env -- the critic would 401 and silently no-op}"
 
 echo "planner : $MODEL  (via OpenRouter)"
 echo "critic  : $CRITIC_MODEL  (local, free)"
