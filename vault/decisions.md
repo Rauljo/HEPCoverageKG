@@ -2426,3 +2426,44 @@ prevents.
 **Not built**: the refusal to abstain with budget in hand, and the widening ladder. Those ship as an
 ARM, not a default. If they burn rounds without moving `count_correct`, that shows up against
 `seconds` immediately and they are not adopted.
+
+### D-076 (2026-08-29) — the widening ladder: persistence that provably terminates
+
+Built behind `--persist`, an arm and not a default. Before a run abstains while holding retrieved
+rows with rounds to spare, it is offered ONE concrete untried route.
+
+**Four rungs, each offered at most once per run**, built from the run's own trace:
+
+| rung | fires when | says |
+|---|---|---|
+| `drop_kind` | a search carried `kind=X` | try the same text without the filter |
+| `compatible_predicate` | a hop hit a type mismatch | the predicates D-073 already named |
+| `shorter_text` | search text has qualifiers | `'exactly two electrons'` -> `'electrons'` |
+| `papers_of` | anything was retrieved | you hold N entities; this returns something |
+
+**Why it terminates, demonstrated rather than asserted.** Against a stub model that abstains on every
+single turn: search, then challenge, then `drop_kind`, then `papers_of`, then stop. Three pushbacks
+and the abstention goes through. `shorter_text` and `compatible_predicate` were correctly skipped as
+inapplicable -- only rungs with something real to say are offered.
+
+Three independent bounds, none of them a promise about the model:
+
+1. the ladder is four items and strictly consumed (`session.widenings_used`)
+2. `rounds_left >= 2`, so it cannot fire with no room to act
+3. an exact repeat is never executed (D-075), so a suggested call that was already made costs nothing
+
+**Every suggestion is concrete.** Never "try harder" -- always a specific call built from this run's
+trace. Generic exhortation is what produces flailing; a named alternative produces a different query.
+
+**What it will not do.** It fires only on `not_in_graph`, only with entities in hand, and never on a
+real answer. An abstention with nothing retrieved is left alone: there is nothing to widen from and
+the refusal is very likely correct. Pushing there would be pushing toward invention.
+
+**How it gets judged, including the failure that would matter most.** Paired against the identical
+config without it. Adopt only if `count_correct` and `set_f1` rise, `seconds` does not blow up, and
+**the abstention rate does not collapse toward zero**. If abstentions vanish while precision falls,
+the system has learned to fabricate coverage rather than find it -- worse than the problem being
+fixed, because it is invisible. Faithfulness on the previously-abstaining runs is the specific check.
+
+`widenings_offered` and `widenings_taken` are recorded separately, because a mechanism the model
+ignores is a mechanism that does not work -- the same gap flagged for D-073's note.

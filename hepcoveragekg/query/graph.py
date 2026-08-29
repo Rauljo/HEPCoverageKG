@@ -149,7 +149,7 @@ def _papers_resolver(runtime):
 
 def execute(state: PlannerState, config=None) -> PlannerState:
     """Run this round's batch of tool calls and feed the results back."""
-    from hepcoveragekg.query import planner
+    from hepcoveragekg.query import planner, widen
 
     runtime = _runtime(config)
     session = state["session"]
@@ -235,6 +235,25 @@ def execute(state: PlannerState, config=None) -> PlannerState:
                 state["messages"].append({
                     "role": "tool", "tool_call_id": call["id"],
                     "content": planner.ABSTENTION_CHALLENGE.format(held=held)})
+                continue
+
+            # About to give up while holding rows, with rounds to spare. Offer
+            # ONE concrete untried route -- see query/widen.py for why the
+            # ladder is finite and why that is what stops this looping.
+            widened = widen.should_widen(
+                session, reason=claimed,
+                rounds_left=state["max_rounds"] - state["round"],
+                enabled=bool(runtime.get("persist")))
+            if widened is not None:
+                session.widenings_used.add(widened.rung)
+                session.widenings_offered += 1
+                state["messages"].append({
+                    "role": "tool", "tool_call_id": call["id"],
+                    "content": widen.WIDEN_MESSAGE.format(
+                        rounds_left=state["max_rounds"] - state["round"],
+                        suggestion=widened.message)})
+                session.steps.append(planner.Step(state["round"], "widen",
+                                                  {"rung": widened.rung}))
                 continue
 
             session.answer = str(args.get("text", "")).strip()

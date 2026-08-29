@@ -517,6 +517,7 @@ def _cmd_eval(args) -> int:
             answer_contract=args.answer_contract,
             contract=args.contract,
             force_critic_set=args.force_critic_set,
+            persist=args.persist,
         )
     else:
         print(f"unknown system {args.system!r}", file=sys.stderr)
@@ -695,6 +696,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_eval.add_argument("--force-critic-set", action="store_true",
                         help="planner: substitute the critic's kept set wherever "
                              "a raw search set is passed to a tool")
+    p_eval.add_argument("--persist", action="store_true",
+                        help="planner: before abstaining while holding rows, "
+                             "offer one concrete untried route. Finite ladder "
+                             "(4 rungs, each once); see query/widen.py")
     p_eval.add_argument("--critic-seed", type=int, default=None,
                         help="planner: shuffle the candidates the critic sees, "
                              "with this seed. Omit for retrieval order.")

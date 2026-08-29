@@ -567,6 +567,15 @@ class Session:
     # graph.execute; a retry is a round not spent on a different route.
     calls_made: dict = field(default_factory=dict)
 
+    # Which rungs of the widening ladder have been offered, and whether the
+    # model then made a DIFFERENT call or abstained anyway. The second is the
+    # measurement that matters: a mechanism the model ignores is a mechanism
+    # that does not work, and without this we would be measuring whether the
+    # suggestion was made rather than whether it helped.
+    widenings_used: set = field(default_factory=set)
+    widenings_offered: int = 0
+    widenings_taken: int = 0
+
     # Set when a citation was rejected, with the reason. Recorded rather than
     # silently dropped: a refused citation means the answer carries no number,
     # and that has to be visible in the trace.
@@ -1357,7 +1366,8 @@ def _build_critic(question: str, session: Session, use_critic, seed=None):
 
 def _prepare(conn, index, question, max_rounds, max_places, max_rows,
              minimal_prompt, chat, thread_id, use_critic=None, critic_seed=None,
-             answer_contract=False, contract="", force_critic_set=False):
+             answer_contract=False, contract="", force_critic_set=False,
+             persist=False):
     """The state and runtime config a run needs. Shared by answer() and stream()."""
     session = Session(question=question)
     if chat is None:
@@ -1406,6 +1416,10 @@ def _prepare(conn, index, question, max_rounds, max_places, max_rows,
     runtime["contract"] = resolved
     runtime["answer_contract"] = bool(answer_contract)      # v2-only tools
     runtime["challenge_abstention"] = resolved in ("v2", "v3")
+    # An ARM, never a default, until it is measured against the failure that
+    # would matter: an abstention rate collapsing toward zero while precision
+    # falls is a system fabricating coverage, not finding it.
+    runtime["persist"] = bool(persist)
     config = {"configurable": runtime, "recursion_limit": max_rounds * 3 + 6}
     return session, state, config
 
@@ -1426,6 +1440,7 @@ def stream(
     answer_contract: bool = False,
     contract: str = "",
     force_critic_set: bool = False,
+    persist: bool = False,
 ):
     """Yield `(node_name, session)` after each node completes.
 
@@ -1438,7 +1453,8 @@ def stream(
     session, state, config = _prepare(conn, index, question, max_rounds,
                                       max_places, max_rows, minimal_prompt,
                                       chat, thread_id, use_critic, critic_seed,
-                                      answer_contract, contract, force_critic_set)
+                                      answer_contract, contract, force_critic_set,
+                                      persist)
     started = time.perf_counter()
     app = graph_module.build(checkpointer=checkpointer)
     for update in app.stream(state, config=config, stream_mode="updates"):
@@ -1464,6 +1480,7 @@ def answer(
     answer_contract: bool = False,
     contract: str = "",
     force_critic_set: bool = False,
+    persist: bool = False,
 ) -> Session:
     """Answer one question, returning the answer and the whole trace.
 
@@ -1484,7 +1501,8 @@ def answer(
     session, state, config = _prepare(conn, index, question, max_rounds,
                                       max_places, max_rows, minimal_prompt,
                                       chat, thread_id, use_critic, critic_seed,
-                                      answer_contract, contract, force_critic_set)
+                                      answer_contract, contract, force_critic_set,
+                                      persist)
     graph_module.build(checkpointer=checkpointer).invoke(state, config=config)
 
     session.seconds = time.perf_counter() - started

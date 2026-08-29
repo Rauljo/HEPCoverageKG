@@ -26,6 +26,7 @@ def _state(calls):
         "session": session,
         "messages": [],
         "round": 1,
+        "max_rounds": 6,
         "max_rows": 25,
         "pending_calls": calls,
         "last_content": "",
