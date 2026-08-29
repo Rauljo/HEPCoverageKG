@@ -456,6 +456,18 @@ def tools_for(answer_contract: bool = False, contract: str = "") -> list[dict]:
                 if field_name not in keep:
                     spec["parameters"]["properties"].pop(field_name, None)
             if contract != "v1":
+                # An answer with no text is not an answer. The schema never said
+                # so -- there was no `required` array at all -- and Qwen filled
+                # `text` anyway, so nothing surfaced it. gpt-5.6-luna called
+                # `answer` with no arguments on 24 of 24 questions: `answered`
+                # went True, `text` stayed empty, and `judged_f1` then scored the
+                # 54-paper retrieval footprint at 0.635, which read like a win.
+                #
+                # Applied to v2 and v3 ONLY. v1 is the frozen control, pinned at
+                # fingerprint aa028ae68fd37d83, and a schema change there would
+                # silently move the baseline every earlier result is measured
+                # against -- the D-062 failure exactly.
+                spec["parameters"]["required"] = ["text", "reason"]
                 # v2 replaces the wording, because "citing what was retrieved"
                 # now means something specific -- naming a set, not listing ids
                 # in prose.
@@ -575,6 +587,11 @@ class Session:
     widenings_used: set = field(default_factory=set)
     widenings_offered: int = 0
     widenings_taken: int = 0
+
+    # An `answer` call carrying neither text nor a citation was asked to try
+    # again, once. Recorded so a run that needed asking is distinguishable from
+    # one that answered first time.
+    answer_retried: bool = False
 
     # Set when a citation was rejected, with the reason. Recorded rather than
     # silently dropped: a refused citation means the answer carries no number,

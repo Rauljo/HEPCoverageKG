@@ -282,6 +282,24 @@ def execute(state: PlannerState, config=None) -> PlannerState:
                                                   {"rung": widened.rung}))
                 continue
 
+            # A schema can be ignored, so the loop checks too. An `answer` with
+            # no text and no citation is not an answer: `answered` goes True,
+            # the text stays empty, and the scorer falls back to the retrieval
+            # footprint -- which is how a run that said nothing scored 0.635.
+            # Asked once, exactly like the nudge, then accepted and flagged.
+            if (not str(args.get("text", "")).strip()
+                    and not args.get("papers_from")
+                    and not session.answer_retried):
+                session.answer_retried = True
+                state["messages"].append({
+                    "role": "tool", "tool_call_id": call["id"],
+                    "content": ("That call carried no answer -- `text` was empty "
+                                "and no set was cited. Say it in prose, naming "
+                                "the papers, or cite a set in `papers_from`. If "
+                                "the graph does not hold it, answer that with "
+                                "reason=not_in_graph.")})
+                continue
+
             session.answer = str(args.get("text", "")).strip()
             session.answerable = bool(args.get("answerable", True))
             session.reason = claimed
