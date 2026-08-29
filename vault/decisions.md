@@ -2381,3 +2381,48 @@ drop a condition, or fall back to `papers_of` on what it already holds -- before
 
 *This is why the type-error note (D-073) is necessary but not sufficient: telling the model what went
 wrong does not help if it is not going to try again.*
+
+### D-075 (2026-08-29) — persistence, and the objection that it would just loop
+
+The proposal: stop the agent abstaining while it still holds rounds and retrieved entities. Raul's
+objection: that would make it "go in loops infinitely without actually finding anything".
+
+**The objection is right about the mechanism and wrong about the size, and the numbers say which.**
+
+*What a forced retry would cost.* The runs that give up are worth nothing already:
+
+| | count_correct | set_f1 | rounds | seconds |
+|---|---|---|---|---|
+| abstained | **0.000** | 0.061 | 3.5 | 44 |
+| answered | 0.077 | 0.323 | 3.4 | 57 |
+
+They spend 44 seconds to produce a zero. Persistence spends budget that is already allocated (6
+rounds, mode 3) on the runs currently contributing nothing, so the downside is bounded at *time
+wasted on questions we are already failing*.
+
+*A correction to D-074.* "24% retry the identical failing call" was too strong -- that figure was
+same tool and same predicate, not identical arguments. **Exact duplicates are 68 of 4,479 steps
+(1.5%).** The looping today is milder than stated.
+
+**The real risk is not looping, it is fabrication.** "No paper here covers that" is this project's
+actual output, and a system taught never to abstain invents coverage instead. `graph.py` already says
+this. So abstention stays available and becomes *earned* rather than *impossible* -- the challenge
+asks for the reason, and a sound abstention passes and is recorded with its justification.
+
+**Four bounds, none of them open-ended:**
+
+1. `max_rounds = 6`, already allocated and currently unspent. Persistence adds no budget.
+2. **No exact call runs twice.** Answered from the record, with what it returned -- "you already ran
+   this and it gave 0 rows" is an argument for doing something else, where "you already ran this"
+   invites a third attempt. Errors are recorded too: repeating a failing call is the same waste.
+3. The widening ladder is finite: drop a `kind` filter, take the predicate the schema suggested
+   (D-073), fall back to `papers_of` on what is already held. Roughly four rungs, each usable once.
+4. It only triggers where the run would otherwise score zero.
+
+**Built so far**: the duplicate guard (2) and the contract fix (D-074). `answer` is deliberately
+exempt from deduplication -- blocking a repeat of the exit would trap the run in the very loop this
+prevents.
+
+**Not built**: the refusal to abstain with budget in hand, and the widening ladder. Those ship as an
+ARM, not a default. If they burn rounds without moving `count_correct`, that shows up against
+`seconds` immediately and they are not adopted.

@@ -176,6 +176,34 @@ def execute(state: PlannerState, config=None) -> PlannerState:
             session.steps.append(planner.Step(state["round"], name, {}, error="bad_arguments"))
             continue
 
+        # A call already made in this run is answered from the record instead of
+        # re-executed. The concern this addresses is real and pre-dates any
+        # persistence work: a model that has just been told a route is empty
+        # sometimes tries the same route again, and every retry it spends is a
+        # round it cannot spend on a different one.
+        #
+        # Small today -- 68 of 4,479 steps (1.5%) -- and worth closing before
+        # asking the loop to persist harder, because persistence multiplies
+        # whatever the retry behaviour already is.
+        #
+        # The reply says what the call RETURNED, not merely that it repeated.
+        # "You already ran this" invites running it a third time; "you already
+        # ran this and it gave 0 rows" is an argument for doing something else.
+        if name != "answer":
+            fingerprint = (name, json.dumps(args, sort_keys=True, default=str))
+            previous = getattr(session, "calls_made", {}).get(fingerprint)
+            if previous is not None:
+                state["messages"].append({
+                    "role": "tool", "tool_call_id": call["id"],
+                    "content": (f"You already ran this exact call earlier and it "
+                                f"returned {previous}. Running it again cannot "
+                                f"give a different result -- try a different "
+                                f"predicate, a broader search, or a different "
+                                f"tool.")})
+                session.steps.append(planner.Step(state["round"], name, args,
+                                                  error="duplicate_call"))
+                continue
+
         if name == "answer":
             claimed = str(args.get("reason", "answered"))
             if not session.steps and not session.nudged:
@@ -266,10 +294,16 @@ def execute(state: PlannerState, config=None) -> PlannerState:
                 # model retyping it or the harness re-deriving it
                 result=(dict(result.rows[0]) if name in planner.ANSWER_SHAPED
                         and result.rows else None)))
+            session.calls_made[(asked_for, json.dumps(args, sort_keys=True,
+                                                      default=str))] = (
+                f"{len(result.rows)} rows")
             state["messages"].append({"role": "tool", "tool_call_id": call["id"],
                                       "content": body})
         except Exception as exc:  # noqa: BLE001 -- the planner must see any failure
             elapsed = time.perf_counter() - started
+            session.calls_made[(asked_for, json.dumps(args, sort_keys=True,
+                                                      default=str))] = (
+                f"an error: {str(exc)[:80]}")
             session.steps.append(planner.Step(state["round"], name, args,
                                               error=str(exc)[:200], seconds=elapsed,
                                               redirected_from=asked_for if redirect else None))

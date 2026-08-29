@@ -562,6 +562,11 @@ class Session:
     # than the false negatives this is aimed at.
     abstention_challenged: bool = False
 
+    # Every non-answer call made in this run -> what it returned, so an exact
+    # repeat is answered from the record rather than re-executed. See
+    # graph.execute; a retry is a round not spent on a different route.
+    calls_made: dict = field(default_factory=dict)
+
     # Set when a citation was rejected, with the reason. Recorded rather than
     # silently dropped: a refused citation means the answer carries no number,
     # and that has to be visible in the trace.
