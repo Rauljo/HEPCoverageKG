@@ -2511,3 +2511,52 @@ minutes per arm against 9 hours is what makes a day of implementation possible a
 recorded here rather than absorbed: anything that wins on the 8B critic has to be confirmed on the
 72B before it is believed, since a mechanism that only helps because the critic is weak will look
 good and then evaporate.
+
+### D-078 (2026-08-29) — the free-SQL control's first transcript, and a sharper claim than the one it was built to test
+
+Smoke-tested against the live 72B before the full run. One question --
+*"which analyses use b-tagged jets in their event selection?"*, gold 8 papers -- and three queries:
+
+    1  ... JOIN entity e ON p.arxiv_id = e.paper_id ...  ERROR: no such column: e.paper_id
+    2  ... entity_occurrence ... WHERE e.kind = 'selection_requirement'
+                                  AND e.label LIKE '%b-tagged jet%'   -> 0 rows
+    3  ... WHERE e.kind = 'selection_requirement'
+           AND (e.label LIKE '%b-jet%' OR e.label LIKE '%b-tagging%') -> 0 rows
+
+Then: *"there are no analyses in the graph that explicitly mention these terms in their event
+selection requirements."*
+
+It recovered from the schema error on its own, which is the mark of a fair opponent rather than a
+straw man. What it could not recover from is the **kind**: b-tagging lives under `detector_object`
+(19 entities), not `selection_requirement` (3). The equivalent query on the right kind returns 39
+papers.
+
+**This is gf-08 again, in a different system.** Same wrong-kind mistake, same `0 rows`, same
+confident false negative -- and gf-08 is where all six planner arms scored 0.000. **Both
+architectures make this error.**
+
+**What differs is what happens next, and that is the real claim.** After D-073 the typed hop answers:
+
+> 0 rows, and it could not have been otherwise: 'region_requires_object' relates objects of kind
+> ['detector_object', 'object_definition'], but this set holds ['selection_requirement'].
+
+SQL returns `0 rows` and nothing else. **There is no way, in SQL, to be told you asked about the
+wrong kind** -- the empty set is the same empty set whether the question was wrong or the answer is
+genuinely nothing.
+
+So the thesis narrows and gets better:
+
+- *not* "typed tools retrieve more" -- both systems failed this question
+- *but* **"a typed layer can explain an empty result; raw SQL cannot"**
+
+That is falsifiable, it is measurable (30 of 75 empty hops were type errors, D-073), and it survives
+the Pythia embarrassment where a one-line `LIKE` matched the whole typed pipeline.
+
+**An honest caveat that belongs beside it.** The "correct" query returns **39 papers against a gold
+of 8**. Getting the kind right is necessary and nowhere near sufficient; label matching over-returns
+by 5x. Neither system is close, and the typed layer's advantage here is diagnostic, not accuracy.
+
+**Harness note.** `FreeSQLSystem` now records every query and its row count. Without the transcripts
+"free SQL lost" is unfalsifiable -- a fair defeat and a broken prompt look identical from the score,
+and the first question anyone asks about a control is whether it was rigged. The evidence has to
+exist before the run rather than after the argument.
