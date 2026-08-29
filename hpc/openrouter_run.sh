@@ -62,7 +62,7 @@ export LLM_TIMEOUT="${LLM_TIMEOUT:-300}"
 # and the run records the value so a short-completion arm is distinguishable
 # from a broken one.
 case "$MODEL" in
-  *gpt-5.6-*|*o1*|*o3*|*reasoning*)
+  *gpt-5.6-*|*opus*|*deepseek-v4*|*o1*|*o3*|*reasoning*)
     export LLM_MAX_COMPLETION_TOKENS="${LLM_MAX_COMPLETION_TOKENS:-8000}"
     echo "reasoning model detected -- completion allowance raised to $LLM_MAX_COMPLETION_TOKENS" ;;
 esac

@@ -59,6 +59,14 @@ PRICES: dict[str, tuple[float, float]] = {
     "openai/gpt-5.6-sol-pro": (2.00, 10.00),
     "openai/gpt-5.6-terra": (2.00, 12.00),
     "openai/gpt-5.6-terra-pro": (2.00, 12.00),
+    "deepseek/deepseek-v4-flash-0731": (0.07, 0.18),
+    "deepseek/deepseek-v4-flash": (0.08, 0.16),
+    "anthropic/claude-opus-5": (5.00, 25.00),
+    "anthropic/claude-opus-4.8": (5.00, 25.00),
+    # The :batch variants are half price and ASYNCHRONOUS. They are listed so a
+    # cap is possible if anyone tries one, not as a recommendation: the eval
+    # loop is synchronous and a batch endpoint would stall it.
+    "anthropic/claude-opus-5:batch": (2.50, 12.50),
 }
 
 #: Models that emit REASONING tokens, billed as output and invisible in the
@@ -67,6 +75,8 @@ PRICES: dict[str, tuple[float, float]] = {
 #: Qwen's numbers understates the bill, and `max_tokens` set for Qwen can leave
 #: no room for an answer after the reasoning is spent.
 REASONING_MODELS = frozenset({
+    "anthropic/claude-opus-5", "anthropic/claude-opus-4.8",
+    "deepseek/deepseek-v4-flash-0731", "deepseek/deepseek-v4-flash",
     "openai/gpt-5.6-luna", "openai/gpt-5.6-luna-pro",
     "openai/gpt-5.6-sol", "openai/gpt-5.6-sol-pro",
     "openai/gpt-5.6-terra", "openai/gpt-5.6-terra-pro",
