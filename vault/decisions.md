@@ -2333,3 +2333,51 @@ than from a success.
 
 *Not yet measured: whether the note changes behaviour. The model has to read it and re-plan, and
 that is an arm, not an assumption.*
+
+### D-074 (2026-08-29) — v3 has been running with half of itself switched off
+
+Raul asked whether the agent re-plans when a route fails. Measured across the stored arms, it mostly
+does not:
+
+| after a step returned 0 rows | n | share |
+|---|---|---|
+| a new search | 97 | 35% |
+| **stopped there** | 81 | **29%** |
+| the SAME tool and predicate again | 66 | 24% |
+| a different tool | 34 | 12% |
+
+And it quits with resources in hand. Of 105 abstentions on conceptB-200:
+
+- **98 (93%) still had rounds left** -- the budget is 6, the mode is 3
+- **105 (100%) had already retrieved entities**, on average **59 entities across 30 papers**
+
+gf-08 is the shape of it: 3 rounds of 6, two searches, two impossible hops, then "the graph does not
+record any analyses that require exactly two electrons or exactly two muons". Thirteen papers do.
+
+**The mechanism built to stop exactly this never ran.** Contract v3 is defined as two things -- cite
+the paper set, and defend an abstention made while holding evidence. v3 was on for every arm. Result:
+**105 abstentions, 0 challenged.**
+
+**Cause.** `tools_for` resolves v1/v2/v3 correctly, but the challenge in `graph.py` was gated on
+`runtime["answer_contract"]`, which is `bool(answer_contract)` -- the **v2 flag**. `--contract v3`
+leaves it False. One value read as if it were two different questions: *which contract is this* and
+*was the old flag passed*.
+
+**Consequence for what has already been reported.** Every v3 measurement was made with one of its two
+mechanisms dead -- including the **+0.059 set F1** that made v3 the proposed default. That number is
+real, but it is the value of citing the paper set ALONE. The challenge has never been measured at
+all, in any run, ever. D-062's "challenged abstention: kept, still unmeasured" was more literally
+true than intended.
+
+**Fixed** by gating on the resolved contract (`v2` or `v3`), not on the legacy flag. v1 stays frozen
+at fingerprint aa028ae68fd37d83, and v3 remains a strict subset of v2's tools -- the fix must not
+quietly promote v3 into v2.
+
+**What is still not fixed, and matters more.** The challenge only fires when the model calls `answer`
+with `not_in_graph`. It does nothing about the 29% that stop dead after an empty hop, or the 24% that
+retry the identical failing call. Persistence is a separate defect: the loop should not permit an
+abstention while rounds AND retrieved material remain, and after an empty hop it should widen --
+drop a condition, or fall back to `papers_of` on what it already holds -- before giving up.
+
+*This is why the type-error note (D-073) is necessary but not sufficient: telling the model what went
+wrong does not help if it is not going to try again.*

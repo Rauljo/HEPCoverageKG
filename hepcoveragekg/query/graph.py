@@ -201,7 +201,7 @@ def execute(state: PlannerState, config=None) -> PlannerState:
             # and is recorded with its justification, which makes it *more*
             # trustworthy; only the ones that simply gave up change.
             held = planner.rows_held(session)
-            if (runtime.get("answer_contract") and claimed == "not_in_graph"
+            if (runtime.get("challenge_abstention") and claimed == "not_in_graph"
                     and held and not session.abstention_challenged):
                 session.abstention_challenged = True
                 state["messages"].append({

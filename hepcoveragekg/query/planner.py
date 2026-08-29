@@ -1386,7 +1386,21 @@ def _prepare(conn, index, question, max_rounds, max_places, max_rows,
         "tools": [{"type": "function", "function": spec}
                   for spec in tools_for(answer_contract, contract)],
     }
-    runtime["answer_contract"] = bool(answer_contract)
+    # WHICH CONTRACT, not "was the v2 flag passed". These are not the same
+    # thing and the difference silently disabled half of v3.
+    #
+    # `tools_for` has always resolved v1/v2/v3 properly, but the abstention
+    # challenge in graph.py was gated on `answer_contract` -- true only for v2.
+    # So `--contract v3`, whose whole definition is "cite the paper set AND
+    # defend an abstention held against evidence", ran with the second mechanism
+    # dead. Every v3 measurement to date, including the +0.059 set F1 that
+    # justified making it the proposed default, was made with one of its two
+    # parts switched off. Measured on the 2026-08-28 arms: 105 abstentions, 0
+    # challenged -- while holding 59 retrieved entities across 30 papers each.
+    resolved = contract or ("v2" if answer_contract else "v1")
+    runtime["contract"] = resolved
+    runtime["answer_contract"] = bool(answer_contract)      # v2-only tools
+    runtime["challenge_abstention"] = resolved in ("v2", "v3")
     config = {"configurable": runtime, "recursion_limit": max_rounds * 3 + 6}
     return session, state, config
 
