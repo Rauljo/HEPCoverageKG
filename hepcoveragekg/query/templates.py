@@ -258,8 +258,60 @@ def subjects_of(conn, predicate: str, object_ids: str | list[str]) -> QueryResul
         sql=sql,
         params=params,
     )
+    if not result.rows:
+        result.note = _why_empty(conn, predicate, ids, "object")
     result.evidence_ids = _evidence_for(conn, sql, params)
     return result
+
+
+def _why_empty(conn, predicate: str, ids: list[str], side: str) -> str:
+    """Why a hop came back with nothing, when the schema already knew.
+
+    A silent 0 is indistinguishable from "no paper does this", and the model
+    reads it as the second. That is how gf-08 became a confident false claim:
+    it searched `selection_requirement`, hopped through `region_requires_object`
+    -- which points at `detector_object` and nothing else -- got 0, and answered
+    "the graph does not record any analyses that require exactly two electrons
+    or exactly two muons". Thirteen papers do. The evidence was in `channel`
+    entities the whole time.
+
+    Measured over 518 hops in the stored arms: 75 returned nothing and **30 of
+    those were this** -- a predicate paired with a kind it can never accept.
+    Two in five empty hops were answerable before the query ran.
+
+    So the typed graph is asked the question it is uniquely able to answer:
+    which kinds does this predicate actually relate, and which predicates would
+    accept the kind in hand. Returned as a note, never as an exception -- a
+    genuinely empty result is still a legitimate answer, and this must not turn
+    "nothing matched" into a crash.
+    """
+    if not ids:
+        return ""
+    column, other = ("object_id", "subject_id") if side == "object" else ("subject_id", "object_id")
+    kinds = {r[0] for r in conn.execute(
+        f"SELECT DISTINCT kind FROM entity WHERE entity_id IN ({_placeholders(len(ids))})",
+        tuple(ids)) if r[0]}
+    if not kinds:
+        return ""
+    accepted = {r[0] for r in conn.execute(
+        "SELECT DISTINCT e.kind FROM assertion a JOIN entity e"
+        f" ON e.entity_id = a.{column} WHERE a.predicate = ?", (predicate,)) if r[0]}
+    if not accepted:
+        return f"no assertion in the graph uses the predicate '{predicate}'"
+    if kinds & accepted:
+        return ""          # the pairing is legitimate; the set is simply not in it
+
+    marks = _placeholders(len(kinds))
+    instead = [r[0] for r in conn.execute(
+        f"SELECT a.predicate FROM assertion a JOIN entity e ON e.entity_id = a.{column}"
+        f" WHERE e.kind IN ({marks}) GROUP BY a.predicate ORDER BY COUNT(*) DESC LIMIT 4",
+        tuple(sorted(kinds)))]
+    note = (f"0 rows, and it could not have been otherwise: '{predicate}' relates "
+            f"{'objects' if side == 'object' else 'subjects'} of kind "
+            f"{sorted(accepted)}, but this set holds {sorted(kinds)}.")
+    if instead:
+        note += f" Predicates that DO accept {sorted(kinds)}: {instead}."
+    return note
 
 
 def papers_of(conn, entity_ids: str | list[str]) -> QueryResult:

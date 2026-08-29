@@ -2271,3 +2271,65 @@ candidate sentences.
 The finding survives -- precision still roughly halves per added condition -- but the three-condition
 point was overstated at row level, because a paper with a supporting second quote was counted as a
 miss. **0.16 was wrong; 0.30 is the number.**
+
+### D-073 (2026-08-29) — gf-08: the one place where retrieval IS the bottleneck, and it is a type error
+
+Every one of the six arms scored **0.000** on gf-08, and every one gave the same answer:
+
+> "The graph does not record any analyses that require exactly two electrons or exactly two muons as
+> alternative selections."
+
+Thirteen papers do. `retrieval_reach` was 0.0 on all six -- not one gold paper was touched.
+
+**The evidence was in the graph the whole time**, in `channel` entities:
+
+    2009.14537   "ee+p (electron pair plus tagged forward proton)"
+    2009.14537   "μμ+p (muon pair plus tagged forward proton)"
+    2001.06899   "Z(→e+e-/μ+μ-) + jet(s) final state"
+    2011.07812   "Two displaced leptons (ee, mumu, or emu)"
+
+A regex over channel labels reaches 7 of the 13.
+
+**The plan, from the trace:**
+
+    search("exactly two electrons", kind="selection_requirement")  -> 8
+    search("exactly two muons",     kind="selection_requirement")  -> 6
+    subjects_of("region_requires_object", set_1)                   -> 0
+    subjects_of("region_requires_object", set_2)                   -> 0
+
+Search worked. The HOP was impossible: `region_requires_object` relates objects of kind
+`detector_object` (1,022) and `object_definition` (33), and never a `selection_requirement`. The join
+was guaranteed empty before it ran. The model read 0 as "nothing exists" and asserted it.
+
+**So this is a planning failure wearing a retrieval failure's clothes** -- and the only case so far
+where the project's thesis ("retrieval is not the bottleneck, judgement is") does not hold, because
+here neither retrieval nor judgement failed. A type error did.
+
+**Sized across the stored arms**: 518 `subjects_of`/`objects_of` calls, **75 returned 0 (14%)**, and
+**30 of those 75 (40%) were a predicate paired with a kind it can never accept**:
+
+| n | predicate | given | actually accepts |
+|---|---|---|---|
+| 18 | `result_defines_region` | background | detector_object, event_region |
+| 9 | `region_requires_object` | selection_requirement | detector_object, object_definition |
+| 3 | `region_requires_object` | event_region | detector_object, object_definition |
+
+Two in five empty hops were answerable before the query ran.
+
+**Fixed**: an empty hop now asks the typed graph the question only a typed graph can answer -- which
+kinds does this predicate relate, and which predicates would accept the kind in hand:
+
+> 0 rows, and it could not have been otherwise: 'region_requires_object' relates objects of kind
+> ['detector_object', 'object_definition'], but this set holds ['selection_requirement']. Predicates
+> that DO accept ['selection_requirement']: ['object_has_selection', 'region_has_selection'].
+
+A note, never an exception: a genuinely empty result is still a legitimate answer and must not become
+a crash. A well-typed hop that simply matches nothing stays silent.
+
+**Why this matters beyond one question.** It is the typed layer earning its keep in a way no ablation
+had shown: the schema already knew the query was impossible, and nothing was asking it. That is a
+better argument for typing than any of the critic measurements, and it arrived from a failure rather
+than from a success.
+
+*Not yet measured: whether the note changes behaviour. The model has to read it and re-plan, and
+that is an arm, not an assumption.*
