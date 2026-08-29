@@ -24,6 +24,13 @@
 #   ARM=shuffled-8b     critic on, shuffled,         judge = Llama-3.1-8B
 #   ARM=shuffled-72b-forced  as shuffled-72b, but the critic's kept set is
 #                       substituted wherever a raw set is passed to a tool
+#   ARM=shuffled-8b-persist  as shuffled-8b, plus the widening ladder (D-076)
+#
+# THE 8B JUDGE IS NOW THE STANDARD for new experiments. It is not measurably
+# worse -- -0.0035 paired on the supervisor's gold, well inside the noise -- and
+# it is roughly 3x faster under sustained load. The powered version of that
+# comparison arrives as a by-product of the 72B pair still running, and belongs
+# in the write-up even though the decision is already taken.
 #
 # EVERYTHING ELSE IS HELD AT ITS RECORDED DEFAULT. One axis at a time, or the
 # result is uninterpretable -- D-062 lost a week to a one-line prompt change
@@ -109,6 +116,16 @@ case "$ARM" in
     # set, so an effect on those was averaged over every question. Pairing this
     # against shuffled-72b isolates it on one axis.
     FLAGS="$FLAGS --critic --critic-seed 20260815 --force-critic-set" ;;
+  shuffled-8b-persist)
+    # The persistence arm (D-076). Identical to shuffled-8b except that a run
+    # about to abstain while holding rows, with rounds to spare, is offered one
+    # concrete untried route. Paired against shuffled-8b on the same code, which
+    # is why the baseline has to be re-run rather than taken from 2026-08-28:
+    # three fixes have landed since (D-073 empty-hop notes, D-074 the v3
+    # abstention challenge, D-075 the duplicate guard).
+    FLAGS="$FLAGS --critic --critic-seed 20260815 --persist"
+    export CRITIC_BASE_URL="http://${GPU_HOST}:8001/v1"
+    export CRITIC_MODEL="NousResearch/Meta-Llama-3.1-8B-Instruct" ;;
   shuffled-8b)
     FLAGS="$FLAGS --critic --critic-seed 20260815"
     export CRITIC_BASE_URL="http://${GPU_HOST}:8001/v1"
@@ -116,25 +133,40 @@ case "$ARM" in
   *) echo "unknown ARM=$ARM"; exit 2 ;;
 esac
 
-# Fail before spending a GPU hour rather than after. A missing 8B endpoint on a
-# -8b arm silently falls back to the 72B in `_critic_client`, which would put
-# two different arms under one label -- the exact failure D-070 exists to stop.
+# WAIT for the endpoints, do not merely test them.
 #
-# The probe MUST authenticate. vLLM is served with --api-key, so an unauthorised
-# /v1/models returns 401, `curl -f` treats that as failure, and the gate would
-# refuse to start against a perfectly healthy server. The key goes in over
-# stdin via `curl -K -`, never as an argument, so it cannot appear in `ps` or
-# in the job log.
+# The first version failed immediately if the judge was not answering, which is
+# right when a server is already up and wrong the moment anything is chained
+# behind a server launch: a 72B takes minutes to load, so an arm submitted with
+# a Slurm dependency arrives before the model is ready and kills itself. That
+# turns an unattended overnight queue into a queue that quietly does nothing.
+#
+# Both ports matter now. Every arm answers on 8000, and with the 8B judge as the
+# standard configuration every critic arm also judges on 8001.
+#
+# The probe MUST authenticate: vLLM is served with --api-key, an unauthorised
+# /v1/models returns 401, and `curl -f` reads that as a dead server. The key
+# goes over stdin via `curl -K -`, never as an argument, so it cannot appear in
+# `ps` or in the job log.
+wait_for() {
+  local url="$1" name="$2" waited=0
+  while [ "$waited" -lt "${ENDPOINT_WAIT:-1800}" ]; do
+    if printf 'header = "Authorization: Bearer %s"\nurl = "%s/models"\n' \
+         "$LLM_API_KEY" "$url" | curl -sf --max-time 10 -o /dev/null -K -; then
+      echo "  $name ready at $url (waited ${waited}s)"
+      return 0
+    fi
+    sleep 30; waited=$((waited + 30))
+  done
+  echo "FATAL: $name at $url never answered within ${ENDPOINT_WAIT:-1800}s."
+  echo "       Refusing to start: without it this arm would silently run a"
+  echo "       different configuration from the one it is labelled with."
+  return 1
+}
+
+wait_for "$LLM_BASE_URL" "answerer" || exit 3
 case "$ARM" in
-  *-8b)
-    if ! printf 'header = "Authorization: Bearer %s"\nurl = "%s/models"\n' \
-           "$LLM_API_KEY" "$CRITIC_BASE_URL" \
-         | curl -sf --max-time 10 -o /dev/null -K -; then
-      echo "FATAL: judge endpoint ${CRITIC_BASE_URL} is not answering."
-      echo "       serve_split.sh must be running, or this arm would quietly"
-      echo "       run the 72B and be recorded as the 8B."
-      exit 3
-    fi ;;
+  *-8b|*-8b-persist) wait_for "$CRITIC_BASE_URL" "judge (8B)" || exit 3 ;;
 esac
 
 echo "host=$(hostname)  arm=$ARM  questions=$QUESTIONS  repeats=$REPEATS"
