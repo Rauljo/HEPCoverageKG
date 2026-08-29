@@ -2601,3 +2601,53 @@ the score. A control that scores 0.000 looks like a strong result for the thesis
 bug in the control. Anyone who reports a baseline without reading what it actually did is reporting
 their own defaults. The full run was relaunched on the fixed code; the handicapped numbers are
 discarded rather than kept as a "before".
+
+### D-079 (2026-08-29) — the control matches us on average and fails somewhere else
+
+The free-SQL control, upgraded to hold the SAME raw materials as the planner -- the corpus, the
+BM25+dense index, the 72B -- and run against Gabriel's human gold. What it still lacks is the typed
+layer itself: predicate-aware hops, the critic, empty-hop diagnostics, automatic canonical expansion,
+the answer contract.
+
+    free-SQL + search    judged_f1 0.455    12.1 s    30 search calls, 27 sql calls
+    typed planner        judged_f1 0.477    45.1 s
+
+**Within noise on the mean, at 3.7x the cost for the typed layer.** But the means hide the finding:
+
+| question | conditions | free-SQL | planner |
+|---|---|---|---|
+| gf-02 | 1 | **0.889** | 0.275 |
+| gf-07 | 2 | **0.577** | 0.414 |
+| gf-01-condition | 1 | 0.364 | 0.364 |
+| gf-03 | 1 | 0.889 | 0.889 |
+| gf-04 | 1 | 0.800 | 0.800 |
+| gf-05 | 2 | 0.118 | **0.435** |
+| **gf-01** | **3** | **0.000** | **0.545** |
+| gf-08 | 2 | 0.000 | 0.000 |
+
+Three ties, two clear wins each way, one mutual failure. **They do not fail on the same questions.**
+
+The sharpest cell is gf-01, the three-part conjunction and the hardest question in the set: the
+control scores **zero**, the planner **0.545**. That is the best evidence for the typed layer in the
+project, and it is on labels a physicist wrote.
+
+**So the thesis changes shape, and improves.** Not "typed tools beat a model turned loose on the
+data" -- on average they do not, and they cost four times as much. Instead:
+
+> Given the same corpus, index and model, a flat SQL+search agent matches the typed planner on
+> average at a quarter of the cost, and fails completely on the multi-condition question the typed
+> planner half-answers. **The typed layer's value is concentrated in compositional questions, not in
+> retrieval and not in single-fact lookup.**
+
+That is narrower, falsifiable, and consistent with everything else measured: the critic's biggest win
+was gf-01 (0.000 -> 0.545, D-073's neighbourhood), and precision falls with conjunct count (D-069,
+0.90 -> 0.46 -> 0.30).
+
+**Caveats that travel with it.** n = 8 questions, one observation each over 3 repeats -- the
+per-question differences are suggestive, not established. Gabriel's set is all SET questions, so this
+says nothing about counting; the fast-set run is where that lands. And the control has now been
+upgraded four times in one afternoon, each time from reading its transcripts, so its number is a
+moving target in a way the planner's is not.
+
+**What would settle it**: both systems on conceptB-200, stratified by conjunct count. If the gap is
+concentrated in the multi-condition questions there too, the claim holds at power.
