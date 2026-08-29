@@ -91,7 +91,33 @@ def plan(state: PlannerState, config=None) -> PlannerState:
     state["round"] = state.get("round", 0) + 1
     session.rounds = state["round"]
 
-    response = runtime["chat"](state["messages"], runtime["tools"])
+    # THE LAST ROUND IS FOR ANSWERING, and only for answering.
+    #
+    # `after_execute` sends a run that reaches max_rounds straight to `finish`
+    # with whatever is in the session -- which, for a model that never called
+    # `answer`, is nothing. Every retrieved row, every token, discarded in
+    # silence. gpt-5.6-luna hit this on 24 of 24 questions: it found gf-01's
+    # answer in round 2 with facets(objects=[BJet,MET]) and then explored until
+    # the budget ran out, and the run scored 0.666 purely because the scorer
+    # fell back to the retrieval footprint. Qwen never showed it because Qwen
+    # stops at round 3.
+    #
+    # So on the final round the model is given the `answer` tool and no other,
+    # with a message saying why. It cannot keep searching, and the run ends with
+    # a conclusion drawn from what it actually found rather than with an empty
+    # string. A model with nothing to say can still answer "not in the graph",
+    # which is a real answer and scoreable; silence is neither.
+    tools = runtime["tools"]
+    if state["round"] >= state["max_rounds"]:
+        tools = [t for t in tools if t.get("function", {}).get("name") == "answer"] or tools
+        state["messages"] = state["messages"] + [{
+            "role": "user",
+            "content": (f"This is round {state['round']} of {state['max_rounds']} "
+                        "-- your last. No more searching: answer now from what "
+                        "you have already retrieved. If it is not enough, say "
+                        "so with `not_in_graph` and name what you looked for.")}]
+
+    response = runtime["chat"](state["messages"], tools)
     session.llm_calls += 1
     usage = getattr(response, "usage", None)
     if usage:
