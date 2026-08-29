@@ -2560,3 +2560,44 @@ by 5x. Neither system is close, and the typed layer's advantage here is diagnost
 "free SQL lost" is unfalsifiable -- a fair defeat and a broken prompt look identical from the score,
 and the first question anyone asks about a control is whether it was rigged. The evidence has to
 exist before the run rather than after the argument.
+
+### D-078 addendum — the control was handicapped, and fixing it made it beat us
+
+Three defects in the free-SQL control, all found by reading its first transcript rather than its
+score. Each is a way the experiment could have been rigged without anyone intending it.
+
+**1. A keyword blacklist rejected ordinary reads.** `WHERE label LIKE '%update%'` and `'%drop%'`
+came back "only read-only SELECT is allowed" -- over a corpus whose labels contain English words.
+Removed entirely. The connection is opened read-only and a statement that must begin with SELECT
+cannot write in SQLite, so the barrier was never the regex; it was pure handicap.
+
+**2. The schema never showed a LABEL.** It listed kinds and predicates, so the agent had to guess
+that a b-tagged jet is filed under `detector_object` and written "b-tagged jet (MV2c10, 77%)".
+Guessing our filing conventions is not the skill under test. Three real labels per kind now travel
+with the schema, which is the analogue of the closed vocabularies the typed agent gets free.
+
+**3. Nothing warned it about the trap it fell into.** It filtered `kind='selection_requirement'`
+three times and concluded the data was absent. The brief now says one concept lives under several
+kinds, and the prompt says to suspect the filters before concluding absence -- with the single query
+that settles it (`SELECT kind, COUNT(*) ... GROUP BY kind`).
+
+**Re-run on the same question, same model.** *"Which analyses use b-tagged jets in their event
+selection?"*
+
+| | queries | result | judged F1 |
+|---|---|---|---|
+| before | 3, all 0 rows | "there are no analyses" | **0.000** |
+| after | 2 | 45 papers, 10 named | **0.889** (P 0.80, R 1.00) |
+
+**The typed planner scores 0.364 on this question.** So on this one, the control does not merely
+survive -- it beats us by a factor of two and a half.
+
+That is consistent with prediction (1) in the design doc: free SQL wins on literal lookups. "Does the
+selection use b-tagged jets" is exactly that. The prediction that matters is still (2) -- synonymy
+with no shared substring -- and it is untested.
+
+**The methodological point, which is the durable one.** This was found by reading the transcript, not
+the score. A control that scores 0.000 looks like a strong result for the thesis and was in fact a
+bug in the control. Anyone who reports a baseline without reading what it actually did is reporting
+their own defaults. The full run was relaunched on the fixed code; the handicapped numbers are
+discarded rather than kept as a "before".
