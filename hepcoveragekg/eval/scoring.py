@@ -211,8 +211,25 @@ def judged_set_f1(q: Question, a: Answer) -> Optional[dict]:
     truth = set(q.truth.papers) & universe
     if not truth or len(truth) > MAX_LISTABLE:
         return None
+    # WHERE THE PAPERS CAME FROM DECIDES WHETHER THEY COUNT.
+    #
+    # Falling back to `a.papers` was the same mistake D-062 found in `set_f1`,
+    # and restricting to a small judged universe makes it far worse rather than
+    # better: intersecting a 58-paper retrieval footprint with a 10-paper
+    # universe recovers every gold paper automatically. gpt-5.6-luna scored
+    # judged_f1 0.889 on gf-01-condition that way, having written no answer at
+    # all -- retrieving everything is optimal when the yardstick is that short.
+    #
+    # A CITED set is different and legitimate: v3's whole design is to name a
+    # set instead of retyping ids, and `resolve_citations` puts that set into
+    # `a.papers`. So a citation counts and a footprint does not.
     named = set(_arxiv_ids_in(a.text))
-    got = (named or set(a.papers)) & universe
+    if named:
+        got = named & universe
+    elif getattr(a, "cited", ""):
+        got = set(a.papers) & universe          # the set the answer pointed at
+    else:
+        got = set()                             # it named nothing; nothing counts
     coverage = len(universe) / CORPUS_PAPERS if CORPUS_PAPERS else 0.0
     if not got:
         return {"judged_precision": 0.0, "judged_recall": 0.0, "judged_f1": 0.0,
