@@ -84,6 +84,23 @@ def test_papers_touched_are_collected_like_the_planners_footprint(conn):
     assert F.papers_in(r) == ["2001.06899", "2106.01676"]
 
 
+def test_entity_ids_are_collected_not_only_papers(conn):
+    """The retrieval tier's truth IS an entity id, and `entity_retrieved` scores
+    `Answer.entity_ids`. Collecting only papers scored all 16 of those questions
+    0.000 for a reason with nothing to do with SQL -- a control must not lose on
+    a field the harness forgot to fill."""
+    result = F.SqlResult(rows=[("hepkg:generator:pythia8_v8p212", "Pythia 8.212"),
+                               ("hepkg:region:sr_2j", "SR-2j")],
+                         columns=["entity_id", "label"])
+    assert F.entities_in(result) == ["hepkg:generator:pythia8_v8p212",
+                                     "hepkg:region:sr_2j"]
+    assert F.papers_in(result) == [], "an entity id is not a paper id"
+
+    papers = F.SqlResult(rows=[("2106.01676",)], columns=["arxiv_id"])
+    assert F.papers_in(papers) == ["2106.01676"]
+    assert F.entities_in(papers) == [], "a paper id is not an entity id"
+
+
 def test_the_schema_shows_real_values_not_just_column_names(conn):
     """The typed agent is handed closed vocabularies. A SQL agent facing
     `entity.kind` cannot guess the value is `generator` and not `Generator`, and

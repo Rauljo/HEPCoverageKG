@@ -148,6 +148,9 @@ HOW TO WORK
   is one call and it turns a guess into a fact.
 - Counting questions want a number. Questions asking which analyses or which
   papers want arXiv ids, and you must WRITE THE IDS OUT in your final answer.
+- Questions asking WHICH ENTITY -- which generator, which region, which
+  systematic -- want entity.entity_id, so SELECT it and name it. An answer that
+  identifies the right thing without saying which row it is cannot be checked.
 - When you have the answer, reply in prose with no further tool call.
 - If the graph does not contain the answer, say so plainly. A wrong answer is
   worse than "not in the graph"."""
@@ -207,6 +210,27 @@ def run_sql(conn, query: str, max_rows: int = MAX_ROWS,
     return SqlResult(rows=list(rows[:max_rows]), columns=columns, truncated=truncated)
 
 
+#: An entity id, e.g. `hepkg:generator:pythia8-210`.
+_ENTITY_ID = re.compile(r"hepkg:[a-z_]+:[A-Za-z0-9_.\-]+")
+
+
+def entities_in(result: SqlResult) -> list[str]:
+    """Entity ids anywhere in the result.
+
+    The retrieval tier's truth IS an entity id, and `entity_retrieved` scores
+    `Answer.entity_ids`. Collecting only papers scored all 16 of those questions
+    0.000 for a reason that has nothing to do with SQL -- the same
+    scorer-asymmetry the design doc warned about and this implementation then
+    walked into. A control must not lose on a field the harness forgot to fill.
+    """
+    found: set[str] = set()
+    for row in result.rows:
+        for value in row:
+            if isinstance(value, str):
+                found.update(_ENTITY_ID.findall(value))
+    return sorted(found)
+
+
 def papers_in(result: SqlResult) -> list[str]:
     """arXiv ids anywhere in the result.
 
@@ -264,6 +288,7 @@ class FreeSQLSystem:
         ]
         started = time.time()
         touched: set[str] = set()
+        entities: set[str] = set()
         calls = prompt_tokens = completion_tokens = 0
         rounds = 0
         # EVERY query and what it returned. Without this, "free SQL lost" is
@@ -287,7 +312,7 @@ class FreeSQLSystem:
                 if not tool_calls:
                     return Answer(
                         text=choice.content or "", answered=bool(choice.content),
-                        papers=sorted(touched), steps=steps,
+                        papers=sorted(touched), steps=steps, entity_ids=sorted(entities),
                         llm_calls=calls, rounds=rounds,
                         prompt_tokens=prompt_tokens, completion_tokens=completion_tokens,
                         seconds=time.time() - started)
@@ -306,6 +331,7 @@ class FreeSQLSystem:
                     query = args.get("query", "")
                     result = run_sql(self._conn, query)
                     touched.update(papers_in(result))
+                    entities.update(entities_in(result))
                     steps.append({
                         "tool": "sql", "round": rounds, "args": {"query": query},
                         "rows": len(result.rows), "error": result.error or None,
@@ -316,13 +342,13 @@ class FreeSQLSystem:
                                      "content": result.render()[:6000]})
         except Exception as exc:                  # noqa: BLE001
             return Answer(text="", answered=False, seconds=time.time() - started,
-                          papers=sorted(touched), steps=steps,
+                          papers=sorted(touched), steps=steps, entity_ids=sorted(entities),
                           llm_calls=calls, rounds=rounds,
                           error=f"{type(exc).__name__}: {exc}")
 
         # Out of rounds with no prose. Not an error -- it looked and never
         # concluded, which is a real behaviour and should score as one.
-        return Answer(text="", answered=False, papers=sorted(touched), steps=steps,
+        return Answer(text="", answered=False, papers=sorted(touched), steps=steps, entity_ids=sorted(entities),
                       llm_calls=calls, rounds=self._max_rounds,
                       prompt_tokens=prompt_tokens, completion_tokens=completion_tokens,
                       seconds=time.time() - started)
