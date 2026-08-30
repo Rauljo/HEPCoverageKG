@@ -116,12 +116,34 @@ def _accents(text: str) -> str:
 
 
 def _scripts(text: str) -> str:
-    """`_{x}` and `^{x}` to real sub/sup tags, braced or bare."""
+    """`_{x}` and `^{x}` to real sub/sup tags. BRACED ONLY.
+
+    The bare forms were handled too and had to be removed. A field can mix
+    English with maths -- the value rows read "what signal efficiency does the
+    pT^miss cut retain?  WE ANSWER: $p_{\mathrm{T}}^{\text{miss}}<40$..." -- and
+    a bare rule cannot tell the prose `^m` from the maths one. It turned
+    "pT^miss" into "pT<sup>m</sup>iss": markup damage on the half of the string
+    that had no markup.
+
+    Braced scripts are the ones LaTeX actually writes. A bare `p_T` survives as
+    "p_T", which reads fine and is what the paper's own plain-text rendering
+    would show anyway.
+    """
     text = re.sub(r"_\{([^{}]*)\}", r"<sub>\1</sub>", text)
     text = re.sub(r"\^\{([^{}]*)\}", r"<sup>\1</sup>", text)
-    text = re.sub(r"_([A-Za-z0-9])", r"<sub>\1</sub>", text)
-    text = re.sub(r"\^([A-Za-z0-9])", r"<sup>\1</sup>", text)
     return text
+
+
+def looks_like_latex(text: str) -> bool:
+    """Whether a string is worth running through the converter.
+
+    Question text is ENGLISH and writes notation in plain ASCII: "what signal
+    efficiency does the pT^miss < 40 GeV cut retain?". Run that through the
+    maths rules and `^m` becomes a superscript, giving "pT<sup>m</sup>iss" --
+    markup damage on a string that had no markup. So conversion is opt-in on
+    evidence of LaTeX, not applied to everything with a caret in it.
+    """
+    return "$" in text or "\\" in text
 
 
 def to_html(text: str) -> str:
@@ -162,4 +184,14 @@ def to_html(text: str) -> str:
     out = re.sub(r"\\([a-zA-Z]+)", r"\1", out)
     # Braces that survived carried grouping, not content.
     out = re.sub(r"[{}]", "", out)
-    return re.sub(r"\s{2,}", " ", out).strip()
+
+    # PARAGRAPH BREAKS SURVIVE. The value rows put our answer inside the
+    # question -- "...cut retain?\n\nWE ANSWER: ...\n\nIs that correct?" -- and
+    # collapsing every run of whitespace would fuse the three parts into one
+    # paragraph, which is the readability problem this file exists to fix.
+    # Quotes are already single-line by then, so they are unaffected.
+    out = re.sub(r"[ \t]*\n[ \t]*\n[ \t]*", "\x00\x00", out)
+    out = re.sub(r"[ \t]*\n[ \t]*", "\x00", out)
+    out = re.sub(r"[ \t]{2,}", " ", out)
+    out = out.replace("\x00\x00", "<br><br>").replace("\x00", "<br>")
+    return out.strip()

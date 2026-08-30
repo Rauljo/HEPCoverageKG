@@ -257,7 +257,7 @@ function render(){
       const grp = ITEMS.filter(x => x.qid === it.qid);
       html += `<h2>${esc(it.qid)} <span class="qprog" id="qp-${esc(it.qid)}"></span></h2>`;
       const shared = new Set(grp.map(x => x.question)).size === 1;
-      if(shared) html += `<div class="qtext">${esc(it.question)}</div>`;
+      if(shared) html += `<div class="qtext">${it.question}</div>`;
     }
     const shared = ITEMS.filter(x => x.qid === it.qid);
     const perItem = new Set(shared.map(x => x.question)).size !== 1;
@@ -274,7 +274,7 @@ function render(){
     }
     html += `<article class="item" id="it-${it.row}" data-idx="${idx}">
       <div class="meta"><span>#${it.row}</span><span class="pid">${esc(it.paper_id)}</span></div>
-      ${perItem ? `<div class="peritem">${esc(it.question)}</div>` : ""}
+      ${perItem ? `<div class="peritem">${it.question}</div>` : ""}
       ${ev}
       <div class="acts">
         <button class="v" data-v="yes"    data-row="${it.row}">Yes</button>
@@ -491,12 +491,22 @@ def write_app(items: list[dict], path: Path | str, title: str,
     # `latex_html.to_html` escapes the text FIRST and only then adds sub/sup, so
     # what comes back is safe to insert without escaping again -- which is why
     # the template drops `esc()` on these two fields and only these two.
-    from .latex_html import to_html
+    from .latex_html import looks_like_latex, to_html
+
+    def render_field(value: str) -> str:
+        """LaTeX gets converted; plain English gets escaped and left alone."""
+        import html as _html
+        text = value or ""
+        if looks_like_latex(text):
+            return to_html(text)
+        # Newlines still have to survive: the value rows put our answer inside
+        # the question, separated by blank lines.
+        return _html.escape(text).replace("\n\n", "<br><br>").replace("\n", "<br>")
 
     payload = []
     for i in items:
         quotes = i.get("quotes") or ([i["quote"]] if i.get("quote") else [])
-        quotes = [to_html(q) for q in quotes]
+        quotes = [render_field(q) for q in quotes]
         if i["_judge"] is True:
             verdict = "Our model said this DOES answer the question."
         elif i["_judge"] is False:
@@ -510,8 +520,8 @@ def write_app(items: list[dict], path: Path | str, title: str,
             verdict = "Our model found no evidence here; the sentences above were retrieved for you."
         payload.append({
             "row": i["row"], "qid": i["qid"], "paper_id": i["paper_id"],
-            "question": i["question"], "quotes": quotes,
-            "candidates": [to_html(c) for c in (i.get("candidates") or [])],
+            "question": render_field(i["question"]), "quotes": quotes,
+            "candidates": [render_field(c) for c in (i.get("candidates") or [])],
             "judge": i["_judge"],
             # base64 so an accidental View Source does not spoil the blinding.
             # Not security -- anyone determined can decode it -- just a guard
