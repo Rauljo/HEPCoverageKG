@@ -265,10 +265,10 @@ function render(){
     if(it.quotes && it.quotes.length){
       if(it.quotes.length > 1)
         ev += `<div class="nolead">${it.quotes.length} sentences bearing on this question:</div>`;
-      ev += it.quotes.map(q => `<div class="ev">${esc(q)}</div>`).join("");
+      ev += it.quotes.map(q => `<div class="ev">${q}</div>`).join("");
     }else if(it.candidates && it.candidates.length){
       ev += `<div class="nolead">We found no evidence. The closest sentences in this paper were:</div>`;
-      ev += it.candidates.map(q => `<div class="ev">${esc(q)}</div>`).join("");
+      ev += it.candidates.map(q => `<div class="ev">${q}</div>`).join("");
     }else{
       ev += `<div class="nolead">We found no evidence, and nothing in this paper looked close.</div>`;
     }
@@ -485,9 +485,18 @@ def write_app(items: list[dict], path: Path | str, title: str,
     believed he was finished, and we would have waited on answers already sitting
     in his Downloads folder.
     """
+    # THE PAPER'S MATHS, RENDERED. 70 of batch 2's 104 rows carry a maths span,
+    # and raw LaTeX makes the reviewer do the typesetting himself before he can
+    # judge anything: `$p_{\mathrm{T}}^{\text{miss}}$` instead of p_T^miss.
+    # `latex_html.to_html` escapes the text FIRST and only then adds sub/sup, so
+    # what comes back is safe to insert without escaping again -- which is why
+    # the template drops `esc()` on these two fields and only these two.
+    from .latex_html import to_html
+
     payload = []
     for i in items:
         quotes = i.get("quotes") or ([i["quote"]] if i.get("quote") else [])
+        quotes = [to_html(q) for q in quotes]
         if i["_judge"] is True:
             verdict = "Our model said this DOES answer the question."
         elif i["_judge"] is False:
@@ -502,7 +511,7 @@ def write_app(items: list[dict], path: Path | str, title: str,
         payload.append({
             "row": i["row"], "qid": i["qid"], "paper_id": i["paper_id"],
             "question": i["question"], "quotes": quotes,
-            "candidates": i.get("candidates") or [],
+            "candidates": [to_html(c) for c in (i.get("candidates") or [])],
             "judge": i["_judge"],
             # base64 so an accidental View Source does not spoil the blinding.
             # Not security -- anyone determined can decode it -- just a guard
