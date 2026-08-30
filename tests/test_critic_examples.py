@@ -76,3 +76,35 @@ def test_keep_examples_are_carried_too(tmp_path):
 
 def test_no_disagreements_renders_to_nothing():
     assert ce.render([]) == ""
+
+
+def test_only_the_SMALL_critic_gets_the_examples(monkeypatch):
+    """They are the 72B's own judgements. Showing them to the 72B would be
+    showing it its own answers -- it measures nothing, and it would quietly
+    contaminate the arm this is meant to be compared against."""
+    from hepcoveragekg.query import critic, planner
+    monkeypatch.setenv("CRITIC_EXAMPLES", "1")
+    monkeypatch.setenv("CRITIC_EXAMPLES_SMALL", "eval/runs/conceptb-arms/*53972*.jsonl")
+    monkeypatch.setenv("CRITIC_EXAMPLES_BIG", "eval/runs/conceptb-arms/*53970*.jsonl")
+    planner._CRITIC_EXAMPLES = None
+    assert planner._critic_prompt(False) is None, "the 72B uses the full PROMPT"
+    small = planner._critic_prompt(True)
+    assert small and len(small) > len(critic.SMALL_PROMPT)
+
+
+def test_the_arm_is_off_without_its_variable(monkeypatch):
+    from hepcoveragekg.query import critic, planner
+    monkeypatch.delenv("CRITIC_EXAMPLES", raising=False)
+    planner._CRITIC_EXAMPLES = None
+    assert planner._critic_prompt(True) == critic.SMALL_PROMPT
+
+
+def test_a_missing_run_file_does_not_kill_the_run(monkeypatch):
+    """The examples are an optimisation. A run that cannot find them should
+    judge without them, not crash forty minutes in."""
+    from hepcoveragekg.query import critic, planner
+    monkeypatch.setenv("CRITIC_EXAMPLES", "1")
+    monkeypatch.setenv("CRITIC_EXAMPLES_SMALL", "/nonexistent/*.jsonl")
+    monkeypatch.setenv("CRITIC_EXAMPLES_BIG", "/nonexistent/*.jsonl")
+    planner._CRITIC_EXAMPLES = None
+    assert planner._critic_prompt(True) == critic.SMALL_PROMPT

@@ -1296,6 +1296,40 @@ def _step_by_ref(session: "Session", ref: str):
     return matches[-1] if matches else None
 
 
+#: Mined disagreements appended to the small critic's prompt, computed once.
+#: Reading the run files on every judged chunk would re-parse megabytes 48% of
+#: the time -- the critic's share of all calls.
+_CRITIC_EXAMPLES: Optional[str] = None
+
+
+def _critic_prompt(small: bool) -> Optional[str]:
+    """The small critic's prompt, with mined examples when the arm is on.
+
+    Only the SMALL one gets them. They are the 72B's own judgements, so giving
+    them to the 72B would be showing it its own answers -- which measures
+    nothing and would quietly contaminate the arm it is meant to be compared
+    against.
+    """
+    global _CRITIC_EXAMPLES
+    from hepcoveragekg.query import critic as critic_mod
+
+    if not small:
+        return None
+    if not os.environ.get("CRITIC_EXAMPLES"):
+        return critic_mod.SMALL_PROMPT
+    if _CRITIC_EXAMPLES is None:
+        import glob
+
+        from hepcoveragekg.query import critic_examples as ce
+        small_runs = glob.glob(os.environ.get("CRITIC_EXAMPLES_SMALL", "") or "")
+        big_runs = glob.glob(os.environ.get("CRITIC_EXAMPLES_BIG", "") or "")
+        try:
+            _CRITIC_EXAMPLES = ce.render(ce.disagreements(small_runs, big_runs))
+        except Exception:              # a missing run file must not kill a run
+            _CRITIC_EXAMPLES = ""
+    return critic_mod.SMALL_PROMPT + (_CRITIC_EXAMPLES or "")
+
+
 def _critic_client():
     """The endpoint the CRITIC talks to, which need not be the planner's.
 
@@ -1402,7 +1436,7 @@ def _build_critic(question: str, session: Session, use_critic, seed=None):
             small = bool(os.environ.get("CRITIC_BASE_URL"))
             return critic_mod.judge_candidates(
                 chat, question, search_text, hits, seed=seed,
-                prompt=critic_mod.SMALL_PROMPT if small else None)
+                prompt=_critic_prompt(small))
 
     def _chat(messages):
         return client.chat.completions.create(
