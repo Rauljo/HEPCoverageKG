@@ -332,7 +332,19 @@ def execute(state: PlannerState, config=None) -> PlannerState:
             session.answerable = bool(args.get("answerable", True))
             session.reason = claimed
             session.stopped_because = f"answered ({claimed})"
-            planner.resolve_citations(session, args, _papers_resolver(runtime))
+            if runtime.get("simple_answer"):
+                # A literal list, so there is nothing to resolve: what the model
+                # wrote IS the citation. Malformed ids are dropped rather than
+                # trusted -- the same rule the free-SQL control uses.
+                import re as _re
+                asserted = [str(x).strip() for x in (args.get("papers") or [])]
+                asserted = [x for x in asserted
+                            if _re.fullmatch(r"\d{4}\.\d{4,5}", x)]
+                if asserted:
+                    session.answer_papers = sorted(asserted)
+                    session.cited = "answer.papers"
+            else:
+                planner.resolve_citations(session, args, _papers_resolver(runtime))
             # A refused citation is corrected once, like an invented id: the
             # model gets told why and can narrow the set or state the number.
             if session.citation_refused and not session.citation_corrected:

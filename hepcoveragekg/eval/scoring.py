@@ -16,6 +16,7 @@ computed over 12 of 200 records cannot masquerade as an overall result.
 """
 from __future__ import annotations
 
+import json
 import re
 from typing import Callable, Iterable, Optional
 
@@ -407,6 +408,75 @@ _RETRIEVING_TOOLS = {"search", "describe", "subjects_of", "papers_of", "contents
                      "count", "list", "compare", "crosstab", "quotes"}
 
 
+def process(q: Question, a: Answer) -> Optional[dict]:
+    """HOW it got there, not what it got. Label-free, so it applies everywhere.
+
+    Everything else in this file scores the destination -- did the answer name
+    the right papers, was the count right -- or the bill. Nothing scores the
+    journey, and the journey is where the systems visibly differ: sol runs 15
+    tool calls across 6 rounds, Qwen runs 3 across 3, and both can land on the
+    same F1 while doing something completely different.
+
+    S-49 parked tool-SELECTION accuracy because it needs an expected tool per
+    question. These five need nothing but the trace, which is why they can run
+    on every record already stored:
+
+      productive     fraction of calls that returned any rows. A plan of eight
+                     calls where six come back empty is not a thorough plan, it
+                     is a lost one.
+      recovered      after an EMPTY call, did the next one differ in more than
+                     its arguments? Measured across the stored arms, 29% of
+                     empty results were followed by nothing at all and 24% by
+                     the same tool and predicate again.
+      redundant      exact repeats. The duplicate guard now answers these from
+                     the record, but a model that keeps proposing them is
+                     telling us it has not understood the reply.
+      breadth        distinct tools used. One tool eight times is a different
+                     failure from eight tools once, and `tool_calls` alone
+                     cannot tell them apart.
+      stopped_early  answered while holding rounds AND having searched once.
+                     The behaviour `--push-further` targets, measured rather
+                     than assumed.
+    """
+    if not a.has_trace:
+        return None
+    steps = a.steps
+    n = len(steps)
+    productive = sum(1 for s in steps if (s.get("rows") or 0) > 0)
+
+    seen: set = set()
+    redundant = 0
+    for s in steps:
+        key = (s.get("tool"), json.dumps(s.get("args") or {}, sort_keys=True, default=str))
+        if key in seen:
+            redundant += 1
+        seen.add(key)
+
+    empties = [i for i, s in enumerate(steps)
+               if not s.get("error") and (s.get("rows") or 0) == 0]
+    recovered = 0
+    for i in empties:
+        nxt = steps[i + 1] if i + 1 < n else None
+        if nxt is None:
+            continue
+        # A different tool, or the same tool aimed somewhere genuinely else.
+        if (nxt.get("tool") != steps[i].get("tool")
+                or (nxt.get("args") or {}).get("predicate")
+                != (steps[i].get("args") or {}).get("predicate")):
+            recovered += 1
+
+    searches = sum(1 for s in steps if s.get("tool") == "search" and not s.get("error"))
+    out = {
+        "productive": productive / n if n else 0.0,
+        "redundant": float(redundant),
+        "breadth": float(len({s.get("tool") for s in steps})),
+        "stopped_early": 1.0 if (searches <= 1 and a.rounds and a.rounds < 5) else 0.0,
+    }
+    if empties:
+        out["recovered_after_empty"] = recovered / len(empties)
+    return out
+
+
 def tool_use(q: Question, a: Answer) -> Optional[dict]:
     """Shape of the plan: how many calls, how many failed, did it retrieve.
 
@@ -434,7 +504,8 @@ def tool_use(q: Question, a: Answer) -> Optional[dict]:
 def default_scorers() -> list[Scorer]:
     return [cost, responded, faithfulness, exact_count, set_f1, judged_set_f1,
             retrieval_reach, claimed_count,
-            known_positive_recall, label_recall, entity_retrieved, tool_use]
+            known_positive_recall, label_recall, entity_retrieved, tool_use,
+            process]
 
 
 def score_all(q: Question, a: Answer, scorers: Iterable[Scorer]) -> dict:

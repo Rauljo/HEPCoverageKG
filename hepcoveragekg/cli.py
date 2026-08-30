@@ -496,6 +496,17 @@ def _cmd_eval(args) -> int:
     # --- run ---------------------------------------------------------------
     from hepcoveragekg.eval import free_sql
 
+    def _fewshot_block(a):
+        if not getattr(a, "fewshot", None):
+            return ""
+        from hepcoveragekg.eval import questions as _q
+        from hepcoveragekg.query import fewshot as _fs
+        scored = {x.qid for x in _q.load(a.questions)}
+        pool = _fs.candidates(a.fewshot)
+        chosen = _fs.select(pool, scored)
+        return _fs.render(chosen, with_plan=bool(getattr(a, "fewshot_plan", False)))
+
+
     if args.system == "stub":
         system = systems.StubSystem()
     elif args.system == "free-sql":
@@ -523,6 +534,8 @@ def _cmd_eval(args) -> int:
             force_critic_set=args.force_critic_set,
             persist=args.persist,
             push_further=args.push_further,
+            simple_answer=args.simple_answer,
+            fewshot=_fewshot_block(args),
         )
     else:
         print(f"unknown system {args.system!r}", file=sys.stderr)
@@ -701,6 +714,16 @@ def build_parser() -> argparse.ArgumentParser:
     p_eval.add_argument("--force-critic-set", action="store_true",
                         help="planner: substitute the critic's kept set wherever "
                              "a raw search set is passed to a tool")
+    p_eval.add_argument("--simple-answer", action="store_true",
+                        help="planner: answer with a literal list of arXiv ids "
+                             "instead of naming a set in `papers_from`")
+    p_eval.add_argument("--fewshot", default=None,
+                        help="planner: a run file to harvest worked examples "
+                             "from. Refuses any drawn from the questions being "
+                             "scored")
+    p_eval.add_argument("--fewshot-plan", action="store_true",
+                        help="planner: exemplars show the PLAN as well as the "
+                             "answer (default: answer only)")
     p_eval.add_argument("--push-further", action="store_true",
                         help="planner: when it ANSWERS after one search with "
                              "rounds to spare, offer one untried route first. "

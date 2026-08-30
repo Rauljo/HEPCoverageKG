@@ -435,7 +435,34 @@ V2_ANSWER_FIELDS = ("papers_from", "value_from")
 V3_ANSWER_FIELDS = ("papers_from",)
 
 
-def tools_for(answer_contract: bool = False, contract: str = "") -> list[dict]:
+#: The literal-list answer field, replacing `papers_from`'s indirect reference.
+#:
+#: WHY THIS EXISTS. `papers_from` names a SET created earlier in the run --
+#: "set_1_kept" -- so the model must remember which set was saved when, and that
+#: the critic's filtered copy is the one holding the answer. That is a reference
+#: to internal state. free-SQL's tool just takes the ids.
+#:
+#: Measured on gpt-5.6-sol, same model and same eight questions on one
+#: afternoon: typed 0.287 with named_none 0.917, free-SQL 0.669 with
+#: named_none 0.000. The typed run had the BETTER process -- 0.991 of calls
+#: productive against 0.990, 3.96 distinct tools against 2.00, never stopping
+#: early -- and lost it at the handoff.
+#:
+#: So this separates two very different conclusions that the data cannot
+#: currently tell apart: "typed retrieval is worse than SQL" and "typed
+#: retrieval is fine and our answer contract is awkward".
+SIMPLE_ANSWER_FIELD = {
+    "papers": {
+        "type": "array",
+        "items": {"type": "string"},
+        "description": ("the arXiv ids this answer asserts, e.g. "
+                        "['2106.01676', '2001.06899']. Write them out."),
+    }
+}
+
+
+def tools_for(answer_contract: bool = False, contract: str = "",
+              simple_answer: bool = False) -> list[dict]:
     """The tool schemas for one run.
 
     `contract` is "v1" (default), "v2" (everything) or "v3" (the lean version).
@@ -455,6 +482,14 @@ def tools_for(answer_contract: bool = False, contract: str = "") -> list[dict]:
             for field_name in V2_ANSWER_FIELDS:
                 if field_name not in keep:
                     spec["parameters"]["properties"].pop(field_name, None)
+            if simple_answer:
+                # Swap the indirect reference for a literal list. `papers_from`
+                # goes, so the two cannot both be offered -- a model given both
+                # would pick one arbitrarily and the arm would measure nothing.
+                spec["parameters"]["properties"].pop("papers_from", None)
+                spec["parameters"]["properties"].update(SIMPLE_ANSWER_FIELD)
+                spec["parameters"]["properties"]["text"]["description"] = (
+                    "the answer, in prose")
             if contract != "v1":
                 # An answer with no text is not an answer. The schema never said
                 # so -- there was no `required` array at all -- and Qwen filled
@@ -1413,7 +1448,8 @@ def _build_critic(question: str, session: Session, use_critic, seed=None):
 def _prepare(conn, index, question, max_rounds, max_places, max_rows,
              minimal_prompt, chat, thread_id, use_critic=None, critic_seed=None,
              answer_contract=False, contract="", force_critic_set=False,
-             persist=False, push_further=False):
+             persist=False, push_further=False, simple_answer=False,
+             fewshot=""):
     """The state and runtime config a run needs. Shared by answer() and stream()."""
     session = Session(question=question)
     if chat is None:
@@ -1434,7 +1470,8 @@ def _prepare(conn, index, question, max_rounds, max_places, max_rows,
     state = {
         "question": question,
         "messages": [
-            {"role": "system", "content": system_prompt(conn, minimal_prompt)},
+            {"role": "system",
+             "content": system_prompt(conn, minimal_prompt) + (fewshot or "")},
             {"role": "user", "content": question},
         ],
         "session": session,
@@ -1452,7 +1489,7 @@ def _prepare(conn, index, question, max_rounds, max_places, max_rows,
                                   answer_contract=answer_contract,
                                   force_critic_set=force_critic_set),
         "tools": [{"type": "function", "function": spec}
-                  for spec in tools_for(answer_contract, contract)],
+                  for spec in tools_for(answer_contract, contract, simple_answer)],
     }
     # WHICH CONTRACT, not "was the v2 flag passed". These are not the same
     # thing and the difference silently disabled half of v3.
@@ -1474,6 +1511,7 @@ def _prepare(conn, index, question, max_rounds, max_places, max_rows,
     # falls is a system fabricating coverage, not finding it.
     runtime["persist"] = bool(persist)
     runtime["push_further"] = bool(push_further)
+    runtime["simple_answer"] = bool(simple_answer)
     config = {"configurable": runtime, "recursion_limit": max_rounds * 3 + 6}
     return session, state, config
 
@@ -1496,6 +1534,8 @@ def stream(
     force_critic_set: bool = False,
     persist: bool = False,
     push_further: bool = False,
+    simple_answer: bool = False,
+    fewshot: str = "",
 ):
     """Yield `(node_name, session)` after each node completes.
 
@@ -1509,7 +1549,8 @@ def stream(
                                       max_places, max_rows, minimal_prompt,
                                       chat, thread_id, use_critic, critic_seed,
                                       answer_contract, contract, force_critic_set,
-                                      persist, push_further)
+                                      persist, push_further, simple_answer,
+                                      fewshot)
     started = time.perf_counter()
     app = graph_module.build(checkpointer=checkpointer)
     for update in app.stream(state, config=config, stream_mode="updates"):
@@ -1537,6 +1578,8 @@ def answer(
     force_critic_set: bool = False,
     persist: bool = False,
     push_further: bool = False,
+    simple_answer: bool = False,
+    fewshot: str = "",
 ) -> Session:
     """Answer one question, returning the answer and the whole trace.
 
@@ -1558,7 +1601,8 @@ def answer(
                                       max_places, max_rows, minimal_prompt,
                                       chat, thread_id, use_critic, critic_seed,
                                       answer_contract, contract, force_critic_set,
-                                      persist, push_further)
+                                      persist, push_further, simple_answer,
+                                      fewshot)
     graph_module.build(checkpointer=checkpointer).invoke(state, config=config)
 
     session.seconds = time.perf_counter() - started
