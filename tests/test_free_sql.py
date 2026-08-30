@@ -180,7 +180,7 @@ def test_it_only_offers_search_when_it_has_an_index(conn):
     same-raw-materials control. The config has to say which ran."""
     chat, state = _scripted([None])
     F.FreeSQLSystem(conn, chat=chat).answer(Question(qid="q", text="x"))
-    assert state["offered"] == ["sql"]
+    assert state["offered"] == ["sql", "answer"], "no index -> no search tool"
     assert F.FreeSQLSystem(conn, chat=chat).config["tools"] == ["sql"]
 
 
@@ -224,3 +224,56 @@ def test_the_worked_examples_teach_the_join_path_that_actually_works(conn):
     assert "entity_occurrence" in prompt
     assert "entity_canonical" in prompt, "0 of 241 queries used it"
     assert "GROUP BY kind" in prompt
+
+
+# --------------------------------------------------------------------------
+# terminating, and being able to cite
+# --------------------------------------------------------------------------
+
+def test_the_last_round_offers_only_answer(conn):
+    """The planner got this fix and this loop did not, which is why
+    deepseek-v4-flash scored 0.000 here while scoring 0.512 on the planner:
+    6 of 6 rounds every question, 51 papers retrieved by SQL, no answer written.
+    A control that is the only side able to run out of turns holding the answer
+    is not a fair control."""
+    offered = []
+
+    def chat(messages, tools):
+        offered.append([t["function"]["name"] for t in tools])
+        call = type("T", (), {"id": "1", "function": type("F", (), {
+            "name": "sql", "arguments": json.dumps({"query": "SELECT arxiv_id FROM paper"})})()})()
+        return type("R", (), {"choices": [type("C", (), {"message": type("M", (), {
+            "content": "", "tool_calls": [call]})()})()], "usage": None})()
+
+    F.FreeSQLSystem(conn, chat=chat, max_rounds=3).answer(Question(qid="q", text="x"))
+    assert offered[-1] == ["answer"], f"last round offered {offered[-1]}"
+    assert "answer" in offered[0] and "sql" in offered[0], "earlier rounds keep both"
+
+
+def test_it_can_cite_the_papers_it_asserts(conn):
+    """`papers` is the control's equivalent of the planner's `papers_from`.
+    Without it the control would have to retype ids while the planner cites a
+    set, and D-080 credits a citation."""
+    def chat(messages, tools):
+        call = type("T", (), {"id": "1", "function": type("F", (), {
+            "name": "answer", "arguments": json.dumps({
+                "text": "Two analyses do this.",
+                "papers": ["2106.01676", "2001.06899"]})})()})()
+        return type("R", (), {"choices": [type("C", (), {"message": type("M", (), {
+            "content": "", "tool_calls": [call]})()})()], "usage": None})()
+
+    a = F.FreeSQLSystem(conn, chat=chat).answer(Question(qid="q", text="x"))
+    assert a.answered and a.cited == "answer.papers"
+    assert a.papers == ["2001.06899", "2106.01676"], "the ASSERTED ids, not the footprint"
+
+
+def test_a_malformed_paper_id_is_dropped_not_trusted(conn):
+    def chat(messages, tools):
+        call = type("T", (), {"id": "1", "function": type("F", (), {
+            "name": "answer", "arguments": json.dumps({
+                "text": "x", "papers": ["2106.01676", "not-an-id", ""]})})()})()
+        return type("R", (), {"choices": [type("C", (), {"message": type("M", (), {
+            "content": "", "tool_calls": [call]})()})()], "usage": None})()
+
+    a = F.FreeSQLSystem(conn, chat=chat).answer(Question(qid="q", text="x"))
+    assert a.papers == ["2106.01676"]

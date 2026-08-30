@@ -56,6 +56,27 @@ STATEMENT_SECONDS = 15.0
 # WITH cannot be a write in SQLite. The barrier was never the regex.
 _READ_ONLY = re.compile(r"^\s*(select|with)\b", re.I)
 
+ANSWER_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "answer",
+        "description": (
+            "Give the final answer and stop. Put the arXiv ids you are asserting "
+            "in `papers` -- that is what gets scored, so an answer that describes "
+            "the right papers without listing them cannot be credited."),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string", "description": "the answer, in prose"},
+                "papers": {"type": "array", "items": {"type": "string"},
+                           "description": "the arXiv ids the answer asserts, e.g. "
+                                          "['2106.01676', '2001.06899']"},
+            },
+            "required": ["text"],
+        },
+    },
+}
+
 SEARCH_TOOL = {
     "type": "function",
     "function": {
@@ -430,7 +451,20 @@ class FreeSQLSystem:
 
         try:
             for rounds in range(1, self._max_rounds + 1):
-                tools = [SQL_TOOL] + ([SEARCH_TOOL] if self._index is not None else [])
+                tools = ([SQL_TOOL, ANSWER_TOOL]
+                         + ([SEARCH_TOOL] if self._index is not None else []))
+                # THE LAST ROUND IS FOR ANSWERING. The planner got this fix and
+                # this loop did not, which is why deepseek-v4-flash scored 0.000
+                # here while scoring 0.512 on the planner: 6 of 6 rounds on every
+                # question, 51 papers retrieved by SQL, and no answer written.
+                # The control cannot be a fair control if it is the only side
+                # that can run out of turns holding the answer.
+                if rounds >= self._max_rounds:
+                    tools = [ANSWER_TOOL]
+                    messages.append({"role": "user", "content": (
+                        f"Round {rounds} of {self._max_rounds} -- your last. No "
+                        "more queries: answer now from what you already have, "
+                        "and put the arXiv ids in `papers`.")})
                 reply = chat(messages, tools)
                 calls += 1
                 usage = getattr(reply, "usage", None)
@@ -473,6 +507,23 @@ class FreeSQLSystem:
                         args = json.loads(call.function.arguments or "{}")
                     except ValueError:
                         args = {}
+                    if call.function.name == "answer":
+                        asserted = [str(x).strip() for x in (args.get("papers") or [])]
+                        asserted = [x for x in asserted if re.fullmatch(r"\d{4}\.\d{4,5}", x)]
+                        return Answer(
+                            text=str(args.get("text") or ""),
+                            answered=bool(str(args.get("text") or "").strip() or asserted),
+                            # What it ASSERTED, not what its queries touched. The
+                            # planner's `papers_from` cites a set; this is the
+                            # same gesture, and without it the control would be
+                            # forced to retype ids while the planner is not.
+                            papers=sorted(asserted) if asserted else sorted(touched),
+                            cited="answer.papers" if asserted else "",
+                            steps=steps, entity_ids=sorted(entities),
+                            llm_calls=calls, rounds=rounds,
+                            prompt_tokens=prompt_tokens,
+                            completion_tokens=completion_tokens,
+                            seconds=time.time() - started)
                     if call.function.name == "search":
                         body, hits = self._search(args)
                         entities.update(hits)
