@@ -100,3 +100,16 @@ def test_the_cli_reads_the_question_file_from_the_right_attribute():
     parser.add_argument("path", nargs="?")
     ns = parser.parse_args(["run", "q.jsonl"])
     assert ns.path == "q.jsonl"
+
+
+def test_asking_for_fewshot_and_getting_none_is_an_ERROR_not_a_no_op(tmp_path):
+    """Three arms in a row measured nothing while looking like clean nulls: the
+    block came back empty and the run proceeded as baseline, matching it to
+    three decimals. An empty block has to stop the run."""
+    import argparse
+
+    from hepcoveragekg import cli
+    src = inspect_source = __import__("inspect").getsource(cli._cmd_eval)
+    assert "Refusing to run an" in src, "an empty few-shot block must raise"
+    assert '"judged_f1", "set_f1", "count_correct"' in src, \
+        "a run predating Gabriel's gold has no judged_f1; try every metric"

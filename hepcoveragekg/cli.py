@@ -505,9 +505,27 @@ def _cmd_eval(args) -> int:
         # first attempt, which crashed every few-shot arm AFTER the index
         # had been built -- three arms produced a header and no numbers.
         scored = {x.qid for x in _q.load(a.path)}
-        pool = _fs.candidates(a.fewshot)
+        # TRY EVERY METRIC. A run predating Gabriel's gold carries no judged_f1
+        # at all, so defaulting to it found zero candidates and produced an empty
+        # block -- and an empty block is a baseline run wearing an arm's name.
+        # Two few-shot arms came back identical to baseline in every metric
+        # before anyone noticed.
+        pool = []
+        for metric in ("judged_f1", "set_f1", "count_correct"):
+            pool = _fs.candidates(a.fewshot, metric=metric)
+            if pool:
+                break
         chosen = _fs.select(pool, scored)
-        return _fs.render(chosen, with_plan=bool(getattr(a, "fewshot_plan", False)))
+        block = _fs.render(chosen, with_plan=bool(getattr(a, "fewshot_plan", False)))
+        if not block:
+            # LOUD. Asking for few-shot and silently getting none is how three
+            # arms in a row measured nothing while looking like clean nulls.
+            raise SystemExit(
+                f"--fewshot {a.fewshot} yielded no usable examples: no record "
+                f"scored above {_fs.MIN_SCORE} on judged_f1, set_f1 or "
+                f"count_correct outside the evaluation set. Refusing to run an "
+                f"arm that would be identical to baseline.")
+        return block
 
 
     if args.system == "stub":
