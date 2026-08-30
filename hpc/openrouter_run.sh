@@ -91,11 +91,13 @@ case "${SYSTEM:-planner}" in
   free-sql)
     echo "system  : free-sql (SQL + search, no critic)"
     .venv/bin/python -m hepcoveragekg.cli eval run "$QUESTIONS" \
-        --system free-sql --repeats "$REPEATS" ;;
+        --system free-sql --repeats "$REPEATS" \
+        --max-rounds "${MAX_ROUNDS:-6}" ;;
   planner)
     echo "system  : planner (typed tools, contract v3, critic on)"
     .venv/bin/python -m hepcoveragekg.cli eval run "$QUESTIONS" \
         --system planner --repeats "$REPEATS" \
+        --max-rounds "${MAX_ROUNDS:-6}" \
         --contract v3 --critic --critic-seed 20260815 ;;
   *) echo "unknown SYSTEM=${SYSTEM}"; exit 2 ;;
 esac
