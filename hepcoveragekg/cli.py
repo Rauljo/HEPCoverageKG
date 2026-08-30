@@ -536,6 +536,7 @@ def _cmd_eval(args) -> int:
             push_further=args.push_further,
             simple_answer=args.simple_answer,
             fewshot=_fewshot_block(args),
+            tool_examples=args.tool_examples,
         )
     else:
         print(f"unknown system {args.system!r}", file=sys.stderr)
@@ -714,6 +715,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_eval.add_argument("--force-critic-set", action="store_true",
                         help="planner: substitute the critic's kept set wherever "
                              "a raw search set is passed to a tool")
+    p_eval.add_argument("--tool-examples", action="store_true",
+                        help="planner: attach one real worked call per tool, "
+                             "mined from runs that answered correctly")
     p_eval.add_argument("--simple-answer", action="store_true",
                         help="planner: answer with a literal list of arXiv ids "
                              "instead of naming a set in `papers_from`")

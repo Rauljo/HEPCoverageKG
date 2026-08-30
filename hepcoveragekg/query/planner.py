@@ -1445,11 +1445,16 @@ def _build_critic(question: str, session: Session, use_critic, seed=None):
     return review
 
 
+def _tool_example_block(answer_contract, contract, simple_answer) -> str:
+    from hepcoveragekg.query import tool_examples as te
+    return te.render(tools_for(answer_contract, contract, simple_answer))
+
+
 def _prepare(conn, index, question, max_rounds, max_places, max_rows,
              minimal_prompt, chat, thread_id, use_critic=None, critic_seed=None,
              answer_contract=False, contract="", force_critic_set=False,
              persist=False, push_further=False, simple_answer=False,
-             fewshot=""):
+             fewshot="", tool_examples=False):
     """The state and runtime config a run needs. Shared by answer() and stream()."""
     session = Session(question=question)
     if chat is None:
@@ -1471,7 +1476,11 @@ def _prepare(conn, index, question, max_rounds, max_places, max_rows,
         "question": question,
         "messages": [
             {"role": "system",
-             "content": system_prompt(conn, minimal_prompt) + (fewshot or "")},
+             "content": (system_prompt(conn, minimal_prompt)
+                         + (_tool_example_block(answer_contract, contract,
+                                                simple_answer)
+                            if tool_examples else "")
+                         + (fewshot or ""))},
             {"role": "user", "content": question},
         ],
         "session": session,
@@ -1536,6 +1545,7 @@ def stream(
     push_further: bool = False,
     simple_answer: bool = False,
     fewshot: str = "",
+    tool_examples: bool = False,
 ):
     """Yield `(node_name, session)` after each node completes.
 
@@ -1550,7 +1560,7 @@ def stream(
                                       chat, thread_id, use_critic, critic_seed,
                                       answer_contract, contract, force_critic_set,
                                       persist, push_further, simple_answer,
-                                      fewshot)
+                                      fewshot, tool_examples)
     started = time.perf_counter()
     app = graph_module.build(checkpointer=checkpointer)
     for update in app.stream(state, config=config, stream_mode="updates"):
@@ -1580,6 +1590,7 @@ def answer(
     push_further: bool = False,
     simple_answer: bool = False,
     fewshot: str = "",
+    tool_examples: bool = False,
 ) -> Session:
     """Answer one question, returning the answer and the whole trace.
 
@@ -1602,7 +1613,7 @@ def answer(
                                       chat, thread_id, use_critic, critic_seed,
                                       answer_contract, contract, force_critic_set,
                                       persist, push_further, simple_answer,
-                                      fewshot)
+                                      fewshot, tool_examples)
     graph_module.build(checkpointer=checkpointer).invoke(state, config=config)
 
     session.seconds = time.perf_counter() - started
