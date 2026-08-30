@@ -68,7 +68,17 @@ def main() -> int:
     conditions = RV.decomposed_condition_items(_rows(args.gf01), gf01_papers, conn=conn)
     values = RV.value_items(_rows(args.value), questions)
 
-    items = kept + conditions + values
+    # ORDERED BY WHAT A PARTIAL RETURN IS WORTH, for the same reason the probe
+    # set puts Gabriel's questions first: these get answered in file order and
+    # often not to the end.
+    #
+    #   conditions  decide whether decomposition ships (D-069). Nothing else in
+    #               the batch settles a pending decision.
+    #   splits      three reads of one passage that disagreed -- our machinery
+    #               could not resolve them, which is what an adjudicator is for.
+    #   values      he already told us the old framing was unanswerable; these
+    #               are the reframed seven, and the cheapest rows to lose.
+    items = conditions + kept + values
     for n, item in enumerate(items, 1001):
         item["row"] = n
 
