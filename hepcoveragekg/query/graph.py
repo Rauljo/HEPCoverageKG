@@ -266,10 +266,38 @@ def execute(state: PlannerState, config=None) -> PlannerState:
             # About to give up while holding rows, with rounds to spare. Offer
             # ONE concrete untried route -- see query/widen.py for why the
             # ladder is finite and why that is what stops this looping.
+            rounds_left = state["max_rounds"] - state["round"]
             widened = widen.should_widen(
-                session, reason=claimed,
-                rounds_left=state["max_rounds"] - state["round"],
+                session, reason=claimed, rounds_left=rounds_left,
                 enabled=bool(runtime.get("persist")))
+            # And the mirror case: an ANSWER reached after looking once. Qwen
+            # made exactly one search on 135 of 207 records and none on 69, then
+            # concluded -- stopping at 3.25 rounds of a budget of 6 it is never
+            # denied. The round it declines is the valuable one: 4-round runs
+            # scored count_correct 0.158 against 0.063 for 3-round runs.
+            #
+            # Its own flag, because the risk runs the other way. Pushing an
+            # abstention can only turn a refusal into an answer; pushing an
+            # ANSWER can replace a precise set with a broader one. So it is
+            # separable, and separately measured.
+            if widened is None:
+                widened = widen.should_push_further(
+                    session, reason=claimed, rounds_left=rounds_left,
+                    enabled=bool(runtime.get("push_further")))
+                if widened is not None:
+                    session.widenings_used.add(widened.rung)
+                    session.widenings_offered += 1
+                    state["messages"].append({
+                        "role": "tool", "tool_call_id": call["id"],
+                        "content": widen.PUSH_MESSAGE.format(
+                            searches=len([x for x in session.steps
+                                          if x.tool == "search" and not x.error]),
+                            rounds_left=rounds_left,
+                            suggestion=widened.message)})
+                    session.steps.append(planner.Step(state["round"], "push",
+                                                      {"rung": widened.rung}))
+                    continue
+                widened = None
             if widened is not None:
                 session.widenings_used.add(widened.rung)
                 session.widenings_offered += 1

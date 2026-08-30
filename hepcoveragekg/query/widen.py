@@ -165,6 +165,50 @@ def should_widen(session, *, reason: str, rounds_left: int,
     return next_suggestion(session, rounds_left)
 
 
+#: A run that ANSWERS after looking once. Distinct from the abstention case and
+#: far more common: measured on 207 Qwen records, 135 made exactly one search,
+#: 69 made none, and only 3 made two. It looks once and concludes.
+#:
+#: That matters because the round it declines to spend is the valuable one. On
+#: conceptB-200, runs that took 4 rounds scored count_correct 0.158 against
+#: 0.063 for runs that took 3 -- and Qwen stops at 3.25 on average, well short
+#: of a budget of 6 it is never denied.
+MAX_SEARCHES_FOR_THIN = 1
+
+
+def should_push_further(session, *, reason: str, rounds_left: int,
+                        enabled: bool) -> Optional[Suggestion]:
+    """Whether an ANSWER was reached too cheaply to trust, and what to try.
+
+    The mirror of `should_widen`. That one catches a run giving up with rows in
+    hand; this catches a run concluding without having looked properly. Same
+    ladder, same finiteness, same once-per-rung discipline -- only the trigger
+    differs.
+
+    THE RISK IS THE OPPOSITE ONE, and it is why the trigger is narrow. Pushing
+    an abstention can only turn a refusal into an answer; pushing an ANSWER can
+    turn a good one into a worse one, because the model may replace a precise
+    set with a broader one it likes less. So this fires only where the answer
+    was reached without looking: one search or none. A run that searched twice
+    and concluded has done the work, and is left alone.
+    """
+    if not enabled or reason != "answered":
+        return None
+    searches = len(_searches(session))
+    if searches > MAX_SEARCHES_FOR_THIN:
+        return None
+    if not (session.sets or session.known_entity_ids):
+        return None
+    return next_suggestion(session, rounds_left)
+
+
+PUSH_MESSAGE = (
+    "You answered after {searches} search(es), with {rounds_left} rounds left.\n\n"
+    "{suggestion}\n\n"
+    "If your answer already covers what that would find, repeat it unchanged -- "
+    "a confirmed answer is a better answer. If it does not, revise it."
+)
+
 WIDEN_MESSAGE = (
     "Before you answer 'not in the graph' -- you have {rounds_left} rounds left "
     "and you are holding retrieved rows.\n\n{suggestion}\n\n"

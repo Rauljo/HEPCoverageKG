@@ -42,6 +42,18 @@ SOURCES: tuple[tuple[str, int], ...] = (
     ("eval/questions/dev-2026-08-03-retrieval.jsonl", 16),
 )
 
+#: The ITERATION set: Gabriel's eight plus a handful from each other tier.
+#: Sized for ~25 minutes an arm rather than ~90, because the bottleneck today is
+#: how many ideas can be tried in an afternoon, not how tightly any one of them
+#: is measured. Nothing here has the power to settle a small effect -- it is for
+#: "did this fire, and did anything else fall over".
+PROBE: tuple[tuple[str, int], ...] = (
+    ("eval/questions/gabriel-gold-2026-08-25.jsonl", 8),
+    ("eval/questions/dev-2026-08-03-paperA-200.jsonl", 6),
+    ("eval/questions/dev-conceptB-200.jsonl", 8),
+    ("eval/questions/dev-2026-08-03-retrieval.jsonl", 4),
+)
+
 
 def build(sources=SOURCES, *, seed: int = 20260829) -> list[dict]:
     out: list[dict] = []

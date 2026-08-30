@@ -522,6 +522,7 @@ def _cmd_eval(args) -> int:
             contract=args.contract,
             force_critic_set=args.force_critic_set,
             persist=args.persist,
+            push_further=args.push_further,
         )
     else:
         print(f"unknown system {args.system!r}", file=sys.stderr)
@@ -700,6 +701,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_eval.add_argument("--force-critic-set", action="store_true",
                         help="planner: substitute the critic's kept set wherever "
                              "a raw search set is passed to a tool")
+    p_eval.add_argument("--push-further", action="store_true",
+                        help="planner: when it ANSWERS after one search with "
+                             "rounds to spare, offer one untried route first. "
+                             "Separate from --persist: the risk runs the other "
+                             "way, so it is measured on its own")
     p_eval.add_argument("--no-persist", action="store_true",
                         help="free-sql: turn OFF its widening ladder (on by "
                              "default, to match the planner's persist arm)")

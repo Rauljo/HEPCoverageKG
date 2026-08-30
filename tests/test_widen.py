@@ -98,3 +98,58 @@ def test_the_terminal_rung_needs_something_to_fall_back_on():
     s2 = _session(steps=[], sets={"set_1": ["e1", "e2", "e3"]})
     sugg = widen.next_suggestion(s2, rounds_left=5)
     assert sugg.rung == widen.TERMINAL_PAPERS_OF and "3 retrieved entities" in sugg.message
+
+
+# --------------------------------------------------------------------------
+# the mirror case: answering too cheaply
+# --------------------------------------------------------------------------
+
+def test_an_answer_after_one_search_is_pushed_once():
+    """Qwen made exactly one search on 135 of 207 records and none on 69, then
+    concluded -- stopping at 3.25 rounds of a budget of 6 it is never denied.
+    The round it declines is the valuable one: 4-round runs scored
+    count_correct 0.158 against 0.063 for 3-round runs."""
+    s = _session(steps=[_step("search", {"text": "exactly two electrons",
+                                         "kind": "selection_requirement"}, rows=8)],
+                 sets={"set_1": ["e1", "e2"]})
+    got = widen.should_push_further(s, reason="answered", rounds_left=4, enabled=True)
+    assert got is not None and got.rung == widen.DROP_KIND
+
+
+def test_an_answer_after_real_searching_is_left_alone():
+    """Pushing an ANSWER can replace a precise set with a broader one, so the
+    trigger is narrow: a run that searched twice has done the work."""
+    s = _session(steps=[_step("search", {"text": "a b", "kind": "k"}, rows=5),
+                        _step("search", {"text": "c d"}, rows=5)],
+                 sets={"set_1": ["e1"]})
+    assert widen.should_push_further(s, reason="answered", rounds_left=4,
+                                     enabled=True) is None
+
+
+def test_it_does_not_fire_on_an_abstention():
+    """That is `should_widen`'s job, and the two are separately flagged because
+    the risks run in opposite directions."""
+    s = _session(steps=[_step("search", {"text": "a b", "kind": "k"}, rows=5)],
+                 sets={"set_1": ["e1"]})
+    assert widen.should_push_further(s, reason="not_in_graph", rounds_left=4,
+                                     enabled=True) is None
+
+
+def test_it_is_off_unless_its_own_flag_is_on():
+    s = _session(steps=[_step("search", {"text": "a b", "kind": "k"}, rows=5)],
+                 sets={"set_1": ["e1"]})
+    assert widen.should_push_further(s, reason="answered", rounds_left=4,
+                                     enabled=False) is None
+
+
+def test_it_shares_the_ladder_and_therefore_terminates():
+    s = _session(steps=[_step("search", {"text": "exactly two electrons",
+                                         "kind": "selection_requirement"}, rows=8)],
+                 sets={"set_1": ["e1"]})
+    offered = []
+    for _ in range(10):
+        g = widen.should_push_further(s, reason="answered", rounds_left=5, enabled=True)
+        if g is None:
+            break
+        offered.append(g.rung); s.widenings_used.add(g.rung)
+    assert g is None and len(offered) == len(set(offered)) <= len(widen.LADDER)

@@ -1413,7 +1413,7 @@ def _build_critic(question: str, session: Session, use_critic, seed=None):
 def _prepare(conn, index, question, max_rounds, max_places, max_rows,
              minimal_prompt, chat, thread_id, use_critic=None, critic_seed=None,
              answer_contract=False, contract="", force_critic_set=False,
-             persist=False):
+             persist=False, push_further=False):
     """The state and runtime config a run needs. Shared by answer() and stream()."""
     session = Session(question=question)
     if chat is None:
@@ -1473,6 +1473,7 @@ def _prepare(conn, index, question, max_rounds, max_places, max_rows,
     # would matter: an abstention rate collapsing toward zero while precision
     # falls is a system fabricating coverage, not finding it.
     runtime["persist"] = bool(persist)
+    runtime["push_further"] = bool(push_further)
     config = {"configurable": runtime, "recursion_limit": max_rounds * 3 + 6}
     return session, state, config
 
@@ -1494,6 +1495,7 @@ def stream(
     contract: str = "",
     force_critic_set: bool = False,
     persist: bool = False,
+    push_further: bool = False,
 ):
     """Yield `(node_name, session)` after each node completes.
 
@@ -1507,7 +1509,7 @@ def stream(
                                       max_places, max_rows, minimal_prompt,
                                       chat, thread_id, use_critic, critic_seed,
                                       answer_contract, contract, force_critic_set,
-                                      persist)
+                                      persist, push_further)
     started = time.perf_counter()
     app = graph_module.build(checkpointer=checkpointer)
     for update in app.stream(state, config=config, stream_mode="updates"):
@@ -1534,6 +1536,7 @@ def answer(
     contract: str = "",
     force_critic_set: bool = False,
     persist: bool = False,
+    push_further: bool = False,
 ) -> Session:
     """Answer one question, returning the answer and the whole trace.
 
@@ -1555,7 +1558,7 @@ def answer(
                                       max_places, max_rows, minimal_prompt,
                                       chat, thread_id, use_critic, critic_seed,
                                       answer_contract, contract, force_critic_set,
-                                      persist)
+                                      persist, push_further)
     graph_module.build(checkpointer=checkpointer).invoke(state, config=config)
 
     session.seconds = time.perf_counter() - started
