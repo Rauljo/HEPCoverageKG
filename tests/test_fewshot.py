@@ -81,3 +81,22 @@ def test_the_two_variants_differ_in_exactly_one_thing(tmp_path):
 
 def test_no_examples_renders_to_nothing(tmp_path):
     assert fewshot.render([]) == ""
+
+
+def test_the_cli_reads_the_question_file_from_the_right_attribute():
+    """It was `args.questions`, which does not exist. The crash landed AFTER the
+    retrieval index was built, so three arms burned their setup cost and printed
+    a header with no numbers -- a failure that looks like an empty result rather
+    than an error."""
+    import argparse
+    import inspect
+
+    from hepcoveragekg import cli
+    src = inspect.getsource(cli._cmd_eval)
+    assert "a.questions" not in src, "args.questions does not exist"
+    parser = argparse.ArgumentParser()
+    # the same positionals `eval` declares
+    parser.add_argument("action")
+    parser.add_argument("path", nargs="?")
+    ns = parser.parse_args(["run", "q.jsonl"])
+    assert ns.path == "q.jsonl"

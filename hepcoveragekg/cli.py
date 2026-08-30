@@ -501,7 +501,10 @@ def _cmd_eval(args) -> int:
             return ""
         from hepcoveragekg.eval import questions as _q
         from hepcoveragekg.query import fewshot as _fs
-        scored = {x.qid for x in _q.load(a.questions)}
+        # `path` is the question file for `eval run`. Named wrong on the
+        # first attempt, which crashed every few-shot arm AFTER the index
+        # had been built -- three arms produced a header and no numbers.
+        scored = {x.qid for x in _q.load(a.path)}
         pool = _fs.candidates(a.fewshot)
         chosen = _fs.select(pool, scored)
         return _fs.render(chosen, with_plan=bool(getattr(a, "fewshot_plan", False)))
