@@ -64,7 +64,17 @@ def build(sources=SOURCES, *, seed: int = 20260829) -> list[dict]:
         # mix, which matters as much in 24 questions as in 200 -- more, since a
         # single split group is a larger fraction of the evidence.
         out.extend(subset.sample(rows, target, seed=seed))
-    return out
+
+    # THE SUPERVISOR'S QUESTIONS GO FIRST, and the order is load-bearing.
+    #
+    # The runner writes records as it goes and a run gets killed often -- by a
+    # wall clock, a dead server, or someone deciding an hour in that it is not
+    # worth the wait. Whatever order the file is in is the order in which a
+    # truncated run is USEFUL. His eight are the only human-labelled questions
+    # in the project and there are no more of them, so they are the ones a
+    # partial run must not miss. The generated tiers have thousands and can
+    # afford to be the part that gets cut.
+    return sorted(out, key=lambda r: (r.get("source") != "gabriel", r["qid"]))
 
 
 def write(path: Path | str = "eval/questions/dev-fast-mixed.jsonl", **kw) -> tuple[Path, dict]:
