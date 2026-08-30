@@ -38,7 +38,10 @@ _NOISE = [
     # Normalised first so every later rule sees one backslash.
     (re.compile(r"\\\\(?=[a-zA-Z])"), r"\\"),
     (re.compile(r"\\penalty\s*-?\d+"), ""),
-    (re.compile(r"\\(?:kern|hskip|vskip|raise|lower)\s*-?[\d.]+\s*pt"), ""),
+    # `mu` as well as `pt`, and `\mkern` as well as `\kern`: the diphoton rows
+    # carry `^{\mkern 3.0mu\text{miss}}` and an unhandled spacing command
+    # leaks its own name into a superscript.
+    (re.compile(r"\\m?(?:kern|hskip|vskip|raise|lower)\s*-?[\d.]+\s*(?:pt|mu|em|ex)"), ""),
     (re.compile(r"\\(?:displaystyle|scriptstyle|scriptscriptstyle|textstyle)\b"), ""),
     (re.compile(r"\\(?:left|right|big|Big|bigg|Bigg)\b"), ""),
     (re.compile(r"\\[,;:!>]"), " "),          # thin/medium spaces
@@ -48,6 +51,14 @@ _NOISE = [
     # `\left\{\mathcal{Q}\right\}` came out as `\Q\`.
     (re.compile(r"\\([{}])"), r"\1"),
 ]
+
+#: The same wrappers used WITHOUT braces, LaTeXML's house style: it emits
+#: `{\mathup Z}` rather than `\mathup{Z}`, so the font switch applies to the
+#: rest of the group. Deleting the command and keeping what follows is correct,
+#: and not doing it rendered 21 quotes as "mathupZ", "mathupH", "mathupb".
+_UNWRAP_BARE = re.compile(
+    r"\\(?:text|mathrm|mathup|mathbf|mathit|mathsf|textrm|mathcal|mathbb|rm|it|bf)"
+    r"(?![a-zA-Z])\s*")
 
 #: Wrappers whose only job is upright type. The content is what matters.
 _UNWRAP = re.compile(
@@ -73,6 +84,26 @@ _SYMBOLS = {
 #: Accents rendered with a combining character, so they need no CSS.
 _ACCENTS = {"bar": "\u0304", "overline": "\u0304", "tilde": "\u0303",
             "hat": "\u0302", "vec": "\u20d7", "dot": "\u0307"}
+
+
+def _flatten_braces(text: str) -> str:
+    """`{{{X}}}` to `{X}`.
+
+    LaTeXML nests groups freely -- `{\mathup{{{Z}}}}`, `^{\scriptstyle{+}}` --
+    and every pattern here matches a body of `[^{}]*`, which a nested group
+    defeats silently. Two things came out wrong because of it: `\overline{\ell}`
+    rendered as "overlineℓ" with the accent never applied, and `e^{+}e^{-}`
+    kept literal carets instead of becoming superscripts.
+
+    Collapsing first is safe because these groups carry no content of their
+    own; they are grouping, and one level of grouping means the same as three.
+    """
+    for _ in range(6):
+        new = re.sub(r"\{\{([^{}]*)\}\}", r"{\1}", text)
+        if new == text:
+            return text
+        text = new
+    return text
 
 
 def _accents(text: str) -> str:
@@ -105,17 +136,20 @@ def to_html(text: str) -> str:
 
     for pattern, repl in _NOISE:
         out = pattern.sub(repl, out)
-    for _ in range(3):                      # \text{\mathrm{x}} nests a little
+    for _ in range(4):                      # \text{\mathrm{x}} nests a little
+        out = _flatten_braces(out)
         new = _UNWRAP.sub(r"\1", out)
         if new == out:
             break
         out = new
+    out = _flatten_braces(out)
     # SYMBOLS BEFORE ACCENTS. The other way round, `\tilde{\chi}` puts the
     # combining mark on the backslash and renders as "\̃chi" -- the accent
     # handler takes the first CHARACTER of the body, and the body still began
     # with a command.
     for command, char in sorted(_SYMBOLS.items(), key=lambda kv: -len(kv[0])):
         out = out.replace(command, char)
+    out = _UNWRAP_BARE.sub("", out)
     out = _accents(out)
     out = _scripts(out)
 
