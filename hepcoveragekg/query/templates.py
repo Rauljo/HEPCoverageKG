@@ -220,6 +220,72 @@ def count(conn, predicate: str, object_ids: str | list[str]) -> QueryResult:
     return result
 
 
+def path(conn, constraints: list[dict], project: str = "subjects",
+         mode: str = "all") -> QueryResult:
+    """Entities satisfying SEVERAL predicate->object constraints at once.
+
+    THE FAILURE THIS EXISTS FOR. gf-01 asks which analyses are searches whose
+    event selection uses b-tagged jets AND missing transverse momentum.
+    Precision is 0.90 on single-condition questions and **0.30** on that one;
+    gf-01-condition is the same concept with ONE condition and scores 0.89
+    against gf-01's 0.48. The typed planner has no way to say "both": it walks
+    one edge per round, and 93% of runs are over by round four.
+
+    IT IS A CONJUNCTION, NOT A CHAIN, because that is what the winning free-SQL
+    statement turned out to be -- two assertions joined on a SHARED SUBJECT:
+
+        FROM assertion a_est JOIN assertion a_def
+          ON a_est.subject_id = a_def.subject_id
+
+    Each constraint is {predicate, object_ids}. A subject qualifies when it
+    satisfies every constraint (`mode="all"`) or any of them (`mode="any"`).
+    `project="papers"` resolves the surviving subjects to arXiv ids in the same
+    call, because the round after a hop is where these runs die.
+
+    Canonical expansion is applied per constraint, so a constraint naming one
+    spelling of an entity still matches the papers that spell it differently --
+    the graph holds 56 entities for Pythia.
+    """
+    if not constraints:
+        return QueryResult(shape="path", rows=[], note="no constraints given")
+    sets: list[set] = []
+    seen_note = []
+    for con in constraints[:6]:
+        pred = (con or {}).get("predicate")
+        objs = (con or {}).get("object_ids") or []
+        if isinstance(objs, str):
+            objs = [objs]
+        if not pred or not objs:
+            seen_note.append("a constraint was missing predicate or object_ids")
+            continue
+        ids = expand_canonical(conn, objs)
+        rows = conn.execute(
+            "SELECT DISTINCT a.subject_id FROM assertion a"
+            f" WHERE a.predicate = ? AND a.object_id IN ({_placeholders(len(ids))})",
+            (pred, *ids)).fetchall()
+        sets.append({r[0] for r in rows})
+        seen_note.append(f"{pred}: {len(rows)} subjects")
+    if not sets:
+        return QueryResult(shape="path", rows=[], note="; ".join(seen_note))
+    keep = set.intersection(*sets) if mode == "all" else set.union(*sets)
+    note = " | ".join(seen_note) + f" -> {len(keep)} satisfying {mode}"
+    if not keep:
+        return QueryResult(shape="path", rows=[], note=note)
+    ids = sorted(keep)
+    if project == "papers":
+        rows = conn.execute(
+            "SELECT DISTINCT eo.paper_id AS paper_id, e.label AS via"
+            "  FROM entity_occurrence eo LEFT JOIN entity e ON e.entity_id = eo.entity_id"
+            f" WHERE eo.entity_id IN ({_placeholders(len(ids))}) ORDER BY eo.paper_id",
+            tuple(ids)).fetchall()
+        return QueryResult(shape="papers", rows=[dict(r) for r in rows], note=note)
+    rows = conn.execute(
+        "SELECT e.entity_id AS entity_id, e.label AS label, e.kind AS kind"
+        f"  FROM entity e WHERE e.entity_id IN ({_placeholders(len(ids))})"
+        " ORDER BY e.label", tuple(ids)).fetchall()
+    return QueryResult(shape="path", rows=[dict(r) for r in rows], note=note)
+
+
 def subjects_of(conn, predicate: str, object_ids: str | list[str]) -> QueryResult:
     """Which entities point AT these, through this predicate. The backward hop.
 

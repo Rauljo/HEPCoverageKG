@@ -67,6 +67,23 @@ PRICES: dict[str, tuple[float, float]] = {
     # cap is possible if anyone tries one, not as a recommendation: the eval
     # loop is synchronous and a batch endpoint would stall it.
     "anthropic/claude-opus-5:batch": (2.50, 12.50),
+    # Fetched from /models on 2026-08-30. QwQ-32B, which we queued on the
+    # cluster, is NO LONGER LISTED -- superseded. qwen3-32b is the same size
+    # class with reasoning and tool support, so it is the like-for-like stand-in
+    # while the on-prem QwQ job waits for a card.
+    "qwen/qwen3-32b": (0.08, 0.28),
+    # Fetched 2026-09-01. The hosted twin of the 55.6GB Qwen3.8-27B on the
+    # cluster, which the A100 driver (CUDA 12.4) cannot serve: vLLM builds new
+    # enough to know Qwen3_5ForConditionalGeneration are built against 12.8+.
+    "qwen/qwen3.8-27b": (0.42, 2.55),
+    "qwen/qwen3.8-flash": (0.15, 0.47),
+    # The critic the cluster runs served locally. Same weights, hosted, so a
+    # re-run can hold the critic fixed while the token cap changes.
+    "meta-llama/llama-3.1-8b-instruct": (0.05, 0.08),
+    "qwen/qwen3-14b": (0.12, 0.24),
+    "qwen/qwen3.6-35b-a3b": (0.10, 0.90),
+    "qwen/qwen3-coder-next": (0.12, 0.80),
+    "qwen/qwen3-next-80b-a3b-thinking": (0.15, 1.20),
 }
 
 #: Models that emit REASONING tokens, billed as output and invisible in the
@@ -80,6 +97,12 @@ REASONING_MODELS = frozenset({
     "openai/gpt-5.6-luna", "openai/gpt-5.6-luna-pro",
     "openai/gpt-5.6-sol", "openai/gpt-5.6-sol-pro",
     "openai/gpt-5.6-terra", "openai/gpt-5.6-terra-pro",
+    # Qwen3 emits <think> before answering and those tokens are billed as
+    # output, the same trap the cluster hit when 99 of 366 QwQ replies were
+    # discarded by a parser that did not expect them.
+    "qwen/qwen3-32b", "qwen/qwen3-14b", "qwen/qwen3.6-35b-a3b",
+    "qwen/qwen3.8-27b", "qwen/qwen3.8-flash",
+    "qwen/qwen3-next-80b-a3b-thinking",
 })
 
 

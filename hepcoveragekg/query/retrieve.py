@@ -157,7 +157,78 @@ class Index:
         return scores
 
 
-def _surface_forms(conn) -> Iterable[tuple[str, str, str]]:
+#: WHAT A SEARCH COULD NOT SEE, until this was added.
+#:
+#: 31% of assertions (4,357 of 14,188, ~279,000 characters) carry their object as
+#: FREE TEXT in `assertion.object_value` rather than as an entity -- selections,
+#: reported quantities, region definitions. The index was built from
+#: `entity_occurrence` alone, so it held 5,434 labels saying WHAT THINGS ARE
+#: CALLED and nothing saying WHAT IS TRUE OF THEM.
+#:
+#: Measured consequence: `search("exactly two electrons")` matched 0 labels while
+#: the requirement sat in text as `"HLT: two electrons with pT > 33 (25) GeV"`.
+#: gf-08 has 13 gold papers and the typed planner returned 0, because there was
+#: no path from the question to the fact. The free-SQL control reached the same
+#: text with `LIKE` -- which is a large part of why it wins.
+#:
+#: The value is indexed as another surface form OF ITS SUBJECT ENTITY, so search
+#: still returns entity ids and nothing downstream changes shape.
+_VALUE_SQL = """
+    SELECT a.subject_id AS entity_id, e.kind AS kind, a.object_value AS form
+      FROM assertion a
+      LEFT JOIN entity e ON e.entity_id = a.subject_id
+     WHERE a.object_value IS NOT NULL AND TRIM(a.object_value) <> ''
+"""
+
+
+#: LATEX IS INDEXED IN BOTH FORMS, ALWAYS.
+#:
+#: 10% of entity labels and 60% of evidence quotes carry raw LaTeX, and the tail
+#: is unmatchable by any query a human or a model would write. The case that
+#: proved it: 2103.06956 has a ttZ control region, correctly extracted, with the
+#: supervisor's own quote confirming it -- stored as
+#:
+#:   {{\mathup{{{t}}}}{}{\mathup{{\overline{{{\mathup{{{t}}}}}}}}}}{\mathup{{{Z}}}}
+#:
+#: No search for "ttZ", "t\bar{t}Z" or anything else reaches that. The paper was
+#: scored as a miss on a fact the graph holds.
+#:
+#: BOTH forms are indexed, not just the normalised one: the raw string is what
+#: an exact-token BM25 match needs when a model quotes the paper's own notation
+#: back, and the normalised string is what everything else needs. Costs one
+#: extra form per LaTeX-bearing label, ~744 of 12,758.
+def _normalised(form: str) -> str:
+    """The matchable spelling of a surface form, or "" if it is unchanged."""
+    from hepcoveragekg.aliases.context import clean_latex
+    cleaned = (clean_latex(form) or "").strip()
+    return cleaned if cleaned and cleaned != form else ""
+
+
+#: EVIDENCE QUOTES, the layer under the values.
+#:
+#: 97% of assertions carry a verbatim quote and none of it was searchable. The
+#: case that forced this: gf-07 asks which analyses have a ttZ background with a
+#: control region normalising it. 2102.01444 has SEVENTEEN assertions whose
+#: quote says so -- "normalised to data in dedicated CRs: CR_tt and CR_ttZ" --
+#: and NOT ONE entity labelled ttZ. The graph knew; nothing could reach it.
+#:
+#: 8,305 distinct quotes, 1.27M characters, average 150 chars against 51 for a
+#: label. Two costs, both real: BM25 length normalisation already penalises long
+#: strings (which is protective here), but a 150-character sentence embeds
+#: diffusely, and a quote naming five entities is attached to ONE subject, which
+#: invents associations. Hence a flag, not a default.
+_QUOTE_SQL = """
+    SELECT a.subject_id AS entity_id, e.kind AS kind, ev.quote AS form
+      FROM assertion a
+      JOIN assertion_evidence ae ON ae.assertion_id = a.assertion_id
+      JOIN evidence ev ON ev.evidence_id = ae.evidence_id
+      LEFT JOIN entity e ON e.entity_id = a.subject_id
+     WHERE ev.quote IS NOT NULL AND TRIM(ev.quote) <> ''
+"""
+
+
+def _surface_forms(conn, include_values: bool = False,
+                   include_quotes: bool = False) -> Iterable[tuple[str, str, str]]:
     """(entity_id, kind, surface form) for everything worth indexing.
 
     Reads `entity_occurrence` so that every wording any paper used is reachable,
@@ -203,9 +274,55 @@ def _surface_forms(conn) -> Iterable[tuple[str, str, str]]:
                 continue
             seen.add(key)
             yield r["entity_id"], r["kind"] or "", str(form)
+            norm = _normalised(str(form))
+            if norm:
+                nkey = (r["entity_id"], norm)
+                if nkey not in seen:
+                    seen.add(nkey)
+                    yield r["entity_id"], r["kind"] or "", norm
+
+    if include_quotes:
+        for r in conn.execute(_QUOTE_SQL):
+            raw = str(r["form"] or "").strip()
+            if not raw or not r["entity_id"]:
+                continue
+            # THE NORMALISED SPELLING ONLY. A raw quote is 60% likely to carry
+            # LaTeX and 19% likely to carry \mathup, which is unmatchable; the
+            # raw form buys nothing here that the label index does not already
+            # give, and doubling 8,305 quotes would swamp the labels.
+            form = (_normalised(raw) or raw)[:300]
+            key = (r["entity_id"], form)
+            if key in seen:
+                continue
+            seen.add(key)
+            yield r["entity_id"], r["kind"] or "", form
+
+    if not include_values:
+        return
+    for r in conn.execute(_VALUE_SQL):
+        form = str(r["form"] or "").strip().strip('"')
+        # Long values are quotes, not names. Truncated for the sparse index,
+        # where a 400-character string would otherwise be penalised into
+        # invisibility by BM25 length normalisation.
+        if not form or len(form) > 300:
+            form = form[:300]
+        if not form or not r["entity_id"]:
+            continue
+        key = (r["entity_id"], form)
+        if key in seen:
+            continue
+        seen.add(key)
+        yield r["entity_id"], r["kind"] or "", form
+        norm = _normalised(form)
+        if norm:
+            nkey = (r["entity_id"], norm)
+            if nkey not in seen:
+                seen.add(nkey)
+                yield r["entity_id"], r["kind"] or "", norm
 
 
-def build(conn, cache: Path | str | None = None, embed: bool = True) -> Index:
+def build(conn, cache: Path | str | None = None, embed: bool = True,
+          include_values: bool = False, include_quotes: bool = False) -> Index:
     """Index every surface form in the graph.
 
     Embeddings are cached to `cache` because encoding ~8,800 short strings costs
@@ -213,7 +330,7 @@ def build(conn, cache: Path | str | None = None, embed: bool = True) -> Index:
     surface forms themselves, so a stale cache is detected rather than trusted.
     """
     index = Index()
-    for entity_id, kind, form in _surface_forms(conn):
+    for entity_id, kind, form in _surface_forms(conn, include_values, include_quotes):
         index.entity_ids.append(entity_id)
         index.kinds.append(kind)
         index.texts.append(form)
@@ -226,6 +343,27 @@ def build(conn, cache: Path | str | None = None, embed: bool = True) -> Index:
         index.embeddings = _embeddings(index.texts, cache)
     return index
 
+
+
+def cache_path(include_values: bool = False, include_quotes: bool = False,
+               base: str = "data/processed") -> str:
+    """Where the embedding cache for THIS configuration lives.
+
+    KEYED ON THE ENCODER as well as the index contents. It was keyed only on
+    contents, so a chATLAS arm and a bge-base arm pointed at one file, each saw
+    the other's model name, each logged "discarding" and re-encoded ~14k
+    strings, and two concurrent arms would thrash indefinitely. That path was
+    about to be walked by the encoder x search-sets experiment (D-089).
+
+    The model name is hashed, not embedded: `kipark/all-mpnet-base-v2-combined_
+    4400-400vs1000` is a directory separator and 46 characters of filename.
+    """
+    import hashlib
+    from hepcoveragekg.aliases import semantics
+    model = semantics._model_name_from_env()
+    tag = ("v" if include_values else "") + ("q" if include_quotes else "")
+    digest = hashlib.sha256(model.encode()).hexdigest()[:8]
+    return f"{base}/retrieval_index{'_' + tag if tag else ''}.{digest}.npz"
 
 def _embeddings(texts: list[str], cache: Path | str | None) -> np.ndarray:
     """Delegates to the aliases layer's cached encoder.

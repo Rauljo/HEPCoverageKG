@@ -52,6 +52,47 @@ _NOISE = [
     (re.compile(r"\\([{}])"), r"\1"),
 ]
 
+#: `\mathchoice{display}{text}{script}{scriptscript}` gives FOUR renderings of
+#: one thing and the reader picks by context. Keeping all four printed
+#: "tmathchoiceχ̃02χ̃02χ̃02χ̃02" -- the same particle four times with the command
+#: name in front. The first argument is the one to keep.
+#: A regex cannot do this: the real arguments nest, e.g.
+#: `\mathchoice{\displaystyle\raise 1.72218pt\hbox{$\tilde{\chi}^{0}_{2}$}}{...}`.
+#: `[^{}]*` matched nothing and the leak survived a fix that passed its own
+#: synthetic test -- which is why this counts braces instead.
+def collapse_mathchoice(text: str) -> str:
+    out, i = [], 0
+    while True:
+        j = text.find("\\mathchoice", i)
+        if j < 0:
+            out.append(text[i:])
+            return "".join(out)
+        out.append(text[i:j])
+        k = j + len("\\mathchoice")
+        groups = []
+        for _ in range(4):
+            while k < len(text) and text[k].isspace():
+                k += 1
+            if k >= len(text) or text[k] != "{":
+                break
+            depth, start = 0, k
+            while k < len(text):
+                if text[k] == "{":
+                    depth += 1
+                elif text[k] == "}":
+                    depth -= 1
+                    if depth == 0:
+                        k += 1
+                        break
+                k += 1
+            groups.append(text[start + 1:k - 1])
+        if len(groups) == 4:
+            out.append(groups[0])          # the display form; all four say the same
+            i = k
+        else:                              # malformed -- leave it alone
+            out.append(text[j:j + len("\\mathchoice")])
+            i = j + len("\\mathchoice")
+
 #: The same wrappers used WITHOUT braces, LaTeXML's house style: it emits
 #: `{\mathup Z}` rather than `\mathup{Z}`, so the font switch applies to the
 #: rest of the group. Deleting the command and keeping what follows is correct,
@@ -73,6 +114,9 @@ _SYMBOLS = {
     r"\lambda": "λ", r"\pi": "π", r"\omega": "ω", r"\zeta": "ζ", r"\xi": "ξ",
     r"\Delta": "Δ", r"\Lambda": "Λ", r"\Sigma": "Σ", r"\Omega": "Ω",
     r"\Gamma": "Γ", r"\Phi": "Φ", r"\Psi": "Ψ", r"\Upsilon": "Υ",
+    # `b -> b f f' chi` is a decay chain, and without this the prime became the
+    # word "prime" glued to the quarks: "bffprimeχ01".
+    r"\prime": "′", r"\dagger": "†",
     r"\to": " → ", r"\rightarrow": " → ", r"\leftarrow": " ← ",
     r"\approx": " ≈ ", r"\sim": "~", r"\times": "×", r"\pm": "±", r"\mp": "∓",
     r"\geq": " ≥ ", r"\ge": " ≥ ", r"\leq": " ≤ ", r"\le": " ≤ ",
@@ -87,7 +131,7 @@ _ACCENTS = {"bar": "\u0304", "overline": "\u0304", "tilde": "\u0303",
 
 
 def _flatten_braces(text: str) -> str:
-    """`{{{X}}}` to `{X}`.
+    r"""`{{{X}}}` to `{X}`.
 
     LaTeXML nests groups freely -- `{\mathup{{{Z}}}}`, `^{\scriptstyle{+}}` --
     and every pattern here matches a body of `[^{}]*`, which a nested group
@@ -116,7 +160,7 @@ def _accents(text: str) -> str:
 
 
 def _scripts(text: str) -> str:
-    """`_{x}` and `^{x}` to real sub/sup tags. BRACED ONLY.
+    r"""`_{x}` and `^{x}` to real sub/sup tags. BRACED ONLY.
 
     The bare forms were handled too and had to be removed. A field can mix
     English with maths -- the value rows read "what signal efficiency does the
@@ -156,6 +200,11 @@ def to_html(text: str) -> str:
         return ""
     out = html.escape(text)
 
+    # MATHCHOICE FIRST. It counts braces to find its four arguments, so it has
+    # to run while the braces are still intact -- run inside the flatten loop
+    # it saw a structure already pulled apart and left "bffprimemathchoice..."
+    # in gf-12's evidence.
+    out = collapse_mathchoice(out)
     for pattern, repl in _NOISE:
         out = pattern.sub(repl, out)
     for _ in range(4):                      # \text{\mathrm{x}} nests a little

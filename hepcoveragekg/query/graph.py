@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 from typing import Any, Callable, Optional, TypedDict
 
@@ -72,6 +73,20 @@ class PlannerState(TypedDict, total=False):
     pending_calls: list   # [{"id": str, "name": str, "arguments": str}]
     last_content: str
 
+    # The reviewer arm. `replan` is the one that matters: a bounce-back must NOT
+    # consume a round, so `plan` skips its round increment when it is set. Any
+    # other arrangement makes a rejected plan cost the same as a wasted retrieval
+    # and the arm would be measuring the penalty, not the review.
+    sub_objectives: list
+    subgoal_status: str
+    objective: str
+    review_feedback: str
+    review_cycles: int
+    replan: bool
+    # `after_plan` is a routing function and receives no config, so whether the
+    # reviewer is on has to travel in state. Set by `plan` from runtime.
+    _reviewing: bool
+
 
 # --------------------------------------------------------------------------
 # nodes
@@ -88,7 +103,16 @@ def plan(state: PlannerState, config=None) -> PlannerState:
 
     runtime = _runtime(config)
     session = state["session"]
-    state["round"] = state.get("round", 0) + 1
+    if state.pop("replan", False):
+        # A rejected plan is re-planned inside the SAME round, with the
+        # reviewer's objection appended so the model sees what it must fix.
+        state["messages"] = state["messages"] + [{
+            "role": "user",
+            "content": ("A reviewer looked at that plan before it ran and asked "
+                        "for a revision:\n\n" + (state.get("review_feedback") or "")
+                        + "\n\nRevise and state your objective again.")}]
+    else:
+        state["round"] = state.get("round", 0) + 1
     session.rounds = state["round"]
 
     # THE LAST ROUND IS FOR ANSWERING, and only for answering.
@@ -107,6 +131,23 @@ def plan(state: PlannerState, config=None) -> PlannerState:
     # a conclusion drawn from what it actually found rather than with an empty
     # string. A model with nothing to say can still answer "not in the graph",
     # which is a real answer and scoreable; silence is neither.
+    # Reviewed only when there is a RETRIEVAL to review. `answer` is a different
+    # act -- judging a conclusion is not judging a route, the reviewer's prompt
+    # is written for routes, and a reviewer that can reject an answer can trap a
+    # run in a loop at the very end. Matches the free-SQL side, which reviews
+    # only when a `sql` call is present.
+    # THE SUB-OBJECTIVE BLOCK IS REPLACED, NEVER APPENDED. The message list
+    # grows every round, so appending would leave one stale copy per round and
+    # the model would have to work out which status is current.
+    goals = state.get("sub_objectives") or []
+    if goals:
+        from hepcoveragekg.query import subgoals as _sg
+        block = (_sg.render(goals, state.get("subgoal_status", ""))
+                 if runtime.get("subgoal_status") else _sg.goals_only(goals))
+        msgs = [m for m in state["messages"]
+                if not (m.get("role") == "system" and "SUB-OBJECTIVES" in (m.get("content") or ""))]
+        state["messages"] = msgs + [{"role": "system", "content": block}]
+    state["_reviewing"] = bool(runtime.get("reviewer"))
     tools = runtime["tools"]
     if state["round"] >= state["max_rounds"]:
         tools = [t for t in tools if t.get("function", {}).get("name") == "answer"] or tools
@@ -133,13 +174,23 @@ def plan(state: PlannerState, config=None) -> PlannerState:
             logger.info(f"round {state['round']}: recovered {len(calls)} tool call(s) "
                         "written as text")
 
-    reasoning = (message.content or "").strip()
+    reasoning = planner.clean_content(message.content)
     if reasoning and calls:
         session.thoughts.append(planner.Thought(
             round=state["round"], text=reasoning,
             tools_called=[c.function.name for c in calls]))  # SDK objects here, pre-normalisation
 
-    state["last_content"] = message.content or ""
+    # The stated objective for this round IS the prose the model wrote before
+    # its calls. Captured rather than re-asked: a second call to ask "what were
+    # you trying to do" would cost a round and could disagree with the first.
+    state["last_content"] = planner.clean_content(message.content)
+    if runtime.get("state_objective") and reasoning:
+        state["objective"] = reasoning
+    if runtime.get("subgoal_status"):
+        from hepcoveragekg.query import subgoals as _sg
+        fresh = _sg.extract_status(reasoning)
+        if fresh:
+            state["subgoal_status"] = fresh
     state["pending_calls"] = [
         {"id": c.id, "name": c.function.name, "arguments": c.function.arguments or "{}"}
         for c in calls[: state["max_places"]]
@@ -159,18 +210,100 @@ def _papers_resolver(runtime):
     def resolve(entity_ids):
         if not entity_ids:
             return []
+        # THE WHOLE RESOLUTION, not just the call. The `try` used to stop at
+        # the tool call, so a `papers_of` that came back shaped wrong -- None,
+        # or rows without a paper column -- raised out of `resolve_citations`
+        # and killed the run, which is the exact thing this guard exists to
+        # prevent. A citation that cannot resolve is an uncited answer, never a
+        # crash.
         try:
             result = runtime["execute"]("papers_of", {"entity_ids": list(entity_ids)})
+            seen, out = set(), []
+            for row in result.rows:
+                paper = row.get("paper_id") or row.get("arxiv_id")
+                if paper and paper not in seen:
+                    seen.add(paper)
+                    out.append(str(paper))
+            return out
         except Exception:  # noqa: BLE001 -- a citation must not crash the answer
+            logger.warning("papers_of did not resolve the cited set; "
+                           "the answer stands uncited")
             return None
-        seen, out = set(), []
-        for row in result.rows:
-            paper = row.get("paper_id") or row.get("arxiv_id")
-            if paper and paper not in seen:
-                seen.add(paper)
-                out.append(str(paper))
-        return out
     return resolve
+
+
+#: The ids the answer names, in the text. Must match `scoring._arxiv_ids_in`
+#: or the critic would filter a set the scorer never reads.
+_ARXIV = re.compile(r"\b\d{4}\.\d{4,5}\b")
+
+
+def _answer_named(session) -> list:
+    """What the answer actually claims, by the same rule the scorer uses.
+
+    WHICHEVER SIDE THE ANSWER USED. The critic's first wiring judged only
+    `answer_papers`, which is filled by a resolved citation -- and D-107
+    measured `cited` empty in 59 of 60 Gabriel answers. So on the ordinary
+    path, where the model writes ids into prose, it would have judged an empty
+    list and reported itself as having run.
+    """
+    in_text = []
+    seen = set()
+    for pid in _ARXIV.findall(session.answer or ""):
+        if pid not in seen:
+            seen.add(pid)
+            in_text.append(pid)
+    return in_text or list(session.answer_papers)
+
+
+def _answer_critic(runtime, session) -> None:
+    """Drop the papers the answer names that do not satisfy the question.
+
+    Never raises and never adds a paper: a judge that can only remove is safe
+    to leave on, and the failure mode measured in D-105 -- a reasoning model
+    returning empty content and defaulting every verdict to KEEP -- degrades
+    to the unfiltered answer rather than to an empty one.
+
+    THE TEXT IS EDITED, NOT JUST THE LIST. The scorer reads ids out of the
+    prose whenever there are any, so filtering `answer_papers` alone would
+    leave the arm invisible to every set metric -- it would cost calls and
+    change no number. Only the dropped ids are struck; the sentence they sat in
+    is left alone, and `answer_before_critic` keeps the original so the edit is
+    auditable rather than silent.
+    """
+    from hepcoveragekg.query import answer_critic as AC
+
+    conn = runtime.get("conn")
+    chat = runtime.get("answer_critic_chat")
+    named = _answer_named(session)
+    if conn is None or chat is None or not named:
+        return
+    try:
+        evidence = AC.evidence_by_paper(conn, session.known_entity_ids, named)
+        review = AC.judge_papers(chat, session.question, evidence)
+    except Exception as exc:  # noqa: BLE001 -- a judge must not kill a run
+        logger.warning("answer-critic failed, keeping the answer as is: %s", exc)
+        return
+    if not review.verdicts:
+        return
+    session.answer_review = review
+    kept = set(review.kept)
+    dropped = review.dropped
+    # A judge that would empty the answer is a judge that is wrong, not an
+    # answer that is empty. Observed on the fast test: at high candidate purity
+    # the critic costs more than it saves (gf-04, 0.88 -> 0.60).
+    if not kept:
+        logger.warning("answer-critic would drop all %d papers; keeping them",
+                       len(named))
+        return
+    if not dropped:
+        return
+    session.answer_before_critic = session.answer
+    for pid in dropped:
+        session.answer = session.answer.replace(pid, "")
+    if session.answer_papers:
+        session.answer_papers = [p for p in session.answer_papers if p in kept]
+    logger.info("answer-critic kept %d of %d named papers (%d defaulted)",
+                len(kept), len(review.verdicts), review.defaulted)
 
 
 def execute(state: PlannerState, config=None) -> PlannerState:
@@ -342,7 +475,11 @@ def execute(state: PlannerState, config=None) -> PlannerState:
                             if _re.fullmatch(r"\d{4}\.\d{4,5}", x)]
                 if asserted:
                     session.answer_papers = sorted(asserted)
-                    session.cited = "answer.papers"
+                    # `answer_cited`, NOT `cited`. systems.py reads
+                    # `answer_cited`; a typo here meant every --simple-answer
+                    # answer reached the scorer with cited="" and so lost the
+                    # legitimate cited-set path in `judged_set_f1`. See D-107.
+                    session.answer_cited = "answer.papers"
             else:
                 planner.resolve_citations(session, args, _papers_resolver(runtime))
             # A refused citation is corrected once, like an invented id: the
@@ -356,6 +493,42 @@ def execute(state: PlannerState, config=None) -> PlannerState:
                 session.answer = ""
                 session.stopped_because = ""
                 continue
+
+            # THE ANSWER GATE (D-107). Deterministic, one retry, arm-gated
+            # until it is measured. It asks only whether the answer NAMES
+            # anything -- the semantic "is this the right set" question is the
+            # answer-critic's, and mixing the two would make a formatting fix
+            # look like a reasoning result.
+            if runtime.get("answer_gate"):
+                from hepcoveragekg.query import answer_gate as _ag
+                verdict = _ag.check(session.answer, session.answer_cited,
+                                    session.answerable, claimed)
+                session.answer_gate_kind = verdict.kind
+                if not verdict.ok and not session.answer_gate_retried:
+                    session.answer_gate_retried = True
+                    logger.info("answer gate: %s -- asking once", verdict.kind)
+                    state["messages"].append({
+                        "role": "tool", "tool_call_id": call["id"],
+                        "content": verdict.message})
+                    session.answer = ""
+                    session.stopped_because = ""
+                    continue
+                if not verdict.ok:
+                    # Asked and still nothing. Accepted, and LOUD: an arm whose
+                    # gate fires twice is not fixing the answers, and that has
+                    # to be visible in the run rather than inferred from a
+                    # score that looks the same as the control's.
+                    session.answer_gate_failed = True
+                    logger.warning("answer gate: still no ids after retry (%s)",
+                                   verdict.kind)
+
+            # THE ANSWER CRITIC (D-106, arm). Judges each cited PAPER against
+            # the question. It only ever narrows `answer_papers`, so it cannot
+            # invent coverage, and it runs after the gate so it never judges a
+            # list the gate was about to reject.
+            if runtime.get("answer_critic") and session.answer_papers:
+                _answer_critic(runtime, session)
+
             return state
 
         # Papers handed to an entity tool go to `contents_of` before the id
@@ -449,11 +622,61 @@ def finish(state: PlannerState) -> PlannerState:
 # edges
 # --------------------------------------------------------------------------
 
+
+def review(state: PlannerState, config=None) -> PlannerState:
+    """A second model judges the plan before a round is spent running it."""
+    from hepcoveragekg.query import reviewer as R
+
+    runtime = _runtime(config)
+    session = state["session"]
+    cycles = state.get("review_cycles", 0)
+
+    # THE RUNAWAY GUARD. Retries are uncapped by design for this arm -- the
+    # question is how many get used -- but a stubborn planner meeting a strict
+    # reviewer must not spin all night, which is what a retry storm cost on
+    # 2026-08-30. Hitting this is a finding, so it is loud and recorded.
+    if cycles >= R.MAX_REVIEW_CYCLES:
+        logger.warning(f"review cycle ceiling ({R.MAX_REVIEW_CYCLES}) hit on round "
+                       f"{state['round']}; approving to break the loop")
+        session.review_ceiling_hit = True
+        state["replan"] = False
+        return state
+
+    verdict = R.review_plan(
+        chat=runtime["review_chat"],
+        question=state["question"],
+        schema=runtime.get("review_schema", ""),
+        objective=state.get("objective", ""),
+        plan=R.describe_calls(state["pending_calls"]),
+        kind="typed",
+        history=R.describe_history(session),
+    )
+    session.review_calls += 1
+    session.review_prompt_tokens += verdict.prompt_tokens
+    session.review_completion_tokens += verdict.completion_tokens
+    if not verdict.parsed:
+        session.review_unparsed += 1
+    if verdict.approved:
+        state["replan"] = False
+    else:
+        session.reviews_rejected += 1
+        state["review_cycles"] = cycles + 1
+        state["review_feedback"] = verdict.feedback
+        state["replan"] = True
+    return state
+
+
+def after_review(state: PlannerState) -> str:
+    """Run the plan, or send it back to be rewritten inside the same round."""
+    return "plan" if state.get("replan") else "execute"
+
+
 def after_plan(state: PlannerState) -> str:
     """Tool calls to run, a prose answer to accept, or a nudge to send."""
     session = state["session"]
     if state["pending_calls"]:
-        return "execute"
+        retrieval = [c for c in state["pending_calls"] if c.get("name") != "answer"]
+        return "review" if (state.get("_reviewing") and retrieval) else "execute"
 
     # No tool calls: the model wrote prose. If nothing has been retrieved this
     # is an answer from memory, which is the failure the project exists to
@@ -503,13 +726,17 @@ def build(checkpointer=None):
     """Compile the graph. Pass a checkpointer to make runs resumable."""
     g = StateGraph(PlannerState)
     g.add_node("plan", plan)
+    g.add_node("review", review)
     g.add_node("execute", execute)
     g.add_node("nudge", nudge)
     g.add_node("finish", finish)
 
     g.add_edge(START, "plan")
     g.add_conditional_edges("plan", after_plan,
-                            {"execute": "execute", "nudge": "nudge", "finish": "finish"})
+                            {"review": "review", "execute": "execute",
+                             "nudge": "nudge", "finish": "finish"})
+    g.add_conditional_edges("review", after_review,
+                            {"plan": "plan", "execute": "execute"})
     g.add_edge("nudge", "plan")
     g.add_conditional_edges("execute", after_execute, {"plan": "plan", "finish": "finish"})
     g.add_edge("finish", END)

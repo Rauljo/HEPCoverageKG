@@ -123,6 +123,14 @@ h2{margin:2.6rem 0 .2rem;font-size:1.05rem;letter-spacing:.06em;text-transform:u
     border-left:3px solid var(--muted);border-radius:0 7px 7px 0;
     padding:.6rem .85rem;margin:.4rem 0;overflow-x:auto}
 .nolead{font-size:.87rem;color:var(--muted);font-style:italic;margin:.3rem 0 .1rem}
+/* The seven value rows state a number and ask whether it is right. The claim
+   has to read as OURS and separately from the question, or the two run into
+   one another -- which is exactly how the first draft of this batch read. */
+.weanswer{margin:.7rem 0 .35rem;padding:.6rem .85rem;background:var(--accent-soft);
+          border-radius:7px;font-weight:500;text-wrap:pretty}
+.weanswer b{letter-spacing:.03em;text-transform:uppercase;font-size:.8rem;
+            color:var(--muted);display:block;margin-bottom:.2rem}
+.weask{font-size:.9rem;color:var(--muted);margin:0 0 .2rem}
 .acts{display:flex;gap:.5rem;margin-top:.8rem;flex-wrap:wrap;align-items:center}
 .v{padding:.42rem 1.05rem;font-weight:600;border-width:1.5px}
 .v[aria-pressed="true"][data-v="yes"]{background:var(--yes);border-color:var(--yes);color:#fff}
@@ -275,6 +283,8 @@ function render(){
     html += `<article class="item" id="it-${it.row}" data-idx="${idx}">
       <div class="meta"><span>#${it.row}</span><span class="pid">${esc(it.paper_id)}</span></div>
       ${perItem ? `<div class="peritem">${it.question}</div>` : ""}
+      ${it.our_answer ? `<div class="weanswer"><b>Our answer</b>${it.our_answer}</div>
+         <div class="weask">Is that right? If not, the correct value in the notes.</div>` : ""}
       ${ev}
       <div class="acts">
         <button class="v" data-v="yes"    data-row="${it.row}">Yes</button>
@@ -521,6 +531,9 @@ def write_app(items: list[dict], path: Path | str, title: str,
         payload.append({
             "row": i["row"], "qid": i["qid"], "paper_id": i["paper_id"],
             "question": render_field(i["question"]), "quotes": quotes,
+            # Only the value rows carry this. It is OUR claim, not the paper's
+            # words, so it renders above the evidence and outside the serif.
+            "our_answer": render_field(i["our_answer"]) if i.get("our_answer") else "",
             "candidates": [render_field(c) for c in (i.get("candidates") or [])],
             "judge": i["_judge"],
             # base64 so an accidental View Source does not spoil the blinding.

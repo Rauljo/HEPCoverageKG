@@ -21,6 +21,8 @@ with the rest, so the reviewer cannot tell which is which.
 """
 from __future__ import annotations
 
+from . import value_evidence
+
 import csv
 import json
 import random
@@ -582,8 +584,16 @@ def decomposed_condition_items(rows: list[dict], papers: set, conn=None,
     return items
 
 
+def _value_quotes(conn, r: dict, answer: str) -> list[str]:
+    """Sentences containing the value, falling back to the run's own quotes."""
+    found = value_evidence.find(conn, r["paper_id"], answer) if conn else []
+    if found:
+        return found
+    return value_evidence.dedupe(q for q in (r.get("all_quotes") or []) if q)
+
+
 def value_items(rows: list[dict], questions: list[dict],
-                start_row: int = 1) -> list[dict]:
+                start_row: int = 1, conn=None) -> list[dict]:
     """The questions that ask for a VALUE, reframed as a claim to be checked.
 
     Gabriel wrote the same note on every one of these: *"Not a yes/no question.
@@ -612,11 +622,21 @@ def value_items(rows: list[dict], questions: list[dict],
         items.append({
             "row": row,
             "qid": r["qid"],
-            "question": (f"{asked}\n\nWE ANSWER: {answer}\n\n"
-                         "Is that answer correct? (notes: the right value, if not)"),
+            # THE SEPARATORS MUST BE MARKUP. These went out as "\n\n" and the app
+            # inserts the field with innerHTML, where a newline is whitespace --
+            # so the sheet read "...t2 mass in 2006.05880?WE ANSWER: 875 GeVIs
+            # that answer correct?", three questions run into one line.
+            # OUR CLAIM IS ITS OWN FIELD. It was appended to `question` as a
+            # string of <div>s, and the app escapes that field -- so the sheet
+            # showed the literal text "&lt;/b&gt; 875 GeV&lt;/div&gt;".
+            "question": asked,
+            "our_answer": answer,
             "paper_id": r["paper_id"],
             "quote": r.get("quote") or "",
-            "quotes": [q for q in (r.get("all_quotes") or []) if q][:3],
+            # SUPPORT, NOT FOOTPRINT -- see value_evidence. `all_quotes` is
+            # what the agent read on the way to an answer, which for three of
+            # these rows contained the number nowhere.
+            "quotes": _value_quotes(conn, r, answer),
             "candidates": [],
             "_machine": True,
             "_judge": r.get("answer"),

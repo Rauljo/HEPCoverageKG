@@ -66,7 +66,8 @@ def main() -> int:
     kept = [i for i in kept if i["qid"] != "gf-01"]
 
     conditions = RV.decomposed_condition_items(_rows(args.gf01), gf01_papers, conn=conn)
-    values = RV.value_items(_rows(args.value), questions)
+    conn = sqlite3.connect("file:data/processed/hepkg.db?mode=ro", uri=True)
+    values = RV.value_items(_rows(args.value), questions, conn=conn)
 
     # ORDERED BY WHAT A PARTIAL RETURN IS WORTH, for the same reason the probe
     # set puts Gabriel's questions first: these get answered in file order and

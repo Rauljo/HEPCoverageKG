@@ -529,7 +529,8 @@ def _cmd_eval(args) -> int:
 
 
     if args.system == "stub":
-        system = systems.StubSystem()
+        make_system = systems.StubSystem
+        system = make_system()
     elif args.system == "free-sql":
         # The control. Same runner, same scorers, same model -- one tool that
         # takes SQL instead of nine typed ones. See eval/free_sql.py.
@@ -537,29 +538,64 @@ def _cmd_eval(args) -> int:
         conn = templates.read_only(args.db)
         # The SAME index the planner uses. Withholding it would make this a
         # comparison of search technology rather than of typed structure.
-        index = retrieve.build(conn, cache="data/processed/retrieval_index.npz")
-        system = free_sql.FreeSQLSystem(conn, index, max_rounds=args.max_rounds,
-                                        persist=not args.no_persist)
+        index = retrieve.build(
+            conn,
+            cache=retrieve.cache_path(args.index_values, args.index_quotes),
+            include_values=args.index_values,
+            include_quotes=args.index_quotes)
+        # A FACTORY, NOT AN OBJECT. With --workers each thread needs its own
+        # system and its own sqlite connection: FreeSQLSystem keeps search sets
+        # as temp tables named `search_N` on the connection, and two questions
+        # sharing one would silently overwrite each other's sets. The INDEX is
+        # shared deliberately -- it is immutable after build() and ~44MB.
+        def make_system():
+            return free_sql.FreeSQLSystem(
+                templates.read_only(args.db), index, max_rounds=args.max_rounds,
+                persist=not args.no_persist,
+                reviewer=args.reviewer,
+                state_objective=args.state_objective,
+                index_values=args.index_values,
+                index_quotes=args.index_quotes,
+                search_sets=args.search_sets,
+                concept_prompt=args.concept_prompt,
+                subgoals=args.subgoals,
+                subgoal_status=args.subgoal_status)
+        system = make_system()
     elif args.system == "planner":
         from hepcoveragekg.query import retrieve, templates
         conn = templates.read_only(args.db)
-        index = retrieve.build(conn, cache="data/processed/retrieval_index.npz")
-        system = systems.PlannerSystem(
-            conn, index,
-            max_rounds=args.max_rounds, max_places=args.max_places,
-            minimal_prompt=args.minimal_prompt,
-            use_critic=args.critic,
-            critic_seed=args.critic_seed,
-            answer_contract=args.answer_contract,
-            contract=args.contract,
-            force_critic_set=args.force_critic_set,
-            persist=args.persist,
-            push_further=args.push_further,
-            simple_answer=args.simple_answer,
-            fewshot=_fewshot_block(args),
-            tool_examples=args.tool_examples,
-        )
+        index = retrieve.build(
+            conn,
+            cache=retrieve.cache_path(args.index_values, args.index_quotes),
+            include_values=args.index_values,
+            include_quotes=args.index_quotes)
+        def make_system():
+            return systems.PlannerSystem(
+                templates.read_only(args.db), index, index_values=args.index_values,
+                index_quotes=args.index_quotes,
+                max_rounds=args.max_rounds, max_places=args.max_places,
+                minimal_prompt=args.minimal_prompt,
+                use_critic=args.critic,
+                critic_seed=args.critic_seed,
+                answer_contract=args.answer_contract,
+                contract=args.contract,
+                force_critic_set=args.force_critic_set,
+                persist=args.persist,
+                push_further=args.push_further,
+                simple_answer=args.simple_answer,
+                fewshot=_fewshot_block(args),
+                tool_examples=args.tool_examples,
+                reviewer=args.reviewer,
+                state_objective=args.state_objective,
+                subgoals=args.subgoals,
+                subgoal_status=args.subgoal_status,
+                path_tool=args.path_tool,
+                answer_gate=args.answer_gate,
+                answer_critic=args.answer_critic,
+            )
+        system = make_system()
     else:
+        make_system = None
         print(f"unknown system {args.system!r}", file=sys.stderr)
         return 2
 
@@ -570,7 +606,14 @@ def _cmd_eval(args) -> int:
         mark = "!" if record.answer.get("error") else "."
         print(mark, end="", flush=True)
 
-    path = runner.run(qset, system, repeats=args.repeats, on_record=tick)
+    # A TIMED-OUT RECORD SCORES ZERO, so the default penalises slowness rather
+    # than wrongness. Measured 2026-09-01: typed+reviewer lost 5 of 24 records
+    # and qwen3.8-27b lost 7, both at exactly 600s -- arms that add a per-round
+    # LLM call need a bigger budget or they are marked down for the cost of the
+    # mechanism being tested.
+    path = runner.run(qset, system, repeats=args.repeats, on_record=tick,
+                      max_workers=args.workers, make_system=make_system,
+                      timeout=(args.timeout or runner.DEFAULT_TIMEOUT))
     print(f"\n\nwrote {path}\n")
     print(R.render_path(path, tag=args.tag))
     return 0
@@ -703,6 +746,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_eval.add_argument("--system", default="stub",
                         help="stub (default, needs nothing), planner, or free-sql "
                              "-- the control: one SQL tool instead of the typed ones")
+    p_eval.add_argument("--workers", type=int, default=1,
+                        help="answer this many questions at once. The bottleneck "
+                             "is a ~90s network call per question, so this is close "
+                             "to a linear speed-up; 12 turns a 22-hour arm into two. "
+                             "Each worker gets its OWN system and sqlite connection, "
+                             "because free-SQL keeps search sets in temp tables named "
+                             "on the connection and sharing one corrupts answers silently.")
     p_eval.add_argument("--repeats", type=int, default=1,
                         help="run each question N times; 3+ before comparing anything (S-52)")
     p_eval.add_argument("--max-rounds", type=int, default=6)
@@ -736,9 +786,66 @@ def build_parser() -> argparse.ArgumentParser:
     p_eval.add_argument("--force-critic-set", action="store_true",
                         help="planner: substitute the critic's kept set wherever "
                              "a raw search set is passed to a tool")
+    p_eval.add_argument("--timeout", type=float, default=None,
+                        help="seconds per record before it is abandoned and "
+                             "scored zero (default 600). Raise it for arms that "
+                             "add an LLM call per round")
+    p_eval.add_argument("--path-tool", action="store_true",
+                        help="planner: a `path` tool that applies SEVERAL "
+                             "predicate->object constraints at once. gf-01 asks "
+                             "for b-tagged jets AND missing transverse momentum "
+                             "and scores 0.48; the same concept with one "
+                             "condition scores 0.89")
+    p_eval.add_argument("--subgoals", action="store_true",
+                        help="decompose the question into at most 3 ordered "
+                             "sub-objectives once, before the first round; the "
+                             "list is fixed and never updated")
+    p_eval.add_argument("--subgoal-status", action="store_true",
+                        help="--subgoals plus a status per objective, rewritten "
+                             "every round and carried in the prompt (PoG's "
+                             "highest-value mechanism; targets gf-01's dropped "
+                             "conditions). Implies --subgoals")
+    p_eval.add_argument("--concept-prompt", action="store_true",
+                        help="free-sql: tell it a search result is a SAMPLE OF "
+                             "THE VOCABULARY, not the answer set -- match the "
+                             "family with a pattern instead of pasting the ids "
+                             "it happened to be shown (implied by --search-sets)")
+    p_eval.add_argument("--search-sets", action="store_true",
+                        help="free-sql: materialise the FULL match set of each "
+                             "search as a temp table the model filters in SQL, "
+                             "instead of retyping a few ids from the 20 shown")
+    p_eval.add_argument("--index-quotes", action="store_true",
+                        help="index the verbatim evidence quotes (normalised) as "
+                             "searchable surface forms: 97%% of assertions carry "
+                             "one and none of it was reachable -- 2102.01444 has "
+                             "17 quotes naming a ttZ control region and no entity "
+                             "labelled ttZ")
+    p_eval.add_argument("--index-values", action="store_true",
+                        help="index assertion object_value as searchable surface "
+                             "forms: 31%% of assertions hold their object as free "
+                             "text (selections, quantities, region definitions) "
+                             "that `search` could not reach at all")
+    p_eval.add_argument("--reviewer", action="store_true",
+                        help="planner: a second strong model checks each round's "
+                             "objective and proposed calls BEFORE they run; a "
+                             "rejection is re-planned without spending a round")
+    p_eval.add_argument("--state-objective", action="store_true",
+                        help="planner: each turn must open with GOT (did the last "
+                             "result meet the objective) and AIM (what this round "
+                             "is for) before its tool calls")
     p_eval.add_argument("--tool-examples", action="store_true",
                         help="planner: attach one real worked call per tool, "
                              "mined from runs that answered correctly")
+    p_eval.add_argument("--answer-gate", action="store_true",
+                        help="planner: reject an answer that names no arXiv "
+                             "ids -- a placeholder, a set reference, a list of "
+                             "titles, or an instruction to run another tool -- "
+                             "and ask for it once. No model call (D-107)")
+    p_eval.add_argument("--answer-critic", action="store_true",
+                        help="planner: a small judge decides, per cited paper, "
+                             "whether it satisfies the question, and drops the "
+                             "ones that do not. Can only narrow the answer "
+                             "(D-106)")
     p_eval.add_argument("--simple-answer", action="store_true",
                         help="planner: answer with a literal list of arXiv ids "
                              "instead of naming a set in `papers_from`")

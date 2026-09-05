@@ -97,7 +97,72 @@ MAX_SEARCH_BREADTH = int(os.environ.get("SEARCH_BREADTH_MAX", 240))
 # ids, which was the only thing that ever needed a long completion -- so a
 # completion running past this cap means something has gone wrong, and truncating
 # it surfaces that as a visible bad answer instead of an hour of silence.
+# ...ALL OF WHICH ASSUMES THE MODEL ANSWERS DIRECTLY. A reasoning model does
+# not: it emits its chain of thought first, billed as output and invisible in
+# the reply, and that comes out of this same allowance. At 800 it is truncated
+# mid-thought and returns an empty message with no tool call -- the harness
+# records `answered=True` with empty text, `papers` still holds the retrieval
+# footprint, and the scorer correctly gives it zero. A plumbing limit then reads
+# as a model that cannot answer. Measured on qwen3-32b, same everything except
+# this number: free-SQL 0.199 -> 0.592, empty answers 13/24 -> 0/24 (D-084).
+#
+# So the default is now chosen by what the model IS, not by what the 72B needed.
+# The env var still wins, because the cluster's timeout arithmetic above is real
+# and an operator serving a slow local model must be able to pull it back down.
 MAX_COMPLETION_TOKENS = int(os.environ.get("LLM_MAX_COMPLETION_TOKENS", 800))
+REASONING_COMPLETION_TOKENS = int(
+    os.environ.get("LLM_REASONING_COMPLETION_TOKENS", 4000))
+
+
+
+def planner_temperature() -> float:
+    """Sampling temperature for the PLANNER's own calls. 0.0 unless asked.
+
+    WHY THIS EXISTS, AND WHY IT DEFAULTS TO ZERO. Every call site hardcoded
+    `temperature=0.0`, so "repeats" were four greedy runs that differed only by
+    batch-scheduling nondeterminism (D-101) -- accidental floating-point noise,
+    not diversification. That made D-102's comparison of rewording against
+    "resampling" a comparison against nothing, and its conclusion that
+    temperature is dominated unsupported (D-103).
+
+    Read FRESH from the environment on every call, not captured at import, for
+    the reason `completion_cap` is: a value exported by a job script after this
+    module is imported would otherwise be accepted and then silently ignored.
+
+    Deliberately NOT applied to the critic. The critic is a judge, and a judge
+    that answers differently on reruns stops being a fixed yardstick -- the
+    whole reason `--critic-seed` shuffles ROW ORDER rather than sampling. Mixing
+    a sampled planner with a sampled critic would also confound which half any
+    change came from.
+    """
+    raw = os.environ.get("PLANNER_TEMPERATURE", "").strip()
+    if not raw:
+        return 0.0
+    try:
+        t = float(raw)
+    except ValueError:
+        logger.warning("PLANNER_TEMPERATURE=%r is not a number; using 0.0", raw)
+        return 0.0
+    if not 0.0 <= t <= 2.0:
+        logger.warning("PLANNER_TEMPERATURE=%s out of range [0,2]; using 0.0", t)
+        return 0.0
+    return t
+
+
+def completion_cap(model: str) -> int:
+    """The output allowance for `model`, reasoning models getting the larger one."""
+    # Read fresh, not from the module constant: that is frozen at import, so a
+    # value set afterwards (a job script exporting it, a test) would be accepted
+    # as "an override is present" and then silently ignored in favour of 800.
+    override = os.environ.get("LLM_MAX_COMPLETION_TOKENS")
+    if override:
+        return int(override)                  # explicit operator override wins
+    from hepcoveragekg.query import budget as _b
+    name = (model or "").strip().lower()
+    if name in _b.REASONING_MODELS or any(
+            k in name for k in ("qwq", "qwen3", "thinking", "-r1", "reason")):
+        return REASONING_COMPLETION_TOKENS
+    return MAX_COMPLETION_TOKENS
 
 # Sent when the model tries to answer having retrieved nothing. Shared with
 # graph.py so the two cannot drift apart.
@@ -311,6 +376,41 @@ TOOL_SPECS: list[dict] = [
         },
     },
     {
+        "name": "path",
+        "description": (
+            "Entities satisfying SEVERAL predicate->object constraints AT ONCE, and optionally "
+            "the papers they appear in. Use this the moment a question says AND: 'searches using "
+            "b-tagged jets AND missing transverse momentum', 'a ttZ background AND a control "
+            "region normalising it'. One call replaces a hop per condition, and the conditions "
+            "are applied together rather than one after another -- which is the difference "
+            "between 8 papers that satisfy both and 40 that satisfy either. "
+            "Each constraint is {predicate, object_ids}; pass a saved set's ids for object_ids. "
+            "project='papers' resolves the survivors to arXiv ids in the same call."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "constraints": {
+                    "type": "array",
+                    "description": "one per condition in the question",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "predicate": {"type": "string"},
+                            "object_ids": {"type": "array", "items": {"type": "string"}},
+                        },
+                        "required": ["predicate", "object_ids"],
+                    },
+                },
+                "project": {"type": "string",
+                    "description": "'subjects' (default) or 'papers'"},
+                "mode": {"type": "string",
+                    "description": "'all' (default, intersect -- what AND means) or 'any'"},
+            },
+            "required": ["constraints"],
+        },
+    },
+    {
         "name": "crosstab",
         "description": (
             "A coverage grid: for each analysis, what it has under two predicates. Rows mean "
@@ -461,8 +561,14 @@ SIMPLE_ANSWER_FIELD = {
 }
 
 
+#: OFF unless asked for. Adding a tool rewrites the prompt for EVERY question,
+#: so an unflagged `path` would move the baseline it is meant to be measured
+#: against -- the same reason `--search-sets` keeps its tool hidden when off.
+PATH_TOOL = "path"
+
+
 def tools_for(answer_contract: bool = False, contract: str = "",
-              simple_answer: bool = False) -> list[dict]:
+              simple_answer: bool = False, path_tool: bool = False) -> list[dict]:
     """The tool schemas for one run.
 
     `contract` is "v1" (default), "v2" (everything) or "v3" (the lean version).
@@ -476,6 +582,8 @@ def tools_for(answer_contract: bool = False, contract: str = "",
     specs = []
     for spec in TOOL_SPECS:
         if spec["name"] in V2_TOOLS and contract != "v2":
+            continue
+        if spec["name"] == PATH_TOOL and not path_tool:
             continue
         if spec["name"] == "answer":
             spec = copy.deepcopy(spec)
@@ -627,6 +735,37 @@ class Session:
     # again, once. Recorded so a run that needed asking is distinguishable from
     # one that answered first time.
     answer_retried: bool = False
+
+    # THE ANSWER GATE (D-107). `answer_gate_kind` is what tripped it -- one of
+    # "placeholder", "deferred", "silent", or "" for an answer that named ids
+    # first time. `answer_gate_failed` means it was asked and still named
+    # nothing, which is the number that says whether the arm works.
+    answer_gate_kind: str = ""
+    answer_gate_retried: bool = False
+    answer_gate_failed: bool = False
+
+    # THE ANSWER CRITIC (D-106). The per-paper review, or None when the arm is
+    # off. Kept whole rather than reduced to a count: which papers it dropped
+    # and why is the measurement, and a keep-rate alone hides a judge that is
+    # defaulting (D-105).
+    answer_review: Any = None
+    #: The answer as WRITTEN, kept when the critic struck ids out of it. The
+    #: edit has to be auditable: a harness that silently rewrites an answer and
+    #: then scores it is measuring itself.
+    answer_before_critic: str = ""
+
+    # THE PLAN REVIEWER (separate from the search critic, which judges retrieved
+    # rows). Counted apart from the planner's own calls and tokens: the whole
+    # cost question for this arm is what the second model adds, and folding it
+    # into llm_calls would hide exactly that. `reviews_rejected` is the metric
+    # that says whether the reviewer is doing anything at all -- one that
+    # approves everything is a no-op costing double.
+    review_calls: int = 0
+    reviews_rejected: int = 0
+    review_prompt_tokens: int = 0
+    review_completion_tokens: int = 0
+    review_unparsed: int = 0
+    review_ceiling_hit: bool = False
 
     # Set when a citation was rejected, with the reason. Recorded rather than
     # silently dropped: a refused citation means the answer carries no number,
@@ -1173,6 +1312,10 @@ def build_executor(conn, index, sets: Optional[dict] = None,
         if tool == "compare":
             return templates.compare(conn, args["subject_a"], args["subject_b"],
                                      args["predicate"])
+        if tool == "path":
+            return templates.path(conn, args.get("constraints") or [],
+                                  project=args.get("project") or "subjects",
+                                  mode=args.get("mode") or "all")
         if tool == "crosstab":
             return templates.crosstab(conn, args["predicate_a"], args["predicate_b"])
         if tool == "quotes":
@@ -1182,7 +1325,71 @@ def build_executor(conn, index, sets: Optional[dict] = None,
     return run
 
 
-def system_prompt(conn, minimal: bool = False) -> str:
+#: Tool-call markup that some servers leave in `message.content` after parsing
+#: the call out of it. Observed on qwen3-32b via OpenRouter: EVERY stated
+#: objective came back ending in "ool_call>", and one in six was nothing else --
+#: so the reviewer judged a plan against an empty objective and the trace
+#: recorded a goal the model never set. It also reaches `session.answer`, which
+#: is `last_content` whenever the model answers in prose.
+_TOOL_MARKUP = re.compile(
+    r"</?\s*tool_call\s*>|<\|?/?tool[_▁]?call\|?>|^[a-z_]*ool_call>|ool_call>",
+    re.I | re.M)
+
+
+def clean_content(text: str) -> str:
+    """Message prose with the server's tool-call scaffolding removed."""
+    return _TOOL_MARKUP.sub("", text or "").strip()
+
+
+def _reviewer_chat(planner_chat):
+    """The callable the reviewer talks through.
+
+    Falls back to the planner's own client, which is the intended default: a
+    strong reasoning model reviewing a strong reasoning model. Set REVIEWER_MODEL
+    (optionally with REVIEWER_BASE_URL / REVIEWER_API_KEY) to point it elsewhere.
+    """
+    model = os.environ.get("REVIEWER_MODEL", "").strip()
+    if not model:
+        return planner_chat
+    import openai
+    from hepcoveragekg.query import budget as budget_mod
+    client = openai.OpenAI(
+        base_url=os.environ.get("REVIEWER_BASE_URL")
+                 or os.environ.get("LLM_BASE_URL", "http://localhost:8000/v1"),
+        api_key=os.environ.get("REVIEWER_API_KEY")
+                or os.environ.get("LLM_API_KEY", "dummy"))
+    cap = completion_cap(model)
+
+    def chat(msgs, tls=None):
+        kwargs = dict(model=model, messages=msgs,
+                      temperature=planner_temperature(), max_tokens=cap)
+        if tls:
+            kwargs["tools"] = tls
+        return client.chat.completions.create(**kwargs)
+    return budget_mod.guard(chat, budget_mod.from_env(model))
+
+
+#: Appended when --state-objective is on. Two things in one call, not two calls:
+#: the traces show runs stopping at 2-3 rounds with a median of one row per
+#: later step, so the model is not noticing that it holds too little. Asking it
+#: to say whether the last result met its goal is the cheapest way to make that
+#: judgement explicit, and it gives the reviewer something to check the plan
+#: against. Kept short on purpose: it is re-sent every round.
+OBJECTIVE_BLOCK = """
+
+BEFORE THE TOOL CALLS IN EACH TURN, WRITE TWO SHORT LINES:
+
+  GOT: what the previous result gave you, and whether it met the objective you
+       set last round. Say plainly if it did not -- an empty or thin result is
+       information, and pretending otherwise wastes the rounds you have left.
+       Write "GOT: nothing yet" on the first round.
+  AIM: what THIS round is for, in one sentence. Not the whole question -- the
+       specific thing these calls are meant to establish.
+
+Then make the calls. Keep both lines to one sentence each."""
+
+
+def system_prompt(conn, minimal: bool = False, state_objective: bool = False) -> str:
     """Purpose + what the graph contains. Assembled fresh so it cannot go stale."""
     from hepcoveragekg.query import prompts, schema_card
 
@@ -1193,7 +1400,8 @@ def system_prompt(conn, minimal: bool = False) -> str:
         "Work by calling tools. You may call several in one turn when they do not depend on "
         "each other -- one round of several calls costs far less than several rounds of one. "
         "Call `answer` when the retrieved rows support an answer, or to say the graph does not "
-        "hold what was asked.",
+        "hold what was asked."
+        + (OBJECTIVE_BLOCK if state_objective else ""),
     ])
 
 
@@ -1206,6 +1414,12 @@ def rows_held(session: "Session") -> int:
     every hop off it came back empty -- and an abstention there is correct.
     """
     return sum(s.rows for s in session.steps if not s.error)
+
+
+#: A set reference inside `papers_from`. Set names are word characters, so
+#: anything else is a separator -- "set_1_kept and set_3_kept", "set_1,set_3"
+#: and "set_1 + set_3" all yield the same two names.
+_SET_REF = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
 
 def resolve_citations(session: "Session", args: dict,
@@ -1239,16 +1453,43 @@ def resolve_citations(session: "Session", args: dict,
     """
     cited = []
 
-    name = str(args.get("papers_from") or "").strip()
-    if name and name in session.sets:
+    # ONE NAME OR SEVERAL. The model routinely cites more than one set --
+    # "set_1_kept and set_3_kept" was the single most common unresolved value in
+    # runs 54201-06 -- and the old exact-match lookup dropped every one of them
+    # in silence. Splitting on anything that is not a set-name character and
+    # keeping the parts that ARE sets resolves the compound form without
+    # inventing a new syntax for the model to get wrong.
+    raw_name = str(args.get("papers_from") or "").strip()
+    wanted = [w for w in _SET_REF.findall(raw_name)]
+    known = [w for w in wanted if w in session.sets]
+    if raw_name and not known:
+        # AND IT MUST NOT BE SILENT. `value_from` has always refused an
+        # unresolvable reference and got a correction round out of it; the paper
+        # list took the same mistake and threw the answer away instead. D-107:
+        # 23 of 60 Gabriel answers scored a hard 0 while holding the right
+        # papers, and this is one of the two ways it happened.
+        session.citation_refused = (
+            f"papers_from={raw_name!r} does not name a set from this run. "
+            f"The sets you can cite are: {', '.join(sorted(session.sets)) or '(none)'}. "
+            f"Cite one of those, or several separated by spaces, or write the "
+            f"arXiv ids into the answer text yourself."
+        )
+    elif known:
         # A set holds ENTITY ids while the answer is about PAPERS -- the graph
         # keeps 56 spellings of Pythia, and no question is asking about
         # spellings. Resolving through `papers_of` is right HERE, where the
         # question is "which analyses", and wrong for a count.
-        papers = papers_of(session.sets[name]) if papers_of else None
+        entities: list = []
+        seen_e = set()
+        for w in known:
+            for e in session.sets[w]:
+                if e not in seen_e:
+                    seen_e.add(e)
+                    entities.append(e)
+        papers = papers_of(entities) if papers_of else None
         if papers is not None:
             session.answer_papers = list(papers)
-            cited.append(f"papers={name}")
+            cited.append("papers=" + "+".join(known))
 
     ref = str(args.get("value_from") or "").strip()
     if ref:
@@ -1424,9 +1665,53 @@ def _build_critic(question: str, session: Session, use_critic, seed=None):
 
         def judge(search_text, hits):
             def chat(messages):
+                # THINKING OFF FOR THE JUDGE, and this is why the critic was
+                # silently inert for weeks.
+                #
+                # Qwen3.5-9B is served with `--reasoning-parser qwen3`, so its
+                # chain of thought goes to `reasoning_content` and `content`
+                # stays empty until it stops thinking. On this task it never
+                # stops: measured 2026-09-05, finish_reason=length,
+                # completion_tokens=4000, content EMPTY. `_parse` then finds no
+                # JSON, returns {}, and every candidate DEFAULTS TO KEPT by the
+                # deliberate asymmetry in critic.py -- silently, because a
+                # default is not an error. Across four 164-question runs:
+                # 33,836 candidates, 100% defaulted, ZERO drops.
+                #
+                # Raising the cap does not help; it thinks for whatever it is
+                # given. Judging a candidate against a question is a
+                # CLASSIFICATION, not a reasoning problem -- with thinking off
+                # the same model returns correct verdicts in under 800 tokens
+                # ("b-tagged jet" -> exact, "Muon" -> unrelated).
+                #
+                # Sent as extra_body because it is a vLLM/Qwen template switch,
+                # not an OpenAI field; a server that rejects it gets a plain
+                # retry, so a non-Qwen judge is unaffected.
+                try:
+                    return client.chat.completions.create(
+                        model=model, messages=messages, temperature=0.0,
+                        max_tokens=completion_cap(model),
+                        extra_body={"chat_template_kwargs": {"enable_thinking": False}})
+                except Exception:  # noqa: BLE001 -- judge must not kill the run
+                    pass
+                # THE JUDGE NEEDS ITS OWN CAP, and this is D-084 repeating.
+                # `MAX_COMPLETION_TOKENS` is 800 -- generous for the verdict
+                # JSON, and nothing at all for a REASONING judge, which spends
+                # the allowance on its chain of thought and is cut off before it
+                # emits the block. `_parse` then finds no JSON and returns {},
+                # and every candidate DEFAULTS TO KEPT by the asymmetry a few
+                # lines below in critic.py -- silently, because a default is not
+                # an error.
+                #
+                # Measured 2026-09-05 with CRITIC_MODEL=Qwen/Qwen3.5-9B across
+                # four 164-question runs: 33,836 candidates, 100% defaulted,
+                # ZERO drops. The critic had judged nothing at all, while every
+                # arm was reported as running with a critic. `completion_cap`
+                # already knows this model needs 4000; it was simply never
+                # applied on this path.
                 return client.chat.completions.create(
                     model=model, messages=messages, temperature=0.0,
-                    max_tokens=MAX_COMPLETION_TOKENS)
+                    max_tokens=completion_cap(model))
 
             # A small judge needs the demonstration-led prompt: on 2026-08-17
             # the 8B went from 38.9%/86.7% kept on two all-drop controls to
@@ -1488,17 +1773,24 @@ def _prepare(conn, index, question, max_rounds, max_places, max_rows,
              minimal_prompt, chat, thread_id, use_critic=None, critic_seed=None,
              answer_contract=False, contract="", force_critic_set=False,
              persist=False, push_further=False, simple_answer=False,
-             fewshot="", tool_examples=False):
+             fewshot="", tool_examples=False, reviewer=False,
+             state_objective=False, subgoals=False, subgoal_status=False,
+             path_tool=False, answer_gate=False, answer_critic=False):
     """The state and runtime config a run needs. Shared by answer() and stream()."""
     session = Session(question=question)
     if chat is None:
         from hepcoveragekg.query import budget as budget_mod
         client, model = _client()
 
+        cap = completion_cap(model)
+
         def chat(msgs, tls):  # noqa: E306
-            return client.chat.completions.create(
-                model=model, messages=msgs, tools=tls, temperature=0.0,
-                max_tokens=MAX_COMPLETION_TOKENS)
+            kwargs = dict(model=model, messages=msgs,
+                          temperature=planner_temperature(),
+                          max_tokens=cap)
+            if tls:
+                kwargs["tools"] = tls
+            return client.chat.completions.create(**kwargs)
 
         # A hard stop when LLM_BUDGET_USD is set, and nothing at all when it is
         # not. The cap belongs here rather than in the runner because this is
@@ -1510,7 +1802,7 @@ def _prepare(conn, index, question, max_rounds, max_places, max_rows,
         "question": question,
         "messages": [
             {"role": "system",
-             "content": (system_prompt(conn, minimal_prompt)
+             "content": (system_prompt(conn, minimal_prompt, state_objective)
                          + (_tool_example_block(answer_contract, contract,
                                                 simple_answer)
                             if tool_examples else "")
@@ -1532,7 +1824,8 @@ def _prepare(conn, index, question, max_rounds, max_places, max_rows,
                                   answer_contract=answer_contract,
                                   force_critic_set=force_critic_set),
         "tools": [{"type": "function", "function": spec}
-                  for spec in tools_for(answer_contract, contract, simple_answer)],
+                  for spec in tools_for(answer_contract, contract, simple_answer,
+                                        path_tool)],
     }
     # WHICH CONTRACT, not "was the v2 flag passed". These are not the same
     # thing and the difference silently disabled half of v3.
@@ -1552,10 +1845,76 @@ def _prepare(conn, index, question, max_rounds, max_places, max_rows,
     # An ARM, never a default, until it is measured against the failure that
     # would matter: an abstention rate collapsing toward zero while precision
     # falls is a system fabricating coverage, not finding it.
+    # THE STATED OBJECTIVE (arm). Folded into the planner's existing call rather
+    # than asked in a second one: a separate "what were you trying to do?" call
+    # costs a round and could disagree with the first. The prose the model
+    # writes alongside its tool calls IS the objective; this only makes writing
+    # it compulsory and gives it a shape the reviewer can read.
+    runtime["state_objective"] = bool(state_objective)
+    # ONE CALL, BEFORE THE FIRST ROUND, and it does not consume one. The cost of
+    # the arm is this call plus a longer prompt; the round budget is unchanged
+    # so decomposition cannot starve retrieval by itself.
+    runtime["subgoal_status"] = bool(subgoal_status)
+    if subgoals or subgoal_status:
+        from hepcoveragekg.query import subgoals as _sg
+        state["sub_objectives"] = _sg.decompose(chat, question)
+        state["subgoal_status"] = ""
+
+    # THE PLAN REVIEWER (arm). Defaults to the PLANNER'S OWN model: the point is
+    # a strong reasoning model judging the plan, and the 8B that judges search
+    # candidates cannot assess whether a route answers a question. REVIEWER_MODEL
+    # overrides it so the two can be separated in an ablation -- without that,
+    # "the reviewer helped" and "a second look from a big model helped" are the
+    # same measurement.
+    runtime["reviewer"] = bool(reviewer)
+    if reviewer:
+        runtime["review_chat"] = _reviewer_chat(chat)
+        from hepcoveragekg.query import schema_card
+        runtime["review_schema"] = schema_card.render(conn)
+    # THE ANSWER GATE (D-107). Costs no call at all -- it reads the answer the
+    # model already wrote -- so the only thing an arm buys is the retry round.
+    runtime["answer_gate"] = bool(answer_gate)
+
+    # THE ANSWER CRITIC (D-106). Uses the SEARCH critic's endpoint, because the
+    # job is the same shape (a small judge, many short verdicts) and because
+    # putting it on the planner's model would confound "a judge helped" with
+    # "a second look from the big model helped" -- the mistake `REVIEWER_MODEL`
+    # exists to avoid on the plan reviewer.
+    runtime["answer_critic"] = bool(answer_critic)
+    if answer_critic:
+        runtime["conn"] = conn
+        _ac_client, _ac_model = _critic_client()
+        _ac_cap = completion_cap(_ac_model)
+
+        def _answer_critic_chat(messages):  # noqa: E306
+            # `enable_thinking=False` FIRST, then the plain call. This is D-105
+            # exactly: a reasoning judge spends its whole allowance thinking,
+            # returns empty content, and every verdict defaults to KEEP while
+            # the run is labelled critic-on.
+            try:
+                return _ac_client.chat.completions.create(
+                    model=_ac_model, messages=messages, temperature=0.0,
+                    max_tokens=_ac_cap,
+                    extra_body={"chat_template_kwargs": {"enable_thinking": False}})
+            except Exception:  # noqa: BLE001 -- judge must not kill the run
+                pass
+            return _ac_client.chat.completions.create(
+                model=_ac_model, messages=messages, temperature=0.0,
+                max_tokens=_ac_cap)
+
+        runtime["answer_critic_chat"] = _answer_critic_chat
     runtime["persist"] = bool(persist)
     runtime["push_further"] = bool(push_further)
     runtime["simple_answer"] = bool(simple_answer)
-    config = {"configurable": runtime, "recursion_limit": max_rounds * 3 + 6}
+    # HEADROOM FOR BOUNCE-BACKS. A rejected plan re-enters `plan` without
+    # spending a round, so the graph can legitimately traverse many more nodes
+    # than rounds. Sized from the reviewer's own ceiling rather than guessed, or
+    # LangGraph aborts a healthy run as a suspected loop.
+    from hepcoveragekg.query.reviewer import MAX_REVIEW_CYCLES
+    budget_nodes = max_rounds * 3 + 6
+    if reviewer:
+        budget_nodes += 2 * MAX_REVIEW_CYCLES + max_rounds
+    config = {"configurable": runtime, "recursion_limit": budget_nodes}
     return session, state, config
 
 
@@ -1580,6 +1939,13 @@ def stream(
     simple_answer: bool = False,
     fewshot: str = "",
     tool_examples: bool = False,
+    reviewer: bool = False,
+    state_objective: bool = False,
+    subgoals: bool = False,
+    subgoal_status: bool = False,
+    path_tool: bool = False,
+    answer_gate: bool = False,
+    answer_critic: bool = False,
 ):
     """Yield `(node_name, session)` after each node completes.
 
@@ -1594,7 +1960,9 @@ def stream(
                                       chat, thread_id, use_critic, critic_seed,
                                       answer_contract, contract, force_critic_set,
                                       persist, push_further, simple_answer,
-                                      fewshot, tool_examples)
+                                      fewshot, tool_examples, reviewer,
+                                      state_objective, subgoals, subgoal_status,
+                                      path_tool, answer_gate, answer_critic)
     started = time.perf_counter()
     app = graph_module.build(checkpointer=checkpointer)
     for update in app.stream(state, config=config, stream_mode="updates"):
@@ -1625,6 +1993,13 @@ def answer(
     simple_answer: bool = False,
     fewshot: str = "",
     tool_examples: bool = False,
+    reviewer: bool = False,
+    state_objective: bool = False,
+    subgoals: bool = False,
+    subgoal_status: bool = False,
+    path_tool: bool = False,
+    answer_gate: bool = False,
+    answer_critic: bool = False,
 ) -> Session:
     """Answer one question, returning the answer and the whole trace.
 
@@ -1647,7 +2022,9 @@ def answer(
                                       chat, thread_id, use_critic, critic_seed,
                                       answer_contract, contract, force_critic_set,
                                       persist, push_further, simple_answer,
-                                      fewshot, tool_examples)
+                                      fewshot, tool_examples, reviewer,
+                                      state_objective, subgoals, subgoal_status,
+                                      path_tool, answer_gate, answer_critic)
     graph_module.build(checkpointer=checkpointer).invoke(state, config=config)
 
     session.seconds = time.perf_counter() - started

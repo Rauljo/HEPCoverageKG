@@ -27,6 +27,7 @@ import hashlib
 import inspect
 import json
 import os
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Optional, Protocol, runtime_checkable
@@ -66,6 +67,14 @@ class Answer:
     # difference and no evidence of what produced it -- the D-059 failure shape,
     # where the CLI stripped `provenance` and the unit test bypassed the CLI.
     reviews: list[dict] = field(default_factory=list)   # what the critic judged
+    # The plan reviewer, kept apart from `llm_calls`/`prompt_tokens` so the
+    # arm's cost is measurable rather than buried in the planner's.
+    review_calls: int = 0
+    reviews_rejected: int = 0
+    review_prompt_tokens: int = 0
+    review_completion_tokens: int = 0
+    review_unparsed: int = 0
+    review_ceiling_hit: bool = False
     recovered_calls: int = 0   # tool calls the SERVER's parser missed and we recovered
     cited: str = ""            # which handles the answer pointed at, if any
     abstention_challenged: bool = False
@@ -73,6 +82,21 @@ class Answer:
     citation_disagrees: list = field(default_factory=list)
     invented_ids: list[str] = field(default_factory=list)
     nudged: bool = False
+
+    # THE ANSWER GATE (D-107). `named_ids` is the count of arXiv ids in the
+    # written text -- the single number that separates "this arm answers
+    # better" from "this arm prints ids more often", which is what runs
+    # 54201-06 could not distinguish. `gate_kind` says which shape tripped it,
+    # `gate_failed` whether it stayed broken after being asked once.
+    named_ids: int = 0
+    gate_kind: str = ""
+    gate_retried: bool = False
+    gate_failed: bool = False
+
+    # THE ANSWER CRITIC (D-106). Same shape as `reviews`: the tally is the
+    # measurement and `defaulted` is the alarm -- a judge defaulting every
+    # verdict to KEEP looks identical to a judge that agreed with everything.
+    answer_review: dict = field(default_factory=dict)
 
     error: str = ""                  # a crash, recorded rather than raised
 
@@ -121,6 +145,19 @@ _ENV_CONFIG: tuple[tuple[str, str], ...] = (
     ("CRITIC_MODEL", "NousResearch/Meta-Llama-3.1-8B-Instruct"),
     ("CRITIC_BASE_URL", ""),
     ("CRITIC_API_KEY_SET", ""),
+    # THE ENCODER. Absent until 2026-09-02, so a run file could not say which
+    # embedding model produced it and four encoder arms could not be told apart
+    # from their outputs afterwards -- the same gap that made an `index_values`
+    # run indistinguishable from its baseline and produced a spurious
+    # r = -0.945 (D-089).
+    ("ALIASES_EMBED_MODEL", "BAAI/bge-base-en-v1.5"),
+    # The schema-card arm. Recorded because it changes the prompt, and because
+    # it once changed it invisibly.
+    ("KIND_SEMANTICS", "0"),
+    # Sampling temperature for the planner. Recorded because every arm measured
+    # before 2026-09-04 assumed greedy decoding, and a run at 0.7 is not
+    # comparable to one at 0.0 (D-103).
+    ("PLANNER_TEMPERATURE", "0.0"),
 )
 
 
@@ -145,17 +182,39 @@ def effective_config(func: Callable, overrides: dict) -> dict:
         value = overrides.get(name, param.default)
         config[name] = None if value is inspect.Parameter.empty else value
 
-    for var, fallback in _ENV_CONFIG:
-        if var == "CRITIC_API_KEY_SET":
-            # PRESENCE, never the value. A key in a run file is a key in git.
-            config["env.CRITIC_API_KEY_SET"] = bool(os.environ.get("CRITIC_API_KEY"))
-            continue
-        config[f"env.{var}"] = os.environ.get(var, fallback)
+    config.update(env_config())
 
     # A derived flag, because it is the arm name a human uses and reading it off
     # `critic_seed is None` at analysis time is how it gets misread.
     config["critic_order"] = "ranked" if config.get("critic_seed") is None else "shuffled"
     return config
+
+
+def env_config() -> dict:
+    """The environment half of a run's provenance, for any system.
+
+    SPLIT OUT 2026-09-02 because it was reachable only through
+    `effective_config`, which inspects `planner.answer`'s signature -- so the
+    free-SQL agent, which builds its config dict by hand, recorded NO
+    environment at all. Not the judge model, not the search breadth, not the
+    encoder. Every free-SQL run in the project to that date is unable to say
+    which critic or which embedding model produced it, which is how four
+    encoder arms became impossible to tell apart afterwards (D-089).
+
+    One function, both callers, so they cannot drift again.
+    """
+    out: dict = {}
+    for var, fallback in _ENV_CONFIG:
+        if var == "CRITIC_API_KEY_SET":
+            # PRESENCE, never the value. A key in a run file is a key in git.
+            out["env.CRITIC_API_KEY_SET"] = bool(os.environ.get("CRITIC_API_KEY"))
+            continue
+        # EMPTY IS UNSET, matching how the readers resolve these. Slurm's
+        # `--export=ALL,VAR=` sets a variable to blank, and recording "" when
+        # the code actually used its default makes the run file lie about the
+        # arm -- the precise thing this function exists to prevent.
+        out[f"env.{var}"] = (os.environ.get(var) or "").strip() or fallback
+    return out
 
 
 # --------------------------------------------------------------------------
@@ -192,7 +251,9 @@ class PlannerSystem:
     would dominate the wall-clock numbers being reported.
     """
 
-    def __init__(self, conn, index, *, name: str = "hepkg", **planner_kwargs) -> None:
+    def __init__(self, conn, index, *, name: str = "hepkg",
+                 index_values: bool = False, index_quotes: bool = False,
+                 **planner_kwargs) -> None:
         self.name = name
         self._conn = conn
         self._index = index
@@ -205,6 +266,14 @@ class PlannerSystem:
         self.config = {
             "kind": "planner",
             "model": os.environ.get("LLM_MODEL_NAME", ""),
+            # RECORDED BECAUSE IT CHANGES THE ANSWER. `index_values` is chosen
+            # in the CLI when the index is built, so it never passed through
+            # `planner.answer` and `effective_config` could not see it -- the
+            # 2026-08-31 run scoring 0.438 recorded nothing to distinguish it
+            # from the 0.352 baseline. A knob outside the signature has to be
+            # named explicitly or the comparison is unreproducible.
+            "index_values": bool(index_values),
+            "index_quotes": bool(index_quotes),
             **effective_config(planner.answer, planner_kwargs),
         }
 
@@ -283,6 +352,16 @@ def from_session(session, conn=None) -> Answer:
                   "dropped": [{"id": v.entity_id, "why": v.reason}
                               for v in r.verdicts if not v.kept]}
                  for r in getattr(session, "reviews", [])],
+        # THE PLAN REVIEWER, counted apart from the planner. `review_calls` and
+        # its tokens are the cost of the arm; `reviews_rejected` is whether it
+        # did anything. A reviewer approving everything is a no-op at double the
+        # price, and that has to be readable in the run, not inferred later.
+        review_calls=getattr(session, "review_calls", 0),
+        reviews_rejected=getattr(session, "reviews_rejected", 0),
+        review_prompt_tokens=getattr(session, "review_prompt_tokens", 0),
+        review_completion_tokens=getattr(session, "review_completion_tokens", 0),
+        review_unparsed=getattr(session, "review_unparsed", 0),
+        review_ceiling_hit=bool(getattr(session, "review_ceiling_hit", False)),
         recovered_calls=getattr(session, "recovered_calls", 0),
         cited=getattr(session, "answer_cited", ""),
         abstention_challenged=bool(getattr(session, "abstention_challenged", False)),
@@ -290,4 +369,24 @@ def from_session(session, conn=None) -> Answer:
         citation_disagrees=list(getattr(session, "citation_disagrees", None) or []),
         invented_ids=list(getattr(session, "invented_ids", [])),
         nudged=bool(getattr(session, "nudged", False)),
+        named_ids=len(set(_ARXIV_IN_TEXT.findall(session.answer or ""))),
+        gate_kind=getattr(session, "answer_gate_kind", "") or "",
+        gate_retried=bool(getattr(session, "answer_gate_retried", False)),
+        gate_failed=bool(getattr(session, "answer_gate_failed", False)),
+        answer_review=_answer_review_dict(getattr(session, "answer_review", None)),
     )
+
+
+#: Same pattern the scorer reads ids with, so `named_ids` can never disagree
+#: with whether `judged_set_f1` found any.
+_ARXIV_IN_TEXT = re.compile(r"\b\d{4}\.\d{4,5}\b")
+
+
+def _answer_review_dict(review) -> dict:
+    """The per-paper answer review, flattened for the run record."""
+    if review is None or not getattr(review, "verdicts", None):
+        return {}
+    out = review.to_dict()
+    out["dropped_papers"] = [{"id": v.paper_id, "why": v.why}
+                             for v in review.verdicts if not v.keep]
+    return out

@@ -162,7 +162,9 @@ def run(questions: QuestionSet, system: System, *, repeats: int = 1,
         on_record: Optional[Callable[[Record], None]] = None,
         scorers: Optional[Iterable] = None,
         timeout: Optional[float] = DEFAULT_TIMEOUT,
-        abort_after_consecutive_errors: int = 20) -> Path:
+        abort_after_consecutive_errors: int = 20,
+        max_workers: int = 1,
+        make_system: Optional[Callable[[], System]] = None) -> Path:
     """Run every question `repeats` times and write JSONL. Returns the path.
 
     Scoring happens here, inline, rather than as a separate pass: the scorers
@@ -185,6 +187,19 @@ def run(questions: QuestionSet, system: System, *, repeats: int = 1,
     seconds on every remaining question -- 1,352 questions at 180 s is three days
     of a process hanging on a socket. Consecutive rather than total, because a
     handful of scattered failures is normal and a solid wall of them is not.
+
+    `max_workers` answers that many questions at once. The bottleneck is a ~90 s
+    network call per question, so overlapping them is close to a linear win: a
+    300-question x 3-repeat arm is 22 hours serial and under two at 12 workers.
+
+    **It requires `make_system`, and refuses without it.** The systems are not
+    thread-safe and they fail SILENTLY -- `FreeSQLSystem` keeps its search sets
+    as temp tables named `search_N` on one connection, with a counter it bumps
+    and a `_drop_sets()` it calls between questions. Shared across threads, the
+    counter races, the names collide, and one question deletes the table another
+    is mid-join on; the answers come back plausible and wrong. So each worker
+    builds its own system, and a caller who asks for concurrency without telling
+    us how to build one gets a ValueError rather than quiet corruption.
     """
     from . import scoring
 
@@ -215,7 +230,13 @@ def run(questions: QuestionSet, system: System, *, repeats: int = 1,
     log = logging.getLogger(__name__)
     log.info("run %s  %s  config %s", meta.run_id, system.name, meta.config_hash)
     for key in ("use_critic", "critic_order", "contract", "force_critic_set",
-                "env.CRITIC_MODEL", "env.SEARCH_BREADTH_MAX"):
+                "env.CRITIC_MODEL", "env.SEARCH_BREADTH_MAX",
+                # Added 2026-09-02. Both change what the run DOES and neither
+                # was visible: the encoder could not be recovered from a run
+                # file at all, and the schema card changed silently mid-night
+                # (D-089). Printed at the top so a wrong arm is caught on
+                # submission rather than when the results disagree.
+                "env.ALIASES_EMBED_MODEL", "env.KIND_SEMANTICS"):
         if key in meta.config:
             log.info("    %-24s %s", key, meta.config[key])
 
@@ -223,6 +244,24 @@ def run(questions: QuestionSet, system: System, *, repeats: int = 1,
     consecutive_errors = 0
     aborted = False
     started = time.time()
+
+    if max_workers and max_workers > 1:
+        if make_system is None:
+            raise ValueError(
+                "max_workers > 1 needs make_system: the systems are not "
+                "thread-safe (temp-table name collisions in FreeSQLSystem "
+                "silently cross-contaminate answers), so each worker must build "
+                "its own. Pass a factory, or leave max_workers=1.")
+        n = _run_concurrent(
+            questions, system, make_system, repeats, timeout, scorers,
+            run_id, meta, path, on_record, abort_after_consecutive_errors,
+            max_workers)
+        meta.finished_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        meta.n_records = n
+        _rewrite_meta(path, meta)
+        _write_summary(path, meta, time.time() - started)
+        return path
+
     with path.open("w") as fh:
         fh.write(json.dumps({"_meta": meta.to_dict()}) + "\n")
         fh.flush()
@@ -265,6 +304,110 @@ def run(questions: QuestionSet, system: System, *, repeats: int = 1,
     _rewrite_meta(path, meta)
     _write_summary(path, meta, time.time() - started)
     return path
+
+
+
+def _run_concurrent(questions, system, make_system, repeats, timeout, scorers,
+                    run_id, meta, path, on_record, abort_after_consecutive_errors,
+                    max_workers):
+    """The question loop, `max_workers` at a time.
+
+    WHY A FACTORY AND NOT A SHARED SYSTEM. The systems are NOT thread-safe, and
+    the way they fail is silent rather than loud. `FreeSQLSystem` materialises
+    each search as a TEMP TABLE named `search_N` on its connection, bumps
+    `self._set_n`, and calls `_drop_sets()` between questions. Its own docstring
+    names the hazard for the serial case -- "question 12 could join against
+    question 3's search set and score on it". Run two questions at once on one
+    connection and that stops being hypothetical: the counter races, the names
+    collide, and one question's `_drop_sets()` deletes tables another is still
+    reading. The answers would come back plausible and wrong.
+
+    So each worker thread builds its OWN system (and its own sqlite connection)
+    from `make_system`, once, and keeps it. Without a factory we refuse to run
+    concurrently rather than guess -- see `run()`.
+
+    THE RETRIEVAL INDEX IS SHARED ON PURPOSE. `retrieve.build` calls
+    `_prepare_sparse()` eagerly, so the index is immutable by the time anyone
+    queries it, and it is ~44MB of embeddings that must not be copied per
+    worker. Reads of `_df`/`_tokens` and numpy matmuls are safe.
+
+    ORDER IS NOT PRESERVED. Records are written as they complete, so the file is
+    in completion order rather than question order. Every record carries `qid`
+    and `repeat`, and every consumer groups by those, so this costs nothing --
+    but it does mean two runs of the same arm produce differently ORDERED files
+    with identical contents.
+    """
+    import threading
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    from . import scoring
+
+    local = threading.local()
+    lock = threading.Lock()
+    state = {"n": 0, "consecutive": 0, "aborted": False}
+
+    def worker_system():
+        s = getattr(local, "system", None)
+        if s is None:
+            s = make_system()
+            local.system = s
+        return s
+
+    def answer_one(task):
+        repeat, q = task
+        if state["aborted"]:
+            return None
+        sys_ = worker_system()
+        ans = (_answer_with_timeout(sys_, q, timeout) if timeout else sys_.answer(q))
+        return repeat, q, ans
+
+    tasks = [(r, q) for r in range(repeats) for q in questions]
+    with path.open("w") as fh:
+        fh.write(json.dumps({"_meta": meta.to_dict()}) + "\n")
+        fh.flush()
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            futures = {pool.submit(answer_one, t): t for t in tasks}
+            for fut in as_completed(futures):
+                try:
+                    got = fut.result()
+                except Exception as exc:                      # noqa: BLE001
+                    logging.getLogger(__name__).warning("worker raised: %s", exc)
+                    continue
+                if got is None:
+                    continue
+                repeat, q, answer = got
+                record = Record(
+                    run_id=run_id, qid=q.qid, repeat=repeat, system=system.name,
+                    config_hash=meta.config_hash, git_sha=meta.git_sha,
+                    question=q.text, shape=q.shape, split=q.split,
+                    needs=list(q.needs), difficulty=q.difficulty,
+                    answer=asdict(answer),
+                    scores=scoring.score_all(q, answer, scorers),
+                )
+                with lock:
+                    fh.write(json.dumps(record.to_dict(), ensure_ascii=False) + "\n")
+                    fh.flush()
+                    state["n"] += 1
+                    # CONSECUTIVE IN COMPLETION ORDER. The serial meaning does
+                    # not survive concurrency, but the thing it protects against
+                    # -- the endpoint disappearing -- makes EVERY in-flight call
+                    # fail, so a run of failures still trips it. The threshold is
+                    # effectively looser by up to `max_workers`, which is the
+                    # right direction for a safety valve.
+                    state["consecutive"] = state["consecutive"] + 1 if answer.error else 0
+                    if (abort_after_consecutive_errors
+                            and state["consecutive"] >= abort_after_consecutive_errors
+                            and not state["aborted"]):
+                        logging.getLogger(__name__).error(
+                            "%d consecutive errors -- the model endpoint is probably "
+                            "gone. Stopping with %d records kept.",
+                            state["consecutive"], state["n"])
+                        state["aborted"] = True
+                        for f in futures:
+                            f.cancel()
+                if on_record:
+                    on_record(record)
+    return state["n"]
 
 
 def _rewrite_meta(path: Path, meta: RunMeta) -> None:

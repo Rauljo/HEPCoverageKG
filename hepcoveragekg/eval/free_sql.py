@@ -38,7 +38,7 @@ from dataclasses import dataclass, field
 from typing import Any, Optional
 
 from .questions import Question
-from .systems import Answer
+from .systems import Answer, env_config as _env_config
 
 MAX_ROWS = 200
 MAX_ROUNDS = 6
@@ -216,6 +216,34 @@ SPELLINGS ARE NOT UNIFIED, and there are two ways to cope:
    It covers 663 of 5,114 entities, so it is a help and not a guarantee.
 """
 
+#: WHAT `search` IS FOR. The shipped prompt says "search to find the entity_ids
+#: a question is about, then sql to count or join over them" -- and the agent
+#: does exactly that, which is the failure. Measured on 2026-08-30: it searched,
+#: saw 20 hits, pasted 3 ids, and capped recall at 3 of 279 matching entities
+#: (gf-05: 1 of 15 gold). On gf-08 it pasted two ids that do not exist and
+#: scored 0 from 13 gold. The single question where it wrote a pattern instead
+#: of an id list scored 0.89 against 0.43 on the same concept, and across the
+#: eight questions pattern-style averaged 0.785 against 0.372 for id-paste.
+#:
+#: The graph holds 56 spellings of Pythia and 279 Higgs-ish entities, so a
+#: search result is a SAMPLE OF THE VOCABULARY, never the answer set. This block
+#: says so.
+CONCEPT_BLOCK = """
+WHAT A SEARCH RESULT IS
+`search` shows you HOW THIS CORPUS SPELLS A CONCEPT. It is a sample, not the
+answer, and it is truncated: the graph holds 56 distinct entities for Pythia and
+over 200 that mention a Higgs candidate. The rows you are shown are examples.
+
+So do NOT paste the ids you were shown into `IN (...)`. That silently caps your
+answer at the handful you happened to see. Instead, read the spellings, then
+write a query that matches the FAMILY -- `label LIKE`, a kind filter, a
+subquery. Paste ids only when the search tells you it found them all.
+
+Casting wide is cheap here and missing papers is not: a paper you name that
+turns out irrelevant costs little, a paper you never reach cannot be recovered.
+"""
+
+
 SYSTEM_PROMPT = """You answer questions about a knowledge graph of 60 high-energy
 physics papers. You have two tools and may use either, in any order, as often as
 you like:
@@ -271,6 +299,44 @@ class SqlResult:
         return f"{head}\n{body}{note}"
 
 
+#: A join against a whole search set is not a query, it is the absence of one.
+#: Measured: half the statements that referenced `search_N` carried no predicate
+#: on it, returned a median of 25 rows against 5 for the filtered half, and cost
+#: 0.102 of precision. Refused rather than discouraged, because the prompt
+#: already discourages it and was ignored half the time.
+_SET_REF = re.compile(r"\bsearch_(\d+)\b", re.I)
+#: `entity_id` is EXCLUDED on purpose: `ON eo.entity_id = s.entity_id` is the
+#: join key, present in every such query, and counting it as a filter made the
+#: guard accept exactly the queries it exists to refuse.
+_SET_FILTER = re.compile(r"\b(\w+)\.(label|kind)\s*(LIKE|=|IN|GLOB|<|>)", re.I)
+
+
+def unfiltered_set_join(query: str) -> str:
+    """The message to return instead of rows, or "" if the query is fine."""
+    names = set(_SET_REF.findall(query or ""))
+    if not names:
+        return ""
+    if _SET_FILTER.search(query or ""):
+        return ""
+    # INSPECTING the set is not answering with it. `SELECT COUNT(*) FROM
+    # search_1` or `SELECT kind, COUNT(*) ... GROUP BY kind` is exactly the
+    # move the guard is meant to encourage, so a query that touches no other
+    # table is always allowed.
+    # `[a-z_]+` stopped at the digit, so "search_1" read as "search_" and never
+    # matched the set name -- the inspection queries the guard is meant to
+    # ENCOURAGE were the ones it refused.
+    others = set(re.findall(r"(?:FROM|JOIN)\s+([a-z_][a-z0-9_]*)", query or "", re.I))
+    others = {t.lower() for t in others} - {f"search_{n}" for n in names}
+    if not others:
+        return ""
+    n = sorted(names)[0]
+    return (f"Not run. This joins ALL of search_{n} with no filter, which asks "
+            f"for every entity the search touched -- and a search is always "
+            f"wider than the question. Narrow it, e.g. "
+            f"WHERE s.kind = '...' or WHERE s.label LIKE '%...%'. "
+            f"If you believe every row qualifies, say so and use a COUNT first.")
+
+
 def run_sql(conn, query: str, max_rows: int = MAX_ROWS,
             seconds: float = STATEMENT_SECONDS) -> SqlResult:
     """One statement, read-only, row-capped, time-capped."""
@@ -281,6 +347,9 @@ def run_sql(conn, query: str, max_rows: int = MAX_ROWS,
         return SqlResult(error="one statement at a time, please")
     if not _READ_ONLY.match(text):
         return SqlResult(error="only SELECT (or WITH ... SELECT) is allowed")
+    refusal = unfiltered_set_join(text)
+    if refusal:
+        return SqlResult(error=refusal)
 
     # A cartesian join over assertion x entity_occurrence is one plausible token
     # away, and this runs unattended for hours.
@@ -376,7 +445,12 @@ class FreeSQLSystem:
 
     def __init__(self, conn, index=None, *, name: str = "free-sql",
                  model: Optional[str] = None, chat=None,
-                 max_rounds: int = MAX_ROUNDS, persist: bool = True) -> None:
+                 max_rounds: int = MAX_ROUNDS, persist: bool = True,
+                 reviewer: bool = False, state_objective: bool = False,
+                 index_values: bool = False, index_quotes: bool = False,
+                 search_sets: bool = False,
+                 concept_prompt: bool = False, subgoals: bool = False,
+                 subgoal_status: bool = False) -> None:
         self.name = name
         self._conn = conn
         self._index = index
@@ -384,6 +458,17 @@ class FreeSQLSystem:
         self._max_rounds = max_rounds
         self._persist = persist
         self._schema = schema_brief(conn)
+        self._search_sets = bool(search_sets)
+        # IMPLIED BY search_sets, because the shipped line ("find the entity_ids
+        # ... then sql over them") flatly contradicts a queryable set table. The
+        # flag stands alone too, so the prompt change is attributable without it.
+        self._concept_prompt = bool(concept_prompt or search_sets)
+        self._subgoals = bool(subgoals or subgoal_status)
+        self._subgoal_status = bool(subgoal_status)
+        self._set_n = 0
+        self._reviewer = bool(reviewer)
+        self._state_objective = bool(state_objective)
+        self._review_stats = {}
         self.config = {
             "kind": "free-sql",
             "model": model or "",
@@ -392,20 +477,38 @@ class FreeSQLSystem:
             "statement_seconds": STATEMENT_SECONDS,
             "tools": ["sql"] + (["search"] if index is not None else []),
             "persist": bool(persist),
+            "reviewer": bool(reviewer),
+            "state_objective": bool(state_objective),
+            "index_values": bool(index_values),
+            "index_quotes": bool(index_quotes),
+            "search_sets": bool(search_sets),
+            "concept_prompt": bool(concept_prompt or search_sets),
+            "subgoals": bool(subgoals or subgoal_status),
+            "subgoal_status": bool(subgoal_status),
+            # The environment half, shared with the planner so the two cannot
+            # record different things. Without it a free-SQL run named neither
+            # its judge nor its encoder (D-089).
+            **_env_config(),
         }
 
     def _client_chat(self):
         if self._chat is not None:
             return self._chat
         from ..query import budget as budget_mod
-        from ..query.planner import MAX_COMPLETION_TOKENS, _client
+        from ..query.planner import _client, completion_cap
         client, model = _client()
         self.config["model"] = model
+        # THE SAME REASONING-AWARE CAP as the planner (D-084). This loop built
+        # its own client and so had its own copy of the 800 default: qwen3-32b
+        # scored 0.199 here purely on truncation, and 0.592 once the cap moved.
+        cap = completion_cap(model)
 
         def chat(messages, tools):
-            return client.chat.completions.create(
-                model=model, messages=messages, tools=tools,
-                temperature=0.0, max_tokens=MAX_COMPLETION_TOKENS)
+            kwargs = dict(model=model, messages=messages, temperature=0.0,
+                          max_tokens=cap)
+            if tools:
+                kwargs["tools"] = tools
+            return client.chat.completions.create(**kwargs)
 
         # The SAME hard cap the planner gets. This system builds its own client,
         # so it would otherwise run uncapped against a metered endpoint -- the
@@ -413,27 +516,163 @@ class FreeSQLSystem:
         self._chat = budget_mod.guard(chat, budget_mod.from_env(model))
         return self._chat
 
+    def _review_fields(self) -> dict:
+        """Reviewer counters, shaped for the Answer record."""
+        st = self._review_stats
+        return {
+            "review_calls": st.get("calls", 0),
+            "reviews_rejected": st.get("rejected", 0),
+            "review_prompt_tokens": st.get("prompt_tokens", 0),
+            "review_completion_tokens": st.get("completion_tokens", 0),
+            "review_unparsed": st.get("unparsed", 0),
+            "review_ceiling_hit": bool(st.get("ceiling_hit", False)),
+        }
+
+    def _review(self, question, choice, tool_calls, steps):
+        """Judge the proposed SQL before it runs. None = reviewer unavailable."""
+        from ..query import reviewer as R
+        from ..query.planner import clean_content as _clean
+
+        st = self._review_stats
+        if st.get("cycles", 0) >= R.MAX_REVIEW_CYCLES:
+            st["ceiling_hit"] = True
+            return None
+        plan = "\n".join(
+            f"  {c.function.name}({c.function.arguments})" for c in tool_calls)
+        history = "\n".join(f"  {d.get('tool')}({d.get('args')}) -> {d.get('rows')} rows"
+                             for d in steps[-8:])
+        verdict = R.review_plan(
+            chat=self._chat, question=question, schema=self._schema,
+            objective=_clean(choice.content), plan=plan, kind="sql",
+            history=history)
+        st["calls"] = st.get("calls", 0) + 1
+        st["prompt_tokens"] = st.get("prompt_tokens", 0) + verdict.prompt_tokens
+        st["completion_tokens"] = st.get("completion_tokens", 0) + verdict.completion_tokens
+        if not verdict.parsed:
+            st["unparsed"] = st.get("unparsed", 0) + 1
+        if not verdict.approved:
+            st["rejected"] = st.get("rejected", 0) + 1
+            st["cycles"] = st.get("cycles", 0) + 1
+        return verdict
+
+    #: How many result sets stay queryable at once. The model can hold a few
+    #: threads; twenty temp tables is a second schema to reason about, and the
+    #: oldest are the least likely to be revisited.
+    MAX_LIVE_SETS = 5
+    #: The full set is materialised, not the displayed 20 -- but a search that
+    #: matches half the graph is a bad search, not a useful set.
+    SET_CAP = 400
+
     def _search(self, args: dict) -> tuple[str, list[str]]:
         """The planner's own retrieval, rendered for a model that will then
-        write SQL against the ids."""
+        write SQL against the ids.
+
+        WITH `search_sets`, THE MODEL STOPS RETYPING IDS. Measured on the
+        2026-08-30 run: it searched, saw 20 hits, and pasted 3 of them into an
+        `IN (...)` list -- out of 279 entities that actually matched. Recall was
+        capped there (gf-05: 1 of 15 gold). On gf-08 it typed two ids that do
+        not exist (`hepkg:channel:mu mu`, note the space) and got a silent zero
+        from 13 gold. The one question where it wrote a LIKE pattern instead of
+        an id list scored 0.89 against 0.43 on the same concept.
+        So the whole match set is materialised as a temp table it can FILTER in
+        SQL, which is the thing this agent is supposed to be good at. Same 20
+        rows are displayed, so the context cost is unchanged; what changes is
+        what it can REFERENCE.
+        """
         from ..query import retrieve
+        text = args.get("text", "")
+        kind = args.get("kind") or None
+        shown = int(args.get("limit") or 20)
+        want = max(shown, self.SET_CAP) if self._search_sets else shown
         try:
-            hits = retrieve.search(self._index, args.get("text", ""), conn=self._conn,
-                                   kind=args.get("kind") or None,
-                                   limit=int(args.get("limit") or 20))
+            hits = retrieve.search(self._index, text, conn=self._conn,
+                                   kind=kind, limit=want)
         except Exception as exc:                      # noqa: BLE001
             return f"ERROR: {type(exc).__name__}: {exc}", []
         if not hits:
             return "0 hits.", []
+        head = hits[:shown]
         lines = ["entity_id | kind | label"]
-        lines += [f"{h.entity_id} | {h.kind} | {h.label}" for h in hits]
-        return "\n".join(lines) + f"\n({len(hits)} hits)", [h.entity_id for h in hits]
+        lines += [f"{h.entity_id} | {h.kind} | {h.label}" for h in head]
+        body = "\n".join(lines)
+        if not self._search_sets:
+            return body + f"\n({len(head)} hits)", [h.entity_id for h in head]
+        name = self._materialise(hits)
+        # THE SPREAD, NOT JUST THE SIZE. Measured 2026-09-01: given the table,
+        # the model joined it with no WHERE in 10 of 20 statements -- pulling
+        # every one of ~400 entities and collapsing precision 0.704 -> 0.602.
+        # It could not see that the set was heterogeneous. A search for "Higgs
+        # candidate" returns `electron candidate` and `muon candidate` too,
+        # because every paper has candidate objects.
+        import collections as _c
+        kinds = _c.Counter(h.kind or "?" for h in hits)
+        spread = ", ".join(f"{k} {n}" for k, n in kinds.most_common(5))
+        body += (f"\n({len(head)} shown of {len(hits)} matching -- ALL {len(hits)} "
+                 f"saved as {name}(entity_id, kind, label).\n"
+                 f" spread: {spread}\n"
+                 f" This set is WIDER than your question. Filter it in SQL, do not "
+                 f"paste ids and do not join it whole:\n"
+                 f"   SELECT DISTINCT eo.paper_id FROM {name} s\n"
+                 f"     JOIN entity_occurrence eo ON eo.entity_id = s.entity_id\n"
+                 f"    WHERE s.kind = '...' AND s.label LIKE '%...%'\n"
+                 f" Check the filter first: SELECT COUNT(*) FROM {name} WHERE ...)")
+        return body, [h.entity_id for h in hits]
+
+    def _materialise(self, hits) -> str:
+        """The match set as a temp table. Read-only main db, writable temp."""
+        self._set_n += 1
+        name = f"search_{self._set_n}"
+        self._conn.execute(f"DROP TABLE IF EXISTS temp.{name}")
+        self._conn.execute(
+            f"CREATE TEMP TABLE {name}(entity_id TEXT, kind TEXT, label TEXT)")
+        self._conn.executemany(
+            f"INSERT INTO {name} VALUES (?,?,?)",
+            [(h.entity_id, h.kind or "", h.label or "") for h in hits])
+        old = self._set_n - self.MAX_LIVE_SETS
+        if old > 0:
+            self._conn.execute(f"DROP TABLE IF EXISTS temp.search_{old}")
+        return name
+
+    def _drop_sets(self) -> None:
+        """Between questions. Temp tables live on the CONNECTION, and the same
+        connection answers every question in a run -- so without this, question
+        12 could join against question 3's search set and score on it."""
+        for i in range(1, self._set_n + 1):
+            try:
+                self._conn.execute(f"DROP TABLE IF EXISTS temp.search_{i}")
+            except Exception:                          # noqa: BLE001
+                pass
+        self._set_n = 0
 
     def answer(self, q: Question) -> Answer:
         chat = self._client_chat()
+        # PER QUESTION, not per system. The stats live on the instance because
+        # the helper needs them, and the same instance answers every question in
+        # a run -- so without this reset the review ceiling would be reached
+        # once and then suppress reviewing for every later question, silently
+        # turning the arm off partway through.
+        self._review_stats = {}
+        self._drop_sets()
+        system = SYSTEM_PROMPT.format(schema=self._schema, examples=WORKED_EXAMPLES)
+        if self._concept_prompt:
+            # Replace the instruction that teaches the failure, rather than
+            # appending a contradiction of it.
+            system = system.replace(
+                "The usual shape is: `search` to find the entity_ids a question "
+                "is about, then\n`sql` to count or join over them. Neither tool "
+                "alone is enough for most\nquestions.",
+                CONCEPT_BLOCK.strip())
+        if self._state_objective:
+            from ..query.planner import OBJECTIVE_BLOCK
+            system += OBJECTIVE_BLOCK
+        goals, status = [], ""
+        if self._subgoals:
+            from ..query import subgoals as _sg
+            goals = _sg.decompose(chat, q.text)
+            system += (_sg.render(goals) if self._subgoal_status
+                       else _sg.goals_only(goals))
         messages: list[dict[str, Any]] = [
-            {"role": "system", "content": SYSTEM_PROMPT.format(
-                schema=self._schema, examples=WORKED_EXAMPLES)},
+            {"role": "system", "content": system},
             {"role": "user", "content": q.text},
         ]
         started = time.time()
@@ -473,6 +712,17 @@ class FreeSQLSystem:
                     completion_tokens += getattr(usage, "completion_tokens", 0) or 0
 
                 choice = reply.choices[0].message
+                if self._subgoal_status and goals:
+                    from ..query import subgoals as _sg
+                    fresh = _sg.extract_status(choice.content or "")
+                    if fresh and fresh != status:
+                        status = fresh
+                        # REPLACED, not appended: one live status block.
+                        messages = [m for m in messages
+                                    if not (m.get("role") == "system"
+                                            and "SUB-OBJECTIVES" in (m.get("content") or ""))]
+                        messages.append({"role": "system",
+                                         "content": _sg.render(goals, status)})
                 tool_calls = getattr(choice, "tool_calls", None)
                 if not tool_calls:
                     # About to answer having found nothing, with rounds to
@@ -494,7 +744,30 @@ class FreeSQLSystem:
                         papers=sorted(touched), steps=steps, entity_ids=sorted(entities),
                         llm_calls=calls, rounds=rounds,
                         prompt_tokens=prompt_tokens, completion_tokens=completion_tokens,
-                        seconds=time.time() - started)
+                        seconds=time.time() - started, **self._review_fields())
+
+                # THE PLAN REVIEWER, before anything runs. Unlike the typed
+                # side this also judges the SQL itself -- tables, joins, whether
+                # a count counts the right thing -- because here a wrong query
+                # is not a wrong hop, it is a wrong answer that looks right.
+                # A rejection does NOT consume a round: `rounds` only advances
+                # in the for-loop, so re-planning happens inside this iteration.
+                if self._reviewer and any(c.function.name == "sql" for c in tool_calls):
+                    verdict = self._review(q.text, choice, tool_calls, steps)
+                    if verdict is not None and not verdict.approved:
+                        messages.append({
+                            "role": "assistant", "content": choice.content or "",
+                            "tool_calls": [{"id": c.id, "type": "function",
+                                            "function": {"name": c.function.name,
+                                                         "arguments": c.function.arguments}}
+                                           for c in tool_calls]})
+                        for c in tool_calls:
+                            messages.append({
+                                "role": "tool", "tool_call_id": c.id,
+                                "content": ("Not run. A reviewer checked this "
+                                            "against your stated objective and "
+                                            "the schema:\n\n" + verdict.feedback)})
+                        continue
 
                 messages.append({
                     "role": "assistant", "content": choice.content or "",
@@ -523,7 +796,7 @@ class FreeSQLSystem:
                             llm_calls=calls, rounds=rounds,
                             prompt_tokens=prompt_tokens,
                             completion_tokens=completion_tokens,
-                            seconds=time.time() - started)
+                            seconds=time.time() - started, **self._review_fields())
                     if call.function.name == "search":
                         body, hits = self._search(args)
                         entities.update(hits)
@@ -556,4 +829,4 @@ class FreeSQLSystem:
         return Answer(text="", answered=False, papers=sorted(touched), steps=steps, entity_ids=sorted(entities),
                       llm_calls=calls, rounds=self._max_rounds,
                       prompt_tokens=prompt_tokens, completion_tokens=completion_tokens,
-                      seconds=time.time() - started)
+                      seconds=time.time() - started, **self._review_fields())

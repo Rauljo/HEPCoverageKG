@@ -41,6 +41,7 @@ from __future__ import annotations
 import itertools
 import logging
 import os
+import time
 from typing import Optional, Set
 
 import numpy as np
@@ -61,6 +62,21 @@ _model: Optional[SentenceTransformer] = None
 _model_name: str = ""
 
 
+def _model_name_from_env() -> str:
+    """The configured encoder, treating EMPTY as UNSET.
+
+    `os.environ.get(var, DEFAULT)` returns "" when the variable exists but is
+    blank, so a default only applies to an ABSENT variable. Slurm makes that
+    easy to hit: `--export=ALL,ALIASES_EMBED_MODEL=` sets it to empty for every
+    arm that wanted the default, and `SentenceTransformer("")` loads an object
+    whose first module is None -- the failure surfaces much later as
+    `'NoneType' object has no attribute 'tokenize'`, which names neither the
+    variable nor the model. Four dev-200 jobs died this way in 9 seconds each
+    on 2026-09-02.
+    """
+    return (os.environ.get("ALIASES_EMBED_MODEL") or "").strip() or DEFAULT_MODEL
+
+
 def _get_model() -> SentenceTransformer:
     """Load (once) the encoder named by ALIASES_EMBED_MODEL.
 
@@ -68,7 +84,7 @@ def _get_model() -> SentenceTransformer:
     HuggingFace cache -- pre-fetch it on the login node.
     """
     global _model, _model_name
-    name = os.environ.get("ALIASES_EMBED_MODEL", DEFAULT_MODEL)
+    name = _model_name_from_env()
     if _model is None or _model_name != name:
         logger.info(f"Loading embedding model: {name}")
         _model = SentenceTransformer(name)
@@ -128,7 +144,7 @@ def embed_cached(items: list[str], cache: "Path | str | None" = None) -> np.ndar
     """
     from pathlib import Path as _Path
 
-    _, model_name = _get_model(), os.environ.get("ALIASES_EMBED_MODEL", DEFAULT_MODEL)
+    _, model_name = _get_model(), _model_name_from_env()
     known: dict[str, np.ndarray] = {}
 
     if cache:
@@ -155,12 +171,28 @@ def embed_cached(items: list[str], cache: "Path | str | None" = None) -> np.ndar
     if cache and missing:
         cache.parent.mkdir(parents=True, exist_ok=True)
         pairs = list(known.items())
-        np.savez(
-            cache,
-            texts=np.array([t for t, _ in pairs], dtype=object).astype("U"),
-            vectors=np.stack([v for _, v in pairs]),
-            model=np.array(model_name),
-        )
+        # ATOMIC: write a unique temp file in the same directory, then rename.
+        # `np.savez` straight to `cache` is a multi-second non-atomic write, and
+        # concurrent Slurm arms share this path -- a reader arriving mid-write
+        # gets a truncated npz and dies hours in. os.replace is atomic within a
+        # filesystem, so a reader sees either the old file or the new one.
+        # PID+time in the temp name so two writers cannot collide on it either.
+        tmp = cache.with_suffix(f".{os.getpid()}.{time.time_ns()}.tmp.npz")
+        try:
+            np.savez(
+                tmp,
+                texts=np.array([t for t, _ in pairs], dtype=object).astype("U"),
+                vectors=np.stack([v for _, v in pairs]),
+                model=np.array(model_name),
+            )
+            os.replace(tmp, cache)
+        except Exception:  # noqa: BLE001 -- a cache is an optimisation, never
+            # a reason to lose the run. The vectors are already in `known`.
+            logger.warning("could not write embedding cache %s", cache, exc_info=True)
+            try:
+                tmp.unlink(missing_ok=True)
+            except Exception:  # noqa: BLE001
+                pass
 
     if not items:
         return np.zeros((0, 768), dtype=np.float32)

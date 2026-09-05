@@ -93,3 +93,167 @@ def test_cleaning_happens_before_truncation():
     """Otherwise the budget is spent on markup that is then thrown away."""
     noisy = r"\mathrm{" * 30 + "the actual sentence content" + "}" * 30
     assert "the actual sentence content" in context._truncate(noisy, limit=60)
+
+
+def test_empty_embed_model_env_falls_back_to_default():
+    """An empty ALIASES_EMBED_MODEL must mean UNSET, not "load a model named ''".
+
+    Slurm's `--export=ALL,VAR=` sets the variable to blank. `os.environ.get`
+    with a default does not catch that, so `SentenceTransformer("")` builds an
+    object whose first module is None and the run dies much later with
+    `'NoneType' object has no attribute 'tokenize'` -- naming neither the
+    variable nor the model. Four dev-200 jobs died this way (2026-09-02).
+    """
+    import os
+    from hepcoveragekg.aliases import semantics
+
+    original = os.environ.get("ALIASES_EMBED_MODEL")
+    try:
+        for blank in ("", "   ", "\t"):
+            os.environ["ALIASES_EMBED_MODEL"] = blank
+            assert semantics._model_name_from_env() == semantics.DEFAULT_MODEL
+        os.environ.pop("ALIASES_EMBED_MODEL", None)
+        assert semantics._model_name_from_env() == semantics.DEFAULT_MODEL
+        os.environ["ALIASES_EMBED_MODEL"] = "some/other-model"
+        assert semantics._model_name_from_env() == "some/other-model"
+    finally:
+        os.environ.pop("ALIASES_EMBED_MODEL", None)
+        if original is not None:
+            os.environ["ALIASES_EMBED_MODEL"] = original
+
+
+def test_env_config_records_the_model_actually_used():
+    """Provenance must not record "" when the code fell back to the default."""
+    import os
+    from hepcoveragekg.eval.systems import env_config
+
+    original = os.environ.get("ALIASES_EMBED_MODEL")
+    try:
+        os.environ["ALIASES_EMBED_MODEL"] = ""
+        assert env_config()["env.ALIASES_EMBED_MODEL"] == "BAAI/bge-base-en-v1.5"
+        os.environ["ALIASES_EMBED_MODEL"] = "thellert/physbert_cased"
+        assert env_config()["env.ALIASES_EMBED_MODEL"] == "thellert/physbert_cased"
+    finally:
+        os.environ.pop("ALIASES_EMBED_MODEL", None)
+        if original is not None:
+            os.environ["ALIASES_EMBED_MODEL"] = original
+
+
+def test_cache_path_separates_encoders_and_index_contents():
+    """Two encoders must never share one embedding cache file.
+
+    Keyed only on index contents, a chATLAS arm and a bge-base arm pointed at
+    the same .npz, each read the other's stored model name, each logged
+    "discarding" and re-encoded ~14k strings. Two concurrent arms would thrash
+    forever -- and that is exactly the shape of the encoder x search-sets
+    experiment (D-089).
+    """
+    import os
+    from hepcoveragekg.query import retrieve
+
+    original = os.environ.get("ALIASES_EMBED_MODEL")
+    try:
+        os.environ.pop("ALIASES_EMBED_MODEL", None)
+        base = retrieve.cache_path()
+        os.environ["ALIASES_EMBED_MODEL"] = "kipark/all-mpnet-base-v2-combined_4400-400vs1000"
+        other = retrieve.cache_path()
+        assert base != other, "different encoders must not share a cache file"
+        # the model name must not leak into the filename: it contains a "/"
+        assert "/" not in os.path.basename(other)
+        # index contents still separate caches, per encoder
+        assert retrieve.cache_path(include_values=True) != retrieve.cache_path()
+        assert retrieve.cache_path(include_quotes=True) != retrieve.cache_path()
+        assert (retrieve.cache_path(include_values=True, include_quotes=True)
+                != retrieve.cache_path(include_values=True))
+        # and it is stable for the same configuration
+        assert retrieve.cache_path() == retrieve.cache_path()
+    finally:
+        os.environ.pop("ALIASES_EMBED_MODEL", None)
+        if original is not None:
+            os.environ["ALIASES_EMBED_MODEL"] = original
+
+
+def test_embedding_cache_write_is_atomic(tmp_path):
+    """A reader must never see a half-written cache.
+
+    Concurrent Slurm arms share a cache path; `np.savez` direct to that path is
+    a multi-second non-atomic write, so a reader arriving mid-write gets a
+    truncated npz and the run dies hours in.
+    """
+    import numpy as np
+    from hepcoveragekg.aliases import semantics
+
+    cache = tmp_path / "idx.npz"
+    semantics.embed_cached(["alpha", "beta"], cache)
+    assert cache.exists()
+    # no temp files left behind
+    assert not list(tmp_path.glob("*.tmp.npz"))
+    blob = np.load(cache, allow_pickle=False)
+    assert set(blob["texts"]) == {"alpha", "beta"}
+    # a second call reuses and still leaves the directory clean
+    semantics.embed_cached(["alpha", "beta", "gamma"], cache)
+    assert not list(tmp_path.glob("*.tmp.npz"))
+
+
+def test_planner_temperature_defaults_to_greedy():
+    """0.0 unless explicitly asked. Every arm measured before 2026-09-04 assumed
+    greedy decoding; a non-zero default would silently move every baseline."""
+    import os
+    from hepcoveragekg.query import planner
+    original = os.environ.get("PLANNER_TEMPERATURE")
+    try:
+        os.environ.pop("PLANNER_TEMPERATURE", None)
+        assert planner.planner_temperature() == 0.0
+        os.environ["PLANNER_TEMPERATURE"] = ""
+        assert planner.planner_temperature() == 0.0
+    finally:
+        os.environ.pop("PLANNER_TEMPERATURE", None)
+        if original is not None:
+            os.environ["PLANNER_TEMPERATURE"] = original
+
+
+def test_planner_temperature_is_read_fresh_not_captured_at_import():
+    """A job script exporting this AFTER the module is imported must still win --
+    the same failure `completion_cap` was fixed for (D-084)."""
+    import os
+    from hepcoveragekg.query import planner
+    original = os.environ.get("PLANNER_TEMPERATURE")
+    try:
+        os.environ["PLANNER_TEMPERATURE"] = "0.7"
+        assert planner.planner_temperature() == 0.7
+        os.environ["PLANNER_TEMPERATURE"] = "0.3"
+        assert planner.planner_temperature() == 0.3
+    finally:
+        os.environ.pop("PLANNER_TEMPERATURE", None)
+        if original is not None:
+            os.environ["PLANNER_TEMPERATURE"] = original
+
+
+def test_planner_temperature_rejects_nonsense_rather_than_crashing_a_run():
+    import os
+    from hepcoveragekg.query import planner
+    original = os.environ.get("PLANNER_TEMPERATURE")
+    try:
+        for bad in ("hot", "-1", "9"):
+            os.environ["PLANNER_TEMPERATURE"] = bad
+            assert planner.planner_temperature() == 0.0, bad
+    finally:
+        os.environ.pop("PLANNER_TEMPERATURE", None)
+        if original is not None:
+            os.environ["PLANNER_TEMPERATURE"] = original
+
+
+def test_a_reasoning_critic_gets_the_reasoning_token_budget():
+    """D-084 repeated in the critic path (found 2026-09-05).
+
+    The critic call hardcoded MAX_COMPLETION_TOKENS=800. A reasoning judge
+    spends that on its chain of thought, never emits the verdict JSON, the
+    parser returns {} and EVERY candidate defaults to kept -- silently, because
+    a default is not an error. Measured across four 164-question runs with
+    Qwen3.5-9B: 33,836 candidates, 100% defaulted, zero drops.
+    """
+    from hepcoveragekg.query.planner import completion_cap, MAX_COMPLETION_TOKENS
+    assert completion_cap("Qwen/Qwen3.5-9B") > MAX_COMPLETION_TOKENS
+    assert completion_cap("Qwen/QwQ-32B-AWQ") > MAX_COMPLETION_TOKENS
+    # a non-reasoning judge is unaffected
+    assert completion_cap("NousResearch/Meta-Llama-3.1-8B-Instruct") == MAX_COMPLETION_TOKENS

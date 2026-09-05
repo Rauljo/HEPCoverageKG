@@ -60,6 +60,27 @@ _CLAIMED = re.compile(r"\b(\d[\d,]*)\s+(?:distinct\s+|different\s+|unique\s+)?"
 # planner writes 11 papers at the median and 15 at most.
 MAX_LISTABLE = 15
 
+# The same guard for HUMAN gold, set higher and deliberately so.
+#
+# `MAX_LISTABLE` was calibrated on what the planner writes ("11 at the median
+# and 15 at most"). Re-measured 2026-09-04 on 562 qwen3-32b answers that named
+# any paper: median 5, p90 16, p95 17, p99 22, max 25. So 15 was already tight.
+#
+# It became a silent BUG when Gabriel's full batch 2 landed: merging his 104
+# verdicts grew three golds past the line -- gf-04 11->18, gf-05 15->16,
+# gf-08 13->24 -- and `judged_set_f1` then returned None for all three. They
+# ran, they were answered (gf-05 named 10 papers), and they scored NOTHING, with
+# no error. Improving the ground truth silently deleted the three questions the
+# supervisor's review had made most valuable.
+#
+# 25 covers every Gabriel question and matches the observed maximum. The honest
+# caveat travels with the score instead of being hidden by an abstention:
+# `judged_gold_exceeds_typical` marks a question whose gold is larger than the
+# p90 an answer actually lists, so a low recall there can be read as the
+# structural cap it partly is rather than as a failure to retrieve.
+JUDGED_MAX_LISTABLE = 25
+TYPICAL_LISTED = 16          # p90 of papers named in prose, measured as above
+
 # Papers in the corpus. Used only to report how much of it a partial human gold
 # actually covers, so a strong `judged_f1` cannot be read as a strong result
 # over the whole corpus when it was measured on a third of it.
@@ -132,6 +153,45 @@ def exact_count(q: Question, a: Answer) -> Optional[dict]:
         found = {n.replace(",", "") for n in _numbers_in(a.text)}
         hit = bool(wanted & found)
     return {"count_correct": 1.0 if hit else 0.0}
+
+
+def count_closeness(q: Question, a: Answer) -> Optional[dict]:
+    """For counting questions: how close, not just whether exact.
+
+    `exact_count` is binary -- 11 and 500 score identically against a truth of
+    12, both zero. Screened on 2026-09-02/03 (D-096): across 207 count
+    questions on QwQ, two identical runs NEVER disagreed on a single one --
+    every question was answered right every time or wrong every time, so
+    `exact_count` could not tell two arms apart on ANY of them. A graded score
+    recovered 17.
+
+    `1 - relative_error`, floored at 0 and capped at 1. Deliberately relative,
+    not absolute: an answer of 11 against a truth of 12 is a good answer, the
+    same absolute gap against a truth of 2 is a bad one. Truth of 0 is the one
+    case relative error is undefined, so it falls back to exact match there --
+    zero has no room to be "close".
+
+    This does not replace `exact_count`; both run, so a report can still show
+    "got it exactly" as well as "how close". Kept separate from `exact_count`
+    for the same reason `set_f1` and `judged_set_f1` are separate scorers with
+    separate names (D-054-adjacent) -- conflating "exact" and "close" behind
+    one name is how a metric goes from measuring one thing to measuring
+    something quietly different.
+    """
+    if q.truth.kind != "count" or q.truth.value is None:
+        return None
+    true = float(q.truth.value)
+    claimed = a.value
+    if claimed is None:
+        found = _numbers_in(a.text)
+        claimed = float(found[0].replace(",", "")) if found else None
+    if claimed is None:
+        return {"count_closeness": 0.0}
+    claimed = float(claimed)
+    if true == 0:
+        return {"count_closeness": 1.0 if claimed == 0 else 0.0}
+    closeness = 1.0 - abs(claimed - true) / true
+    return {"count_closeness": max(0.0, min(1.0, closeness))}
 
 
 def set_f1(q: Question, a: Answer) -> Optional[dict]:
@@ -210,7 +270,7 @@ def judged_set_f1(q: Question, a: Answer) -> Optional[dict]:
         return None
     universe = set(q.truth.universe)
     truth = set(q.truth.papers) & universe
-    if not truth or len(truth) > MAX_LISTABLE:
+    if not truth or len(truth) > JUDGED_MAX_LISTABLE:
         return None
     # WHERE THE PAPERS CAME FROM DECIDES WHETHER THEY COUNT.
     #
@@ -232,15 +292,23 @@ def judged_set_f1(q: Question, a: Answer) -> Optional[dict]:
     else:
         got = set()                             # it named nothing; nothing counts
     coverage = len(universe) / CORPUS_PAPERS if CORPUS_PAPERS else 0.0
+    # A gold larger than an answer typically lists caps recall by construction:
+    # gf-08 holds 24 gold papers and only 1 answer in 562 named that many. Say so
+    # in the record rather than letting a structural ceiling read as a retrieval
+    # failure -- and rather than abstaining, which is what silently dropped
+    # gf-04/05/08 when Gabriel's full review grew their golds.
+    oversized = 1.0 if len(truth) > TYPICAL_LISTED else 0.0
     if not got:
         return {"judged_precision": 0.0, "judged_recall": 0.0, "judged_f1": 0.0,
-                "judged_named_none": 1.0, "judged_coverage": coverage}
+                "judged_named_none": 1.0, "judged_coverage": coverage,
+                "judged_gold_exceeds_typical": oversized}
     tp = len(truth & got)
     precision = tp / len(got)
     recall = tp / len(truth)
     f1 = 0.0 if precision + recall == 0 else 2 * precision * recall / (precision + recall)
     return {"judged_precision": precision, "judged_recall": recall, "judged_f1": f1,
-            "judged_named_none": 0.0 if named else 1.0, "judged_coverage": coverage}
+            "judged_named_none": 0.0 if named else 1.0, "judged_coverage": coverage,
+            "judged_gold_exceeds_typical": oversized}
 
 
 def retrieval_reach(q: Question, a: Answer) -> Optional[dict]:
@@ -501,8 +569,46 @@ def tool_use(q: Question, a: Answer) -> Optional[dict]:
     }
 
 
+def answer_form(q: Question, a: Answer) -> dict:
+    """Did the answer NAME anything? (D-107)
+
+    Separate from `judged_set_f1` on purpose, and reported alongside it. The
+    arm table for runs 54201-06 read as a quality ranking and was mostly this:
+
+        arm              judged_f1   prints ids   f1 when it does
+        reviewer           0.180        0.29           0.312
+        simple-answer      0.214        0.81           0.244
+
+    The reviewer was not answering worse. It was answering in prose and letting
+    a pointer stand in for the list. Without this metric the two columns are
+    multiplied together before anyone sees them, and a formatting regression is
+    indistinguishable from a reasoning one.
+
+    Abstains on questions where naming papers is not the job -- a count or a
+    yes/no answer that holds no ids is correct, and scoring it here would
+    manufacture a failure.
+    """
+    if q.shape != "set":
+        return {}
+    named = float(getattr(a, "named_ids", 0))
+    return {
+        "named_ids": named,
+        # THE HEADLINE. 1.0 when the written answer names at least one paper.
+        # Averaged over an arm this is its print rate, and `judged_f1` divided
+        # by it is what the arm actually knows.
+        "answer_names_papers": 1.0 if named or getattr(a, "cited", "") else 0.0,
+        "gate_retried": 1.0 if getattr(a, "gate_retried", False) else 0.0,
+        # Fired, asked, and STILL named nothing. An arm where this is not near
+        # zero has a gate that does not work, which is a different finding from
+        # a gate that was never needed.
+        "gate_failed": 1.0 if getattr(a, "gate_failed", False) else 0.0,
+    }
+
+
 def default_scorers() -> list[Scorer]:
-    return [cost, responded, faithfulness, exact_count, set_f1, judged_set_f1,
+    return [cost, responded, faithfulness, exact_count, count_closeness,
+            answer_form,
+            set_f1, judged_set_f1,
             retrieval_reach, claimed_count,
             known_positive_recall, label_recall, entity_retrieved, tool_use,
             process]

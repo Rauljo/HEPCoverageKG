@@ -320,13 +320,45 @@ def test_one_slow_question_cannot_dominate_a_run(tmp_path):
 def test_the_planner_caps_its_completion_length():
     """Without a cap one call runs to the context limit; at ~26 tok/s that
     exceeds the client's 120s timeout, retries, and regenerates -- the hang looks
-    like a stall rather than an error."""
+    like a stall rather than an error.
+
+    Checks that a cap is APPLIED, not which constant supplies it: the cap became
+    model-dependent in D-084, and a test pinned to the old spelling would have
+    to be edited every time the policy changes, which is how a guard stops
+    guarding.
+    """
     import inspect
 
     from hepcoveragekg.query import planner
 
     assert planner.MAX_COMPLETION_TOKENS > 0
-    assert "max_tokens=MAX_COMPLETION_TOKENS" in inspect.getsource(planner._prepare)
+    src = inspect.getsource(planner._prepare)
+    assert "max_tokens=cap" in src and "completion_cap(model)" in src
+
+
+def test_reasoning_models_get_room_to_think():
+    """800 tokens is the 72B's budget and truncates a reasoning model mid-thought.
+
+    D-084: the truncated model returns an empty message with no tool call, the
+    harness records answered=True with empty text, and the scorer gives it zero
+    -- so a plumbing limit reads as a model that cannot answer. Measured on
+    qwen3-32b, same everything else: free-SQL 0.199 -> 0.592.
+    """
+    from hepcoveragekg.query import planner
+
+    assert planner.completion_cap("Qwen/Qwen2.5-72B-Instruct-AWQ") == 800
+    for m in ("Qwen/QwQ-32B-AWQ", "qwen/qwen3-32b", "openai/gpt-5.6-sol",
+              "deepseek/deepseek-v4-flash-0731"):
+        assert planner.completion_cap(m) > 800, m
+
+
+def test_an_explicit_cap_still_wins(monkeypatch):
+    """The cluster's timeout arithmetic is real: an operator serving a slow local
+    model must be able to pull the allowance back down."""
+    from hepcoveragekg.query import planner
+
+    monkeypatch.setenv("LLM_MAX_COMPLETION_TOKENS", "900")
+    assert planner.completion_cap("Qwen/QwQ-32B-AWQ") == 900
 
 
 def test_the_read_only_connection_survives_the_timeout_worker(tmp_path):
@@ -621,3 +653,184 @@ def test_the_v1_tool_list_is_unchanged_by_the_new_contract():
     # and the module constant must not have been mutated by building v1
     spec = [t for t in planner.TOOL_SPECS if t["name"] == "answer"][0]
     assert "papers_from" in spec["parameters"]["properties"]
+
+
+# --------------------------------------------------------------------------
+# Concurrency (added 2026-09-02). The runner answered one question at a time;
+# the bottleneck is a ~90s network call, so a 300-question arm took 22 hours.
+# --------------------------------------------------------------------------
+
+def _concurrency_questions(n=12):
+    from hepcoveragekg.eval.questions import Question, QuestionSet
+    return QuestionSet([
+        Question(qid=f"q{i}", text=f"question {i}", source="test", split="dev",
+                 shape="count", truth={"kind": "count", "value": i})
+        for i in range(n)
+    ])
+
+
+class _CountingSystem:
+    """Answers with the question's own index, and records which instance ran it."""
+    name = "stub"
+    config: dict = {}
+
+    def __init__(self, tag):
+        self.tag = tag
+        self.seen = []
+
+    def answer(self, q):
+        from hepcoveragekg.eval.systems import Answer
+        import time as _t
+        idx = int(q.qid[1:])
+        _t.sleep(0.05)              # long enough that workers genuinely overlap
+        self.seen.append(q.qid)
+        return Answer(text=str(idx), answered=True, seconds=0.05,
+                      value=idx, papers=[])
+
+
+def test_concurrent_run_produces_every_record_exactly_once(tmp_path):
+    """Concurrency must not drop, duplicate, or mis-pair (qid, repeat)."""
+    from hepcoveragekg.eval import runner
+
+    qs = _concurrency_questions(12)
+    made = []
+    def factory():
+        s = _CountingSystem(f"w{len(made)}"); made.append(s); return s
+
+    path = runner.run(qs, _CountingSystem("main"), repeats=3, out_dir=tmp_path,
+                      timeout=None, max_workers=4, make_system=factory)
+    _, records = runner.load_records(path)
+
+    assert len(records) == 36, f"expected 12x3, got {len(records)}"
+    pairs = sorted((r.qid, r.repeat) for r in records)
+    assert pairs == sorted((f"q{i}", rep) for i in range(12) for rep in range(3))
+    # each record must carry ITS OWN question's answer, not a neighbour's
+    for r in records:
+        assert r.answer["value"] == int(r.qid[1:]), (
+            f"{r.qid} got value {r.answer['value']} -- answers crossed between questions")
+    assert len(made) > 1, "concurrency should have built more than one system"
+
+
+def test_concurrency_refuses_without_a_factory(tmp_path):
+    """The silent-corruption path must be closed off loudly.
+
+    FreeSQLSystem names its search sets `search_N` in temp tables on one
+    connection. Shared across threads the counter races and one question drops
+    another's table mid-join -- plausible, wrong answers. Refusing is the only
+    safe default.
+    """
+    import pytest
+    from hepcoveragekg.eval import runner
+
+    with pytest.raises(ValueError, match="not.*thread-safe|make_system"):
+        runner.run(_concurrency_questions(4), _CountingSystem("main"),
+                   repeats=1, out_dir=tmp_path, timeout=None,
+                   max_workers=8, make_system=None)
+
+
+def test_serial_and_concurrent_agree(tmp_path):
+    """Same questions, same answers, regardless of worker count."""
+    from hepcoveragekg.eval import runner
+
+    qs = _concurrency_questions(8)
+    p1 = runner.run(qs, _CountingSystem("serial"), repeats=2,
+                    out_dir=tmp_path / "a", timeout=None, max_workers=1)
+    p2 = runner.run(qs, _CountingSystem("main"), repeats=2,
+                    out_dir=tmp_path / "b", timeout=None, max_workers=5,
+                    make_system=lambda: _CountingSystem("w"))
+    _, r1 = runner.load_records(p1)
+    _, r2 = runner.load_records(p2)
+    got = lambda rs: sorted((r.qid, r.repeat, r.answer["value"]) for r in rs)
+    assert got(r1) == got(r2)
+
+
+def test_count_closeness_distinguishes_near_from_far():
+    """D-096: exact_count scored a claim of 11 and a claim of 500 identically
+    against a truth of 12 -- both zero. Across 207 real count questions on
+    QwQ, two identical runs never disagreed on a single one for that reason:
+    every question was right every time or wrong every time. count_closeness
+    exists to recover the ones in between."""
+    q = Q.parse(_record())  # truth value = 58
+    assert scoring.count_closeness(q, systems.Answer(value=58))["count_closeness"] == 1.0
+    close = scoring.count_closeness(q, systems.Answer(value=57))["count_closeness"]
+    far = scoring.count_closeness(q, systems.Answer(value=6))["count_closeness"]
+    wild = scoring.count_closeness(q, systems.Answer(value=5000))["count_closeness"]
+    assert close > far > wild
+    assert wild == 0.0  # floored, never negative
+    assert 0.9 < close < 1.0
+
+
+def test_count_closeness_is_relative_not_absolute():
+    """Being off by one paper against a truth of 12 is a good answer; the same
+    absolute gap against a truth of 2 is a bad one. The metric must know that."""
+    small = Q.parse(_record(truth={"kind": "count", "value": 2, "papers": ["1"]}))
+    big = Q.parse(_record(truth={"kind": "count", "value": 12, "papers": ["1"]}))
+    off_by_one_small = scoring.count_closeness(small, systems.Answer(value=1))["count_closeness"]
+    off_by_one_big = scoring.count_closeness(big, systems.Answer(value=11))["count_closeness"]
+    assert off_by_one_big > off_by_one_small
+
+
+def test_count_closeness_zero_truth_has_no_room_to_be_close():
+    q = Q.parse(_record(truth={"kind": "count", "value": 0, "papers": []}))
+    assert scoring.count_closeness(q, systems.Answer(value=0))["count_closeness"] == 1.0
+    assert scoring.count_closeness(q, systems.Answer(value=1))["count_closeness"] == 0.0
+
+
+def test_count_closeness_falls_back_to_prose_number_like_exact_count():
+    q = Q.parse(_record())  # truth value = 58
+    a = systems.Answer(text="I count 55 analyses.")
+    assert scoring.count_closeness(q, a)["count_closeness"] > 0.9
+
+
+def test_count_closeness_no_number_scores_zero_not_none():
+    """Unlike exact_count's implicit False, an unparseable answer must still
+    produce a number -- a scorer that abstains here would hide non-answers
+    from the discrimination screen rather than correctly marking them worst."""
+    q = Q.parse(_record())
+    a = systems.Answer(text="I don't know.")
+    assert scoring.count_closeness(q, a) == {"count_closeness": 0.0}
+
+
+def test_count_closeness_abstains_for_non_count_questions():
+    q = Q.parse(dict(_record(), shape="set",
+                     truth={"kind": "labels", "items": ["hepkg:x"], "papers": []}))
+    assert scoring.count_closeness(q, systems.Answer(value=3)) is None
+
+
+def _judged(gold_n, universe_n=40):
+    """A judged-gold set question with `gold_n` correct papers."""
+    papers = [f"20{i:02d}.0000{i%10}" for i in range(gold_n)]
+    universe = papers + [f"21{i:02d}.0000{i%10}" for i in range(universe_n - gold_n)]
+    return Q.parse({"qid": "g1", "text": "Which analyses...?", "shape": "set",
+                    "needs": ["sql"], "truth_source": "gabriel",
+                    "truth": {"kind": "set", "papers": papers, "universe": universe}})
+
+
+def test_judged_gold_up_to_25_is_scored_not_silently_dropped():
+    """Gabriel's full batch 2 grew three golds past the old cap of 15 --
+    gf-04 to 18, gf-05 to 16, gf-08 to 24 -- and judged_set_f1 returned None for
+    all three. They ran, were answered, and scored NOTHING with no error, so
+    improving the ground truth silently deleted the three most valuable
+    questions. Every real Gabriel gold must score."""
+    for n in (16, 18, 24):
+        q = _judged(n)
+        a = systems.Answer(text=f"See {q.truth.papers[0]} and {q.truth.papers[1]}.")
+        out = scoring.judged_set_f1(q, a)
+        assert out is not None, f"gold of {n} was silently dropped"
+        assert out["judged_f1"] > 0
+
+
+def test_judged_gold_beyond_any_listable_answer_still_abstains():
+    """The guard still exists -- 26+ is past the largest answer ever observed."""
+    q = _judged(26, universe_n=50)
+    a = systems.Answer(text=f"See {q.truth.papers[0]}.")
+    assert scoring.judged_set_f1(q, a) is None
+
+
+def test_oversized_gold_is_flagged_so_capped_recall_is_readable():
+    """A 24-paper gold caps recall by construction: only 1 answer in 562 named
+    that many. The flag lets a low recall be read as the ceiling it partly is."""
+    big = scoring.judged_set_f1(_judged(24), systems.Answer(text="See 2000.00000."))
+    small = scoring.judged_set_f1(_judged(8), systems.Answer(text="See 2000.00000."))
+    assert big["judged_gold_exceeds_typical"] == 1.0
+    assert small["judged_gold_exceeds_typical"] == 0.0

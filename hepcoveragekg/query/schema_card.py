@@ -32,6 +32,7 @@ them, and every extra table is another way for a generated query to go wrong.
 """
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 
 # Tables the query layer is allowed to see. Provenance and import bookkeeping is
@@ -111,9 +112,16 @@ class SchemaCard:
     predicates: list[Predicate] = field(default_factory=list)
     facet_fields: list[tuple[str, list[str], int, int]] = field(default_factory=list)
 
-    def render(self) -> str:
+    def render(self, kind_semantics: bool = False) -> str:
         """The prompt block. Ordered most-useful-first, because a model reading a
-        long card weights the top of it more heavily."""
+        long card weights the top of it more heavily.
+
+        `kind_semantics` is AN ARM, DEFAULT OFF. It shipped inside the frozen
+        path on 2026-09-01 and silently moved every run made after 17:39 that
+        day -- typed up ~0.10, free-SQL down ~0.07 -- so a night of arms was
+        measured against a baseline that had changed underneath them (D-089).
+        Off by default is what makes the control a control.
+        """
         common = [p for p in self.predicates if p.rows > RARE_MAX_ROWS]
         rare = [p for p in self.predicates if p.rows <= RARE_MAX_ROWS]
 
@@ -124,6 +132,30 @@ class SchemaCard:
             "",
             "ENTITY KINDS (what a question can be about)",
         ]
+        if kind_semantics:
+            # WHAT THE KIND MEANS, not just how many there are. gf-05 asks which
+            # analyses "reconstruct a Higgs candidate AS A PHYSICAL OBJECT THEY
+            # SELECT ON, rather than merely studying Higgs production". That
+            # distinction is the KIND, not the label -- both are called "Higgs"
+            # -- and no LIKE pattern can separate them. The card listed
+            # `detector_object 227` as a count and never said what one is, so
+            # neither system had a reason to filter on it.
+            out += [
+                "  The kind IS the distinction for questions about what an analysis",
+                "  DID versus what it studied:",
+                "    detector_object   a reconstructed thing the analysis SELECTS ON",
+                "    physics_process   a process being studied or targeted",
+                # NO EXAMPLE ROLES HERE. Naming them would put facet values in
+                # the prompt, which D-054 forbids: five of the seven keys in the
+                # supervisor's Tier 1 gold are facet values, so a card that
+                # lists them scores the prompt rather than the system. The
+                # parity test caught this the moment it was written.
+                "    event_region      a region an analysis defines and uses",
+                "    result            one finding inside a paper",
+                "  So `Higgs` as a detector_object is a candidate they cut on;",
+                "  `Higgs` as a physics_process is a thing they measured.",
+            ]
+        out += [""]
         out += [f"  {kind:<28} {n}" for kind, n in self.kinds]
         out += ["", "PREDICATES (subject kind -> object kind)"]
         out += [p.render() for p in common]
@@ -287,6 +319,16 @@ def _facet_fields(conn) -> list[tuple[str, list[str], int, int]]:
     return out
 
 
-def render(conn) -> str:
-    """Convenience: build and render in one call."""
-    return build(conn).render()
+def render(conn, kind_semantics: bool | None = None) -> str:
+    """Convenience: build and render in one call.
+
+    `kind_semantics=None` reads `KIND_SEMANTICS` from the environment, default
+    OFF. An env var rather than a threaded argument because the card is built
+    deep inside `planner.answer` and both callers reach it the same way; it is
+    recorded in `_ENV_CONFIG` so a run file can say which card it used, which
+    is the thing that was missing when this last changed silently (D-089).
+    """
+    if kind_semantics is None:
+        kind_semantics = os.environ.get("KIND_SEMANTICS", "").strip().lower() \
+            in ("1", "true", "yes", "on")
+    return build(conn).render(kind_semantics=kind_semantics)
