@@ -25,3 +25,9 @@ eval/runs/*.jsonl
 # summary is small and IS kept — it carries the model, repeats and the
 # yes/no/split counts a result has to be read against.
 eval/reader/*.jsonl
+
+# Slurm job logs. They live only on DIAS, they are large, and `git add -A`
+# there swept 316 of them into a branch -- after which `git checkout main`
+# deleted the directory out from under the job scripts, which write into it
+# and fail in one second if it is missing (54209-12, 2026-09-05).
+logs/
