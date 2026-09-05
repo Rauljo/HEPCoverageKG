@@ -490,6 +490,35 @@ externally-defined number on someone else's questions is the independent check w
 **Where discussed**: 2026-07-31 (found), 2026-08-01 (scoped as a baseline). *Not previously in the
 vault — recorded late.*
 
+### Plan-on-Graph (PoG) — Chen et al., NeurIPS 2024 — **the closest prior work to our query layer**
+**What**: a *prompting* (training-free) KG-augmented LLM agent on Freebase. Decomposes the question
+into sub-objectives, then loops: explore paths → update memory → reflect on whether to self-correct.
+Three named mechanisms — **Guidance** (decomposition), **Memory** (searched subgraph + reasoning
+paths + **sub-objective status**), **Reflection** (is this enough? if not, which already-seen entity
+do we backtrack to?). Beats ToG on CWQ 63.2 vs 57.1 (GPT-3.5) and 75.0 vs 67.6 (GPT-4).
+**Why it matters here**: it independently names **our worst failure**. Their §1 limitation 3,
+*"forgetting partial conditions"* — the model remembered the song was Taylor Swift's but forgot it
+had to have won an AMA — **is gf-01**: precision 0.90 on single-condition questions, 0.30 on the
+three-part one. Their ablation says the fix (sub-objective status held in memory) is the most
+valuable of their four mechanisms (−4.3 on CWQ when removed, vs −3.8 reflection, −3.1 guidance,
+−1.9 adaptive breadth). We have no memory of that kind at all.
+**The efficiency result, which is the counter-intuitive one**: adding decomposition, memory and
+reflection made PoG *cheaper* than ToG, not dearer — 13.3 LLM calls vs 22.6, **output tokens down
+76%** (353 vs 1,486), 4× faster. Avoided dead-end exploration more than pays for the extra
+deliberation. A direct, testable prediction for our own reviewer arm.
+**Where it does NOT transfer, and this needs saying in the write-up**: (1) their relation-exploration
+step exists because a Freebase entity has hundreds of relations — we have ~20 predicates and the
+schema card lists them, so that call buys nothing; (2) **they assume entity linking is solved**
+(§2: *"we assume any entity mentioned in q ... are labeled and linked"*) while **56% of our errors
+are `unknown_entity_id`** — PoG begins after our hardest step; (3) their metric is Hits@1 on one
+entity, so their pervasive *"as few as possible"* prompting is correct for them and wrong for us,
+where recall is the weaker side in every arm measured. See
+[`ideas/self-correcting-planning-arms.md`](ideas/self-correcting-planning-arms.md).
+**The gap we sit in**: PoG is prompting-KGQA over Freebase with pre-linked entities, scored Hits@1.
+Ours is a *typed coverage* KG over HEP papers, scored set-F1, with a **free-SQL control that beats
+the typed agent** — a comparison they do not make and cannot speak to.
+**Where discussed**: 2026-08-31 (read; four arms specced from it).
+
 ### GraphRAG (Microsoft) — the KG competitor, and the project's obvious challenge
 **What**: builds a graph from a corpus automatically — LLM extracts entities and relations, clusters
 them into communities, summarises each — then answers via **local search** (entity neighbourhood) or
@@ -569,3 +598,88 @@ moves the arithmetic out of the model and into Python.
 **Why here**: **S-51**. `same_id` is a *noisy positive* signal (347 shared ids vs **334 divergent**),
 not ground truth. The honest use is to measure the label source's own precision on a sample and
 report results against a stated noise level — not to pretend it is gold.
+
+### PhysBERT — a physics-specific text embedding model
+Thellert et al., *APL Machine Learning* (2024). arXiv 2408.09574. HF:
+`thellert/physbert_cased`, `thellert/physbert_uncased`.
+
+BERT pre-trained **from scratch** on ~1.2M arXiv physics papers, with a
+physics-specific WordPiece vocabulary, then fine-tuned with SimCSE for sentence
+embeddings. Tested here 2026-09-01 — see [D-087](decisions.md).
+
+**Why it matters to us, and it is a tokenizer story.** Its vocabulary is 30,522
+tokens, *the same size as bge-base*. It is not a bigger model; it spent an equal
+budget on physics rather than general English. `Higgs`, `boson`, `quark`,
+`luminosity`, `pseudorapidity`, `calorimeter` each survive as one token, where
+bge-base and mpnet split `Higgs` into `hi` + `##ggs`. On our Higgs-candidate
+discrimination that is +0.116 separation against bge-base's +0.006 — the best
+measured. On ttZ control regions it loses badly to the chATLAS encoder
+(+0.097 vs +0.248), which is the expected split: PhysBERT read papers, the
+chATLAS model read twiki and chat, and region names are twiki vocabulary.
+
+**Contrast with SciBERT** (Beltagy et al. 2019, `allenai/scibert_scivocab_uncased`),
+same architecture and same mean-pooling in our test, trained on general
+scientific text: **last of twelve, -0.010**. The relevant domain is physics, not
+science. This is the cleanest evidence we have that in-domain pre-training, not
+capacity, is what the coverage-map retrieval needs.
+
+**Caveat for us:** the HF checkpoints are raw `transformers` feature-extraction
+models with no trained pooling head, so we mean-pool. Mean-pooled BERT is
+anisotropic (all cosines compressed into ~0.62-0.68), which is fine for ranking
+and wrong for any tuned threshold — see the alias-merge warning in D-087.
+
+---
+
+# From the OneNote reading notes (folder `Dissertation/OneNote notes/`, processed 2026-09-05)
+
+*Six papers with substantive notes that had no vault entry, plus three that had only a passing mention. Notes are Raul's own, taken Jul–Sep 2026; the "Why it matters here" lines are the transfer.*
+
+## StructGPT (Jiang, Zhou, Dong, Ye, Zhao, Wen — EMNLP 2023, pp. 9237–9251)
+**What**: An *Iterative Reading–Reasoning* (IRR) framework for LLMs over structured data, built on an invoking–linearisation–generation cycle. Splits the loop into two named functions: **reading** (collect relevant evidence through interfaces) and **reasoning** (infer the answer, or plan the next step).
+**Why it matters here**: the earliest clean statement of the loop our planner runs. The read/reason split is the vocabulary our harness lacks — worth adopting in the methodology chapter, because it names why the critic sits where it does (it judges the *reading*, not the *reasoning*).
+**Where discussed**: notes 2026-09-01; folded into related work 2026-09-05.
+
+## KG-Agent (Jiang, Zhou, Zhao, Song, Zhu, Zhu, Wen — arXiv 2402.11163, 2024)
+**What**: Autonomous agent over a KG with four components — instruction-tuned LLM, multifunctional toolbox, KG-based executor, knowledge memory. **Toolbox is the transferable part**: *extraction* (get_relation, get head/tail entities, entities by type or constraint), *logic* (count, intersection, union, condition verification, terminate-with-answer), *semantic* (relation retrieval by NN, entity disambiguation by NN). Training data synthesised by taking a known result, its SQL, and the reasoning path that reaches it, as ground truth. Explicitly motivated by removing the human-crafted plan and by making **small models** sufficient without a closed API.
+**Why it matters here**: (1) their toolbox is a checklist against ours — we should confirm we expose `count`, `intersection` and `union` as *tools* rather than hoping the SQL arm reconstructs them; (2) the "small models, no closed API" motivation is ours exactly (D-012, self-hosted); (3) the reasoning-program synthesis recipe (result → SQL → path) is a ready-made way to generate our few-shot examples from the graph we already have.
+**Where discussed**: notes 2026-08-31; related work 2026-09-05.
+
+## Plan-on-Graph (Chen, Tong, Jin, Sun, Ye, Xiong — arXiv 2410.23875, 2024) — **closest architectural precedent**
+**What**: Self-correcting adaptive planning over KGs. Decomposes the question into **sub-objectives each carrying a condition**; explores adaptively (relations first, then entities fulfilling them — not fixed breadth); maintains **memory** of subgraph + reasoning paths + per-sub-objective status; **reflects** to decide whether to keep exploring or backtrack.
+Diagnoses three failures of prior work: **predefined path breadth** (fixed number of neighbours → silent loss), **irreversible exploration** (no backtracking), **forgetting partial conditions** (multi-condition questions answered against only some).
+**Why it matters here**: the third failure **is our conjunction problem (D-058)**, arrived at independently — that is a citable convergence, not a coincidence, and belongs in the write-up. The first failure is why our exploration breadth cannot be capped. Their two-step relation-then-entity exploration is a concrete critique of our current tools: **are we unrolling neighbours along graph structure, or querying rows from nowhere?** If the latter, the critic is judging the wrong object — it should judge *path relevance*, not row relevance. Their prompt is in the notes.
+**Difference to defend**: their benchmarks have one answer entity reachable by a path, so exploration may stop on finding it. Ours are set-valued, so pruning to find *an* answer is exactly how you return a silently incomplete set.
+**Where discussed**: notes 2026-08-30; related work + positioning 2026-09-05.
+
+## Wikontic — building KGs from text aligned with the Wikidata ontology
+**What**: Combines **open** IE (no predefined entity/relation names) with the structural rigour of **closed** IE by leveraging an external ontology. Six components; the load-bearing ones are candidate triplet extraction, ontology-aware triplet refinement (hand the LLM the ontology, make it rewrite), subject/object refinement (embeddings + LLM), and storage/retrieval where **embeddings are used to decide which entities to look for at query time**.
+Their framing of the problem: most KG approaches use the graph as an *auxiliary retrieval tool* rather than a high-quality knowledge resource, and synonymy plus redundant and inconsistent representations are what destroy the graph's advantages.
+**Evaluation**: MINE (how much factual information the system retains); KG quality via structural compactness (non-redundancy, deduplication) and downstream multi-hop QA testing correctness *and* completeness. **Result worth stealing: qualifiers carry substantial information** — structured evidence, the same qualifiers we store.
+**Why it matters here**: (1) the open-vs-closed framing is the cleanest statement of why our fixed schema plus discovery channel is the right shape; (2) "auxiliary tool vs knowledge resource" is the sentence our positioning argues; (3) their qualifier finding directly supports D-024's lossless-qualifier decision; (4) their multi-hop completeness test is a template — if anything is missing en route, multi-hop questions fail, which is a *usable* completeness probe for us.
+**Raul's own ideas in the notes worth keeping**: LLM to find entity hierarchies; two-step extract-then-refine; get an ontology from INSPIRE-HEP; evaluate by artificially removing nodes; evidence + KG rather than full text + KG (checked against HippoRAG — *not* novel, they did it for evaluation only, but we could too).
+**Where discussed**: notes 2026-07-28; related work 2026-09-05.
+
+## MatKG — autonomously generated materials-science KG
+**What**: Large KG built automatically from materials literature. Huge dataset, simpler target than ours, **deduplication is basic**.
+**Why it matters here**: mostly a scale-and-contrast citation — same shape, different field, and its light treatment of deduplication is the gap our aliases layer occupies. **One idea taken**: use Levenshtein edit distance rather than n-grams with Jaccard (worth testing against the current Tier 1).
+**Where discussed**: notes 2026-07-28.
+
+## RAPTOR (Sarthi, Abdullah, Tuli, Khanna, Goldie, Manning — ICLR 2024)
+**What**: Recursive abstractive processing — builds a tree by summarising chunks, then summarising the summaries, and retrieves at whichever level of abstraction fits the query.
+**Why it matters here**: it is about **indexes over text, not graphs**. Raul's note that doing the equivalent *on a graph* could be novel is worth pursuing carefully — it is close to Microsoft GraphRAG's community summaries, so the novelty claim must be made against that, not against RAPTOR. And the summarisation is lossy, which is the objection we raise to community-summary GraphRAG for counting questions: whatever we build, the underlying assertions must stay reachable.
+**Where discussed**: notes 2026-07-30.
+
+## Self-RAG (Asai et al., ICLR 2024)
+**What**: Trains a model to decide when to retrieve and to critique the relevance and sufficiency of what it retrieved, via reflection tokens.
+**Why it matters here**: Raul's note is the correct read — **they train, we orchestrate**. The open question he flags is whether prompting an orchestrated critic reproduces the behaviour without fine-tuning. That is testable with what we already have, and the answer belongs in the critic ablation.
+**Where discussed**: notes 2026-07-31.
+
+## Building effective agents (Anthropic engineering, 2024)
+**What**: Practitioner taxonomy separating *workflows* (predefined code paths) from *agents* (model directs its own process). Workflows: prompt chaining, routing, parallelisation (sectioning and voting), orchestrator–workers, evaluator–optimiser. Agents for open-ended problems where the number of steps cannot be predicted. Appendix argues tool definitions deserve as much prompt engineering as the main prompt.
+**Why it matters here**: gives standard names to what our arms already are — the typed planner is closest to **orchestrator–workers**, the critic loop is **evaluator–optimiser**, and repeats-with-unanimity is **voting**. Using those names makes the ablation legible to a reader. The tool-definition point is directly actionable: our free-SQL arm's failures may be tool-description failures rather than model failures.
+**Where discussed**: notes 2026-08-02.
+
+## GraphRAG survey — additional detail from the notes
+**Beyond what was already recorded**: the **semantic parsing vs information-retrieval** distinction (generate a logical form and execute it, versus retrieve and let the model compose) — this is the correct technical name for what we do, now used in the background chapter. Retrieval granularity taxonomy (nodes, triplets, paths, subgraphs, hybrid). Iterative retrieval split into **non-adaptive** (fixed steps, threshold) and **adaptive** (model decides whether to continue) — we are adaptive, and the survey lists refs 22/92/94/100/203/213/229/248 as doing what we do. Indexing: graph, text and vector indexes as a multi-layered system; **indexing quotes** is called out, which we do. Evaluation limitations worth quoting: no standardised retrieval-faithfulness metric because reliable retrieval ground truth is hard, and **position bias in LLM-as-judge**, mitigated by reasoning models with explicit CoT.
+**Future-work items that are ours**: scalable retrieval on real-world (not toy) KGs; hierarchical retrieval architectures for the grouping layer; and benchmarks that annotate **ground-truth retrieval elements, not only final answers** — which is precisely the half of our evaluation that does not yet exist.
+**Where discussed**: notes 2026-08-02.

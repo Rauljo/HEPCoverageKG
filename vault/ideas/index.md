@@ -1,6 +1,6 @@
 # Ideas — index
 
-**Status counts: 4 seed · 12 discussed · 3 adopted · 0 rejected**
+**Status counts: 4 seed · 14 discussed · 3 adopted · 0 rejected**
 
 *Statuses: seed (one-liner, never discussed) · discussed (has a doc) · adopted (graduated to a D-nnn decision; doc is its pre-history) · rejected (kept forever, with rationale).*
 *Organized by theme (each idea placed by its primary concern; several span themes — cross-links in the docs). Actionable to-dos live in [`../backlog.md`](../backlog.md), not here.*
@@ -38,4 +38,6 @@
 | Held-out gap validation | discussed | [held-out-gap-validation.md](held-out-gap-validation.md) — train/test split for gaps; matrix-completion eval; intrinsic complement to the external literature check. 2026-07-27: the gap-*matching* problem (reuses aliases Tiers 2–3) + temporal holdout from declared-future-work labels |
 | Multi-agent extension | discussed | [multi-agent-extension.md](multi-agent-extension.md) — agentic verification vs single-pass baseline; the critic panel is mostly **Sunny's** thread; blocked on baseline. 2026-07-27: "mixture of LLMs" is an *ensemble*, not an agency, argument |
 | Researcher feedback loop + self-correction | discussed | [researcher-feedback-loop.md](researcher-feedback-loop.md) — expose per-paper summaries → authors correct → cluster → human-applied fixes (never LLM self-editing). Team meeting 2026-07-24 |
+| **Self-correcting planning arms** | discussed | [self-correcting-planning-arms.md](self-correcting-planning-arms.md) — four REMOVABLE arms after PoG (NeurIPS 2024), specced 2026-08-31: `--subgoals` (decompose, ≤3), `--subgoal-status` (the memory block, contains it — PoG's highest-value mechanism and the fix for gf-01's forgotten conditions), `--structured-verdict`, `--backtrack` (critic-filtered unfollowed candidates, competing with a fresh search). Departs from PoG on breadth: they minimise counts for Hits@1, we filter by relevance because recall is our weaker side |
+| **Typed-interface arms** | discussed | [typed-interface-arms.md](typed-interface-arms.md) — three REMOVABLE arms on the tool layer, specced 2026-08-31 from the trace anatomy: `--symmetric-hops` (the backward hop requires a predicate, the forward hop does not), `--strict-refs` (92% of typed errors are references to things that do not exist yet), `--path-tool` (one call for the conjunctive multi-hop that free-SQL writes as a JOIN). Each default OFF, one guarded branch, deletable. None expected to work until measured |
 | Observability / artefact tracing | seed | Keep intermediate artefacts so an error's *cause* is recoverable (AgentRivet/Langfuse) — provenance, not scoring |

@@ -2703,3 +2703,1605 @@ revealed, and every one of which made results look BETTER:
 
 Single-model evaluation does not merely limit generality. **It lets harness bugs hide behind one
 model's habits**, and every one of these flattered us.
+
+## D-081 — a value row shows the sentence containing the value, not the retrieval footprint
+
+2026-08-30.
+
+The seven value rows carried `all_quotes` from the run: the sentences the agent
+READ on its way to an answer. That is the retrieval footprint, and it is not
+support. Three of the seven stated a number appearing in none of the sentences
+shown beside it — gf-12 asked "is 875 GeV right?" beside three quotes about
+figure numbering and SR binning; gf-14 and gf-15 the same. The supporting
+sentence existed in the paper in every case ("Masses of the t̃2 up to 875 GeV
+are excluded at 95% CL…"). We were showing the wrong sentences, not missing
+ones.
+
+This is the SAME error as D-062 and D-080 in a third place: treating what the
+system touched as what the system proved. It is worth naming as a pattern —
+footprint is not evidence — because it has now been made three times
+independently.
+
+`eval/value_evidence.py` searches the paper for sentences containing the values
+the answer commits to. A whole number must carry a unit to count, or citation
+brackets and author affiliations match ("[ 14 , 15 ]" answered a question about
+15 GeV; "Phys. Rev. D 60 (1999)" answered one about 60% b-tagging). Decimals are
+exempt — the yields table writes 5.7 ± 1.0 bare. Sentences rank by how much of
+the answer they account for, not one per anchor. A prose answer with no value
+to anchor to returns nothing and keeps the run's quotes.
+
+Also fixed, all found only by reading the seven rows end to end:
+`\mathchoice{a}{b}{c}{d}` printed its own name and all four arguments, so
+χ̃⁰₂ appeared four times in gf-12; our answer was appended to `question` as
+HTML and the app escaped it, so the sheet read "875 GeV&lt;/div&gt;"; and
+`\prime` rendered as the word "prime" in "bffprimeχ̃01".
+
+Batch 2 stands at 104 rows, sha256 892867990155dd54. Still not sent.
+
+## D-082 — the idle GPUs are MIG slices, and the queue is not the bottleneck we thought
+
+2026-08-30.
+
+QwQ has never run. Job 53993 sat `PENDING (Priority)` with a start estimate of
+2026-09-02: another user's array `TF_exp9_scale` holds all three cards of
+compute-gpu-0-1 with a **3-day limit per element** and five more elements queued
+behind. The `GPU` partition is that one node. Nothing was wrong with our job.
+
+`LIGHTGPU` looked like the answer — compute-gpu-0-0, `gpu:a100:6`, fully idle,
+`AllowAccounts=ALL`, PriorityTier 1000 — and a job submitted there started
+instantly. It is not the answer. The node is **MIG-partitioned**: three
+A100-40GB cards each split into two `3g.20gb` instances. Six allocatable GPUs,
+20GB each, and MIG instances cannot be pooled, so vLLM cannot tensor-parallel
+across them. Against ~18GB usable:
+
+    QwQ-32B-AWQ            19G   does not fit
+    Qwen3.6-27B            52G   not quantised, needs two whole cards
+    Qwen3-Coder-Next-FP8   75G   no
+    Llama-3.1-8B           15G   fits -- the critic, and nothing else
+
+So LIGHTGPU can host our critic and none of our planners. Recorded because the
+partition will keep looking free.
+
+The failure was unreadable, which is the part worth fixing. Slurm hands out
+slice ids (`CUDA_VISIBLE_DEVICES=12,21`) that `nvidia-smi -i` rejects, so the
+ECC probe returned "No devices were found" for every card and the job stopped
+with "need two clean cards, found 0". A sizing problem wearing the costume of
+D-040's dying card. Both server scripts now refuse a MIG node by name.
+
+Second bug, found in the same job and older than it: the scripts source `.env`
+with `set -a` BEFORE reading `LLM_MODEL_NAME`, so `sbatch --export` was silently
+overwritten by the 72B pinned in `.env`. Today's QwQ attempt asked a server for
+QwQ that had been told to load the 72B — one record, empty answer, and no line
+in the log naming the weights. Precedence is now submitted env > .env >
+default, and both scripts echo the model they are serving.
+
+53993 was cancelled while chasing LIGHTGPU; 53997 restored the place with the
+same 2026-09-02 estimate, so no priority was lost. QwQ on-prem is 3 days out.
+
+## D-083 — the Aug 29-30 runs, re-scored: luna was never strong
+
+2026-08-30.
+
+130 run files sat on the cluster, never synced, carrying run-time scores only.
+`rescored` was null on every record, so the D-080 footprint correction had never
+been applied to any of them. Pulled and re-scored against the merged question
+set; originals kept alongside as `.preD080`.
+
+**6 of 32 Gabriel-question runs changed, and they are all one model.**
+
+    luna 20:32   0.666 -> 0.000    24 of 24 answers empty
+    luna 20:49   0.635 -> 0.214    12 of 24 empty
+    luna 21:04   0.677 -> 0.382    10 of 24 empty
+    luna 20:45   0.708 -> 0.388     2 of 4  empty
+    Qwen 15:04   0.477 -> 0.423   (x2, same run repeated)
+
+gpt-5.6-luna had looked like the best typed model at 0.666-0.708. It was
+scoring the retrieval footprint: no answer text, no citation, and the same
+three arXiv ids returned for every question. Corrected, it lands at 0.382 --
+which is exactly the luna/typed 0.382 already in the corrected sweep, so the
+two independent paths now agree.
+
+Everything else was already right: free-SQL (0.669, 0.675 on sol), deepseek
+typed 0.512, sol typed 0.287, and all eight Aug 30 Qwen arms unchanged. The
+headline ordering survives -- free-SQL beats typed on every model tested.
+
+THE TELL IS THE EMPTY COUNT. Every run that moved had empty answers, and the
+size of the drop tracks how many. `named_none` was already the best predictor
+of score; this says the same thing from the other side. Worth a guard: a run
+whose answers are mostly empty should not report a score at all without saying
+so, because the number it reports is about retrieval and reads as competence.
+
+## D-084 — the completion cap was throttling every reasoning model; hosted re-runs dropped
+
+2026-08-31.
+
+`MAX_COMPLETION_TOKENS = 800` (planner.py:100) was sized for a 72B AWQ on one
+A100 at ~26 tok/s, where any completion past ~3,100 tokens times out, retries and
+regenerates. It is the wrong constant for a hosted reasoning model, which spends
+that budget on `<think>` BEFORE it can emit a tool call. Truncated mid-thought,
+the model returns an empty message with no tool call; the harness records
+`answered=True` with empty text; `papers` still holds the retrieval footprint;
+and the scorer correctly gives it zero. A plumbing limit therefore arrived
+looking like a model that could not answer.
+
+Same model, same questions, same prompt, cap 800 -> 4000:
+
+    qwen3-32b free-SQL   0.199 -> 0.592     empty answers 13/24 -> 0/24
+                                            named_none    0.667 -> 0.125
+
+`budget.py` had already written this down in its REASONING_MODELS comment --
+"max_tokens set for Qwen can leave no room for an answer after the reasoning is
+spent". The knowledge was in one module and the constant in another. The fix
+belongs in code, not in an env var passed by hand.
+
+**Consequence for the record**: every hosted number measured before this is a
+FLOOR, not a score -- sol 0.669, deepseek 0.512, luna 0.382. Qwen2.5-72B is
+unaffected (not a reasoning model, 800 was always enough), so the local baseline
+stands.
+
+**Decision: the hosted re-runs are dropped**, paid models to be revisited later.
+The deepseek re-run timed out on 9 of 24 records with `rounds=0, calls=0` while a
+direct call to the same model answered in 4.0s, so the client timeout/retry path
+is at fault and is undiagnosed. Its file is in `eval/runs/quarantine/` with the
+reasoning; neither its 0.218 (nine zeros) nor its 0.655 (eight survivors,
+selected by having completed) may be quoted.
+
+**Process note, worth more than the finding.** The re-runs were launched as one
+five-arm sequential chain and left unwatched for ~19 hours; deepseek's failure
+blocked both luna arms behind it. That is exactly the shape the nightly-batch
+convention exists to avoid -- separate jobs, so one failure does not take the
+batch down. Cost of the whole episode: ~$0.28, because timeouts bill nothing.
+
+## D-085 — 31% of the graph was unsearchable; the fix helps the typed planner and hurts the control
+
+2026-09-01.
+
+An assertion's object is either an ENTITY or a LITERAL VALUE. 4,357 of 14,188
+(31%, ~279,000 characters) are literal -- the selections, the reported
+quantities, the region definitions. The retrieval index was built from
+`entity_occurrence` alone, so it held 5,434 labels saying WHAT THINGS ARE CALLED
+and nothing saying WHAT IS TRUE OF THEM.
+
+    search("exactly two electrons")   0 label matches
+    the requirement, in the graph:    "HLT: two electrons with pT > 33 (25) GeV"
+
+gf-08 has 13 gold papers and the typed planner returned 0. It could not have
+done otherwise: there was no path from the question to the fact. The critic
+could not help either -- `_render_candidates` shows it `label [kind] facets`
+and no quotes, so the same text was invisible to it. Three layers, one blind
+spot; only free-SQL reached it, with `LIKE`.
+
+`--index-values` indexes each value as another surface form OF ITS SUBJECT
+ENTITY (8,509 -> 12,758 forms). Because `label` becomes the matched form, the
+critic starts seeing "exactly two isolated oppositely charged electrons/muons"
+where it saw "Electron".
+
+**It is not a global default, because it moves the two systems in opposite
+directions:**
+
+    typed      0.352 -> 0.438   +0.086   precision AND recall both up
+    free-SQL   0.592 -> 0.509   -0.083   precision up, recall down
+    the gap    0.240 -> 0.071   -70%
+
+free-SQL already reached that text with `LIKE`; adding value forms changes what
+`search` RETURNS, so its vocabulary discovery degrades -- it reads value strings
+where it used to read entity names, and builds its patterns from the wrong
+material.
+
+**The consequence for the write-up is larger than the arm.** Most of the
+typed-vs-free-SQL gap was this index defect, not the query paradigm. "Declarative
+beats procedural" was the wrong reading of a number that was mostly one missing
+third of the index.
+
+Not yet adopted: it needs `paperA-200` before it becomes a per-system default,
+and adopting it re-baselines every arm measured against the old index.
+
+## D-086 — these mechanisms are compensations, not improvements
+
+2026-09-01.
+
+Nine arms across four mechanisms, one model (qwen3-32b), one question set, n=24
+each. Every arm's SIGN is predicted by the strength of the baseline it was added
+to, and nothing else:
+
+    baseline 0.352 (typed)       4 arms   ALL POSITIVE   mean +0.056
+    baseline 0.438 (typed+idx)   1 arm    negative       -0.044
+    baseline 0.592 (free-SQL)    4 arms   ALL NEGATIVE   mean -0.108
+
+The cleanest pair is one flag against two baselines: `--subgoals` is +0.024 on
+0.352 and -0.044 on 0.438. Same flag, same model, same questions.
+
+9 of 9 in the predicted direction is roughly p=0.004 under random signs. The
+Pearson r of -0.939 OVERSTATES it -- there are only three distinct baseline
+levels, so it is three group means, not a continuous relationship. Report the
+sign consistency, not the r.
+
+**Why it happens.** Every mechanism tried -- an objective block, a plan
+reviewer, question decomposition -- makes the agent commit earlier and narrower.
+Measured on free-SQL: precision rises, recall falls, F1 falls. That is the right
+trade for a system that answers with one entity and the wrong one for a system
+scored on set coverage, where `judged_set_f1` restricts to the judged universe
+and breadth is nearly free (gf-01-condition named 44 papers for 8 gold and
+scored precision 0.80).
+
+**This cuts against PoG (NeurIPS 2024)**, whose Guidance/Memory/Reflection are
+presented as broadly beneficial. Their baseline, ToG at 57.1, explores with a
+fixed breadth and cannot self-correct -- it is the weak configuration. We are
+seeing what those mechanisms do when the baseline is already good.
+
+CAVEAT, and it is not small: `--subgoal-status` -- PoG's HIGHEST-value mechanism
+(-4.3 when removed, against -3.1 for Guidance) -- was still running when this was
+written. What has been tested is `--subgoals`, which is their `w/o Memory`
+variant. The pattern above may not survive it.
+
+## D-087 — the encoder loses "Higgs" at the tokenizer, and no amount of size fixes it
+
+**The question**, raised 2026-09-01: `Higgs candidate` retrieves every other
+candidate, so is the encoder too small? Try a bigger one.
+
+**The answer: size is irrelevant, and the failure is upstream of the vector.**
+`bge-base` has no `Higgs` token. It splits the word into `hi` + `##ggs` — the
+greeting, then a fragment. The model is matching roughly *"hi ggs candidate"*,
+where the only surviving signal is `candidate`, which is exactly why every
+candidate ranks alike. The information is destroyed by the tokenizer, before
+any of the 768 dimensions get to see it. Adding dimensions cannot recover a
+word that never reached the model.
+
+**The measurement that settles it.** Separation = mean cosine to correct
+surface forms minus mean cosine to confusable ones, over three discriminations
+this corpus actually needs (Higgs candidate / b-tagged jet / ttZ control region):
+
+    kipark chATLAS mpnet      768   Higgs +0.076   ttZ +0.248   mean +0.146
+    all-mpnet-base-v2         768         +0.056                mean +0.132
+    physbert_cased            768         +0.116   ttZ +0.097   mean +0.111
+    physbert_uncased          768         +0.022                mean +0.104
+    all-roberta-large-v1     1024         -0.009   ttZ +0.205   mean +0.094
+    mxbai-embed-large-v1     1024         -0.019                mean +0.088
+    bge-large-en-v1.5        1024                               mean +0.083
+    bge-small-en-v1.5         384                               mean +0.077
+    bge-base-en-v1.5 (ours)   768         +0.006                mean +0.071
+    Qwen3-Embedding-0.6B     1024         -0.040                mean +0.057
+    e5-large-v2              1024         -0.041                mean +0.023
+    scibert (mean-pool)       768         -0.092                mean -0.010
+
+**Every 1024-dim model is NEGATIVE on the Higgs case** — they rank
+`electron candidate` above `H->bb candidate jet`. The decisive control is
+`all-roberta-large-v1`: same sentence-transformers training recipe as
+`all-mpnet-base-v2`, 1024 dims against 768, and it scores WORSE (+0.094 vs
++0.132). Same lineage, scaled up, degraded. Dimension-vs-separation across all
+tested models is r = +0.065, i.e. nothing.
+
+**What does work is domain pre-training, and the mechanism is legible.**
+PhysBERT (BERT pre-trained from scratch on arXiv physics) keeps `Higgs`,
+`boson`, `quark`, `luminosity`, `pseudorapidity`, `calorimeter` each as ONE
+token. Its vocabulary is 30,522 — *identical* to bge-base. It did not buy a
+bigger vocabulary; it spent the same budget on physics instead of general
+English. That trade alone takes the Higgs case from +0.006 to +0.116, the best
+of anything tested. Compare SciBERT, same architecture and same mean-pooling,
+trained on general science: dead last at -0.010. Science is not the domain;
+physics is.
+
+**The two leaders fail on different axes, and the split is explanatory.**
+PhysBERT wins on particle names (Higgs +0.116 vs +0.076); the chATLAS encoder
+wins hard on analysis jargon (ttZ control region +0.248 vs +0.097). PhysBERT
+read papers; kipark's model was fine-tuned on ATLAS twiki, chat and git. `CR-ttZ`
+is twiki vocabulary, not paper vocabulary. Neither dominates, so the encoder
+choice is an empirical arm, not an argument — both are running on Gabriel gold.
+
+**`b-tagged` splits in every model tested**, PhysBERT included: the hyphen
+forces it. That predicts, correctly, that b-tagging is the one discrimination
+where PhysBERT has no edge, and it means hyphenated detector jargon stays a
+lexical-retrieval problem no encoder swap will solve.
+
+**PhysBERT is RETRIEVAL-ONLY.** It is a raw `transformers` checkpoint with no
+trained pooling layer, so sentence vectors are mean-pooled, and mean-pooled BERT
+is anisotropic — everything lands in a narrow 0.62-0.68 cosine band. Ranking is
+unaffected, but the alias-merge boundary near 0.861 is a *bge-base constant*
+(`semantics.py`). Swapping PhysBERT in there without re-tuning would merge
+nearly everything, silently. Retrieval ranks; aliasing thresholds.
+
+**Credit where due:** the user proposed the rare-word hypothesis unprompted, and
+I had earlier dismissed changing the encoder on the grounds that the signal was
+not there. The signal was there. bge-base was not trained to encode it.
+
+## D-088 — six QwQ arms ran with `--critic` set and no critic alive
+
+**What happened.** Jobs 54044-54049 (2026-09-01, ~1h each) **and 54042** each
+requested a judge model that the judge server did not have. Port 8001 was
+serving `Qwen/Qwen3.5-9B`; the client asked for
+`NousResearch/Meta-Llama-3.1-8B-Instruct`. Every judge call returned 404. In
+54046: **118 calls to 8001, 0 successful** — 97 "critic chunk failed", 21
+"facet reader chunk failed". All seven jobs show the same pattern.
+
+**THE SCRIPT WAS NOT ALWAYS WRONG, AND THAT IS THE LESSON.** It hardcodes the
+Llama name, and port 8001 *served exactly that* for weeks — 54009 made 68
+successful judge calls, 53980 made 635, both with 0 failures. The hardcoding
+became wrong the moment I repointed 8001 at Qwen3.5-9B without changing what
+the script asks for. A hardcoded name is a latent break waiting for the
+environment to move under it.
+
+**A REPORTED FINDING WAS AN ARTEFACT.** 54042 (`--critic`, 91 404s, 0 OK) was
+compared against 54043 (genuinely `--critic` off) and reported as: *the critic
+makes no F1 difference on QwQ (0.511 vs 0.519) but faithfulness rises
+0.728 -> 0.908 with Qwen3.5-9B*. Both halves are void. "No F1 difference" is
+two critic-OFF runs scoring alike — the expected result, not a discovery. The
+faithfulness gap cannot be attributed to the critic that never ran; 54042 also
+carried `--critic-seed` (row shuffling) and 54043 had no `--critic` at all, so
+they differ in more than one way, and 0.728 carries a +/-0.13 bar.
+
+**What is unaffected:** QwQ typed **0.519** (54009) and **0.477** (53980) had
+real, working Llama-8B critics. Those stand. Nothing attributed to
+Qwen3.5-9B before 54050 ever happened.
+
+**Why it got through.** Two independent guards each had a hole, and the holes
+lined up.
+
+1. `hpc/gabriel_arm_job.sh` **hardcodes** `CRITIC_MODEL` in the `*-8b` arm
+   table, overwriting whatever `sbatch --export` passes. This is D-082 exactly
+   — submitted value silently discarded — and the fix written for D-082 was
+   applied to `LLM_MODEL_NAME` and **never to `CRITIC_MODEL`**, ten lines away
+   in the same file.
+2. The `wait_for` gate proves *a server answers at the URL*. It says nothing
+   about the model NAME in the request body. A healthy server serving the wrong
+   model passes the probe.
+
+So the run started, completed, scored, and reported — labelled critic-on.
+
+**Why it matters more than a normal bug.** The critic ablation is the largest
+single effect measured on this project: **+0.231** judged F1 (0.411 with,
+0.180 without). These are not slightly-off numbers; they are critic-off runs
+wearing a critic-on label. It also explains the QwQ baseline reading 0.388 here
+against 0.519 measured earlier with a working critic — a 0.131 gap, the right
+order for a missing critic.
+
+**What is salvageable.** All six failed identically, so they remain internally
+comparable *as a critic-off series*. The +0.084 that `--path-tool` shows over
+baseline (0.472 ± 0.009 vs 0.388 ± 0.027) is a real critic-off effect and the
+tightest error bar of the night. It does NOT establish what the path tool does
+with a working critic, and none of the six may be compared against any
+critic-on number.
+
+**Fixed** in `hpc/gabriel_arm_job.sh`: `_OVERRIDE_CRITIC` restores the submitted
+judge after the arm table, mirroring `_OVERRIDE_MODEL`; and a new
+`model_served()` asserts the exact model id we will send appears in the
+server's `/v1/models`, refusing to start otherwise (exit 4). Verified on 54050:
+`answerer serves 'Qwen/QwQ-32B-AWQ'` / `judge serves 'Qwen/Qwen3.5-9B'`.
+All six arms resubmitted as **54050-54055**.
+
+**The rule this earns.** A liveness probe must assert the CONFIGURATION, not
+the connection. Any check that would pass against a healthy server running the
+wrong thing is not a check. Third time an env-var override has silently changed
+what a labelled run actually ran (D-082, D-084, here) — the pattern is that the
+label is written from the submission and the behaviour from the environment,
+and nothing compares the two.
+
+## D-089 — a night of arms, mostly uninterpretable, and the protocol that follows
+
+**What happened.** 2026-09-01: ~40 arms across 14 scripts, 11:00 to 23:57,
+while shared code changed four times (schema card 17:39, retrieve + free_sql
+18:34, templates 18:47, planner 18:48). Each arm is a fresh Python process that
+re-imports, so **arms in the same script ran different software**. The free-SQL
+baseline was measured four times: **0.592, 0.526, 0.473, 0.465**. A 0.127
+spread in the reference line, against same-arm repeat variability of 0.004-0.073
+and effects being chased of ~0.04-0.06. Most of the night cannot be read.
+
+**The root cause is one habit:** putting a change in the frozen path instead of
+behind a flag. The kind-semantics schema card went in unflagged at 17:39 and
+silently moved every run after it, in both directions (typed up ~0.10, free-SQL
+down ~0.07). The project's own convention -- *default OFF, one flag, one
+guarded branch* -- exists in two idea docs and was not followed.
+
+**Two provenance gaps made it unrecoverable after the fact.**
+`ALIASES_EMBED_MODEL` was never recorded in `_ENV_CONFIG`, so a run file cannot
+say which encoder produced it -- the encoder arms could not be reconstructed
+from their outputs. Same class as the `index_values` gap that corrupted two
+analyses and produced a spurious r = -0.945.
+
+**THE BIGGER ERROR, and it is a design error not a bookkeeping one.** Every
+encoder arm ran as plain `--system free-sql`. But `--search-sets` sets
+`SET_CAP = 400`: with it, retrieval goes 400 deep and the whole match set is
+materialised as a temp table the model filters in SQL; without it, `limit=20`
+and the model pastes ~3 ids. **Encoder quality below rank ~3 is invisible
+without search-sets.** So the encoder was tested in the only configuration
+where it cannot matter -- and then reported as "no effect".
+
+Direct evidence it does matter, measured 2026-09-02 on the `Higgs candidate`
+query at rank 5-9:
+
+    bge-base   lepton candidate, $W$ boson candidate, proton candidate,
+               Photon candidate, leptonic particle candidate
+    chATLAS    (none -- zero cross-particle contamination in the top 15)
+    PhysBERT   finds `h candidate` TWICE, which neither other model surfaces
+               at all, and which no LIKE '%Higgs%' can reach
+
+All three put the right answer at ranks 1-3, which is why end-to-end F1 could
+not see the difference. The gain lives in the tail, and only search-sets reads
+the tail. **Retrieval improved; the metric was blind to it.** That is also
+consistent with the trace finding that 100% of named papers were retrieved but
+only 22.8% of gold were named -- a SELECTION failure downstream of retrieval.
+
+**THE PROTOCOL, five rules, each earned by a named failure.** Implemented in
+`eval/batches/2026-09-02-frozen-baseline.sh`:
+
+    1. One script, nothing else running, no edits under hepcoveragekg/ during.
+    2. The control runs FIRST AND LAST. If they disagree by more than the noise
+       floor, the batch drifted and nothing in it is believable. Drift is
+       measured, not assumed away.
+    3. One seed everywhere (mixing seeded/unseeded broke sets_v2).
+    4. Every experimental change behind a flag, default OFF. KIND_SEMANTICS is
+       now one.
+    5. Anything that changes behaviour is recorded in `_ENV_CONFIG`.
+
+**Standing prediction, recorded before the run so it cannot be adjusted after:**
+chATLAS beats bge-base by MORE with `--search-sets` than without, and the gain
+appears as **precision** rather than recall -- search-sets v1 cost precision
+0.704 -> 0.602 because the model joined the ~400-row table with no WHERE and
+"could not see that the set was heterogeneous". A cleaner 400-row set is
+exactly the fix for that, and a cleaner set is what the encoder buys.
+
+## D-090 — with a live critic, the QwQ arms reorder, and one flips sign
+
+The 2026-09-01 QwQ arms were rerun as 54050-54055 after D-088, this time with
+the judge verified alive (67-118 successful calls each, zero 404s):
+
+    arm                        dead critic    LIVE critic    change
+    baseline                       0.388         0.398        +0.010
+    + index-values                 0.367         0.366        -0.001
+    + path-tool                    0.472         0.441        -0.031
+    + path-tool + index-values     0.356         0.428        +0.072
+    + index-quotes                 0.405         0.372        -0.033
+    + subgoal-status               0.430         0.333        -0.097
+
+**`--path-tool` survives**, and remains the best QwQ arm: +0.043 over baseline
+(0.441 vs 0.398). Smaller than the +0.084 the broken run showed, and now inside
+its own error bar (+/-0.073), so it is suggestive rather than established.
+
+**`--subgoal-status` REVERSES.** It read +0.042 over baseline with a dead
+critic and reads **-0.065** with a live one -- a 0.097 swing, the largest
+critic-dependence of any arm. It looked like PoG's best mechanism working; it
+was PoG's best mechanism filling a hole left by a missing critic. On this
+evidence the two do the same job and the critic does it better.
+
+That is the third distinct reading of `--subgoal-status`: +0.104 on typed
+against a since-deleted baseline (2026-09-01), then 0.456/0.403 on repeat, now
+-0.065 on QwQ with a working judge. **No arm in this project has been more
+sensitive to what else was true at the time.** It is in the frozen batch
+(B3) for a fourth, controlled reading; until that lands nothing about it should
+be claimed in either direction.
+
+**`--path-tool + index-values` was genuinely corrupted** (0.356 -> 0.428): the
+one cell whose repeats collapsed to a single value under the broken critic, and
+the reason the missing error bar was worth chasing.
+
+**Method note.** Every number in the left column was reported to the supervisor
+track as a result on 2026-09-01. The rule that follows is in D-088: assert the
+configuration, not the connection.
+
+## D-091 — the drift check fired: the typed half of the clean batch is void
+
+Job 54057 ran the D-089 protocol: 15 arms, one script, one code state, one
+seed, control FIRST and LAST. The bracketing controls:
+
+    A1  free-SQL control   0.471      A1'  0.486     drift 0.015   PASS
+    B1  typed    control   0.336      B1'  0.464     drift 0.128   FAIL
+
+**The typed control moved 0.128 between the first and last arm of the same
+script, on identical code, with the same seed.** By the rule written into the
+protocol before the run -- *if the pair differs by more than the noise floor,
+no arm in it should be believed* -- every typed arm in this batch is
+unreadable. That includes B5 `--index-values` at 0.522, which I had already
+reported as "the strongest result we have". It is not established.
+
+**The free-SQL half PASSES** (drift 0.015) and its arms are readable, against a
+control mean of ~0.478:
+
+    + concept-prompt          0.599    +0.121   <- survives, largest effect
+    + index-quotes            0.518    +0.040
+    + chATLAS + search-sets   0.513    +0.035
+    + kind-semantics          0.503    +0.025
+    + chATLAS alone           0.480    +0.002
+    + index-values            0.467    -0.011
+    + search-sets alone       0.404    -0.074
+
+`--concept-prompt` is the only free-SQL arm clearing the drift band, and it is
+a PURE PROMPT CHANGE -- no retrieval difference at all.
+
+**THE PATTERN WORTH CHASING: the ARM is stable and the CONTROL is not.**
+
+    typed control      0.378 (09-01)   0.336 (B1)   0.464 (B1')   range 0.128
+    typed + idxvalues  0.512 (09-01)   0.522 (B5)                 range 0.010
+
+Two independent readings of the arm land within 0.010 of each other, and BOTH
+sit above the highest of three control readings. That is suggestive that
+`--index-values` helps AND that it damps variance -- but the effect SIZE cannot
+be quoted while the baseline it is measured against spans 0.128.
+
+**What this changes about method.** The protocol's four other rules were about
+keeping conditions identical; they all held here and it was not enough. The
+typed planner is simply high-variance at n=24 (8 questions), and one repeat of
+a control is not a control. **Bracketing controls are now mandatory, and the
+typed system needs repeats of the CONTROL, not just of the arms.**
+
+**Cross-check from dev-200** (54066-69, 201 records each): those runs cannot
+compute `judged_f1` at all -- it needs the judged universe -- so they did not
+confirm the headline metric. What they show is a shape split, since
+gabriel-gold is 100% `set` while dev-200 is 93 set / 107 count:
+
+    --index-values, count questions:  count_correct 0.794 -> 0.692  (-0.102)
+
+Helping set questions while hurting counts is coherent -- 4,249 extra value
+surface forms make papers easier to FIND and harder to COUNT -- and it is the
+one durable thing to come out of the dev-200 run. Both halves need repeats.
+
+## D-092 — batch 2 is merged into the gold set, not held out
+
+**Decision (user, 2026-09-02): do not hold batch 2 out.** Ground truth is the
+scarce resource; a hold-out we cannot afford is worth less than an eval set we
+can use. Train/test separation will be reconstructed later from a fresh batch.
+This overrides the promise in `eval/review/batch2/MESSAGE.md` ("I would rather
+not look at it until the configuration is frozen"), knowingly and on the record.
+
+**What came back:** 51 of 104 rows, stopping at a CLEAN FAMILY BOUNDARY --
+gf-01-cond 35/35, gf-02 6/6, gf-04 10/10 complete; gf-05, gf-07, gf-08 and the
+value questions entirely untouched. So the merged gold sets are complete for
+what they cover, not truncated mid-question. The unjudged 53 rows are the HARD
+families, so anything measured here is an optimistic bound.
+
+**The mistake worth recording.** I first built batch 2 as a SEPARATE eval set.
+Three of its four questions duplicated `gf-01-condition`, `gf-02` and `gf-04`
+with SMALLER gold and universes than the file we already had -- strictly worse,
+and I ran 35 minutes of arms against it before the user asked whether those
+questions were already in batch 1. They were. The right operation was a MERGE.
+
+**Merged** into `eval/questions/gabriel-gold-2026-09-02-merged.jsonl`:
+
+    gold rows      78 -> 93   (+15)
+    judged papers 174 -> 209  (+35)
+
+    gf-01-condition   gold  8 -> 11   universe 10 -> 18
+    gf-02             gold  9 -> 11   universe 14 -> 19
+    gf-04             gold 11 -> 18   universe 17 -> 26   (+50% universe)
+    gf-01-met         NEW   gold  3   universe 13
+
+`gf-01-met` is the one genuinely new question: batch 2 split gf-01 into one
+condition per row, the b-tag rows merged into `gf-01-condition`, the
+"is it a search" rows came back ALL NEGATIVE (no positives, set F1 undefined,
+dropped), and MET alone had never been asked. Only 3 of 13 positive, so it is
+the most fragile of the nine -- one paper moves it materially.
+
+**A GROUND-TRUTH CONFLICT, and it is not noise.** `2012.01581` on gf-02:
+**batch 1 "no", batch 2 "yes"**, same judge, same question, different evidence
+snippet. His batch-2 note reasons it out -- *"matrix method with f = fail and
+p = pass and there being 3 leptons"*. Resolved BATCH 2 WINS (later, and
+reasoned); confirmed by the user. The general lesson is larger than the row:
+**our ground truth is snippet-dependent at roughly 1 in 20.** Gabriel said as
+much himself on row 1011 -- *"If this is ground truth for the paper, the correct
+answer is yes. If this is ground truth for this snippet alone, then no"* -- and
+our own brief specified per-snippet ("one condition each, with its own quote").
+
+**Error structure, for later, NOT acted on as a fix** (acting on it is what
+would have burned the set as a measure): errors split perfectly by question --
+gf-01-cond 8 misses and 0 over-claims; gf-02 and gf-04 6 over-claims and 0
+misses. Named causes from his notes: `veto = use` (2 rows), symbols not read
+(`pTmiss` in notation, 1 row), a plain reading miss (1 row), and domain
+inference no quote supports (2 rows). **Our critic agreed with him on 22 of 23
+rows where it ruled (0.957)** -- the judge is not the weak part.
+
+## D-093 — two identical QwQ runs differ by 0.113; the arm spread is 0.048
+
+Four QwQ arms on the merged gold set (2026-09-02), submitted together, running
+in PARALLEL on the same servers with the same code and the same seed:
+
+    54074  CONTROL          0.407 +/- 0.096    critic calls 103
+    54075  + path-tool      0.424 +/- 0.03     critic calls 144
+    54076  + index-values   0.376 +/- 0.064    critic calls 147
+    54077  CONTROL REPEAT   0.294 +/- 0.1      critic calls  49
+
+**The two identical controls differ by 0.113.** The whole spread between the
+three distinct arms is 0.048 -- less than half the gap between one arm and
+itself. The critic-call counts differ by 2x for the same configuration (103 vs
+49), so the runs did materially different amounts of work.
+
+**This is stronger than the sequential drift check in D-089.** Those two
+controls were separated by ~10 hours of wall clock, so drift could be blamed on
+time or on the machine. These were parallel: same instant, same node, same
+weights, same questions. Nothing is left to blame but **run-to-run sampling
+variance in the model itself**.
+
+**Consequence: no QwQ arm measured at n=27 x 3 repeats is interpretable**, and
+that retroactively covers `--path-tool`, whose +0.084 (dead critic, D-088) and
++0.043 (live critic, D-090) and +0.017 (here) have now been three different
+numbers across three runs. It was never established.
+
+**What this actually demands.** The fix is not more arms, it is more SAMPLES per
+arm -- repeats well above 3, or a question set large enough that per-question
+variance averages out. 9 questions is not that set even at 209 judged papers.
+The honest statement of the project's measurement floor: **on gabriel-scale
+question sets we can detect effects of roughly 0.15 and nothing smaller.**
+`--index-values` on typed (+0.134 and +0.186, twice, same direction, precision
+AND recall both up) is the only arm that has ever cleared a bar like that.
+
+**Method rule, promoted:** run the control TWICE IN PARALLEL in every batch, not
+just first-and-last. It costs one arm and it prices the noise floor directly
+instead of assuming it.
+
+## D-094 — the runner answers questions concurrently; and index-values does not replicate
+
+**The harness was strictly serial.** `runner.run` looped `for repeat: for q in
+questions:`; the only `ThreadPoolExecutor` in the file was a timeout wrapper
+with `max_workers=1`. Since a question is ~100s of network wait, every arm cost
+`n x repeats x 100s`: a 300-question x 3-repeat arm was 26 hours.
+
+    workers=1   941s      (9 questions, 1 repeat)
+    workers=9   198s      4.75x
+
+198s against a ~104s mean means the wall is now bounded by the SLOWEST QUESTION
+rather than the sum, i.e. it is already near-optimal at this size, and the win
+GROWS with the set: 300 x 3 at 12 workers is ~5h instead of ~26h.
+
+**THE PART THAT WOULD HAVE CORRUPTED RESULTS SILENTLY.** The systems are not
+thread-safe and do not fail loudly. `FreeSQLSystem` materialises each search as
+a temp table `search_N` on its connection, bumps `self._set_n`, and calls
+`_drop_sets()` between questions -- its own docstring already names the serial
+hazard ("question 12 could join against question 3's search set and score on
+it"). Threaded on one connection: the counter races, names collide, and one
+question's `_drop_sets()` drops a table another is mid-join on. The answers come
+back PLAUSIBLE AND WRONG.
+
+So `--workers N` requires a FACTORY: each worker builds its own system and its
+own sqlite connection. Asking for concurrency without one raises `ValueError`
+rather than corrupting. The retrieval index IS shared, deliberately -- 44MB, and
+`build()` calls `_prepare_sparse()` eagerly so it is immutable when queried.
+Records are written in COMPLETION order; every consumer groups by (qid, repeat),
+so this costs nothing but the files are no longer question-ordered.
+
+## The measurement that matters more than the speed-up
+
+Seven arms, qwen3-32b, merged gold set (9 questions, 209 judged papers),
+5 repeats, all seven in parallel, BOTH CONTROLS DUPLICATED per D-093:
+
+    freesql CONTROL-a   0.446 +/- 0.10     typed CONTROL-a   0.358 +/- 0.03
+    freesql CONTROL-b   0.396 +/- 0.068    typed CONTROL-b   0.408 +/- 0.084
+            delta 0.050                            delta 0.050
+
+**Both duplicate pairs disagree by exactly 0.050, independently.** That is the
+noise floor on this set -- much better than QwQ's 0.113 (D-093), so repeats=5
+plus the larger universes bought real precision.
+
+    concept-prompt   0.493   +0.072 vs control mean   ABOVE noise
+    index-quotes     0.374   -0.047                   inside noise
+    index-values     0.361   -0.022                   INSIDE NOISE
+
+**`--index-values` DOES NOT REPLICATE.** It read +0.134 (2026-09-01) and +0.186
+(frozen batch) on the OLD 8-question set and reads **-0.022** on the merged set.
+It was reported twice as the one arm that had cleared the bar; on a better
+instrument it has not. The difference is the instrument, not the code: better
+ground truth (209 judged papers vs 174), a ninth question, 5 repeats instead of
+3, and a control measured twice instead of assumed.
+
+**`--concept-prompt` is now the only mechanism standing** (+0.072 against a
+0.050 floor -- marginal, not established), and it is a pure PROMPT change with
+no retrieval component. Every retrieval-side mechanism tried so far sits inside
+the noise.
+
+## D-095 — 86% of our questions cannot tell two arms apart, and Gabriel's are the exception
+
+Paired control on QwQ, 200 stratified questions, two identical runs per system
+(2026-09-02). 104 questions produced a comparable score in both runs.
+
+**NOISE FLOOR vs QUESTION COUNT** -- bootstrapped from the two runs, so it cost
+nothing beyond the runs themselves. 95th percentile of |mean(a) - mean(b)| over
+random subsets; an effect must EXCEED this to be real at that n:
+
+        n      typed    free-SQL
+       25      0.080       0.151
+       50      0.049       0.105
+       75      0.035       0.062
+      100      0.024       0.029
+
+This is the number the whole session was missing. At n=9 the floor was 0.050;
+at n=100 it is ~0.03. **Roughly 100 questions buys +/-0.03**, which is what
+turns a 0.07 effect from "suggestive" into "measured".
+
+**THE FINDING THAT MATTERS MORE.** Sort each question by whether the two runs
+agree and where it scores:
+
+    typed      always-0 48%   always-1 33%   DISCRIMINATING 14%   unstable  5%
+    free-SQL   always-0 51%   always-1 15%   DISCRIMINATING 10%   unstable 24%
+
+**Only 10-14% of questions can distinguish one arm from another.** A question
+everything gets right, or everything gets wrong, contributes variance and no
+signal. We have been paying for ~90% dead weight in every arm ever run.
+
+**By source, and this settles an argument:**
+
+    pool        n    discriminating (typed)
+    gabriel     8         75%     <-- human truth
+    tierB      59         14%     38 of 59 always-0 (too hard)
+    type2       8         12%      6 of  8 always-0 (too hard)
+    tierA      29          0%     24 of 29 always-1 (too easy)
+
+**Gabriel's questions discriminate 5x better than anything we generate**, and
+`tierA` discriminates NOT AT ALL -- 24 of 29 are answered correctly every time.
+The user's instruction to keep Gabriel's questions as the primary signal and
+ours as confirmation (2026-09-02) is now measured rather than assumed. Our
+SQL-truth generators produce questions clustered at the extremes: Tier A too
+easy, Tier B and the mined type-2 too hard.
+
+**free-SQL IS FOUR TIMES NOISIER PER QUESTION.** Mean |a-b| per question is
+0.229 for free-SQL against 0.056 for typed, and 24% of its questions are
+outright unstable against typed's 5%. Its aggregate looks calm (both runs mean
+within 0.016) only because the per-question swings cancel. Any per-question
+analysis of free-SQL needs far more repeats than typed.
+
+**A GAP TO FIX:** all 62 `retrieval` questions produced no comparable score in
+either run and dropped out of the analysis. Cause not yet established.
+
+**Consequences.**
+1. Build the evaluation set from DISCRIMINATING questions, not from whatever
+   exists. Screen first, then run arms -- the screen pays for itself in one arm.
+2. Tier A as currently generated is unusable for arm comparison. It measures
+   that the system works, not which version works better.
+3. Cost follows from n, and n now has a number: ~100 discriminating questions.
+   Every earlier cost estimate assumed 150 arbitrary ones.
+
+## D-096 — every count question is useless for comparing arms, and we own 24 usable questions
+
+Full paired screen, 500 questions, QwQ, two identical runs per system
+(2026-09-02/03). Supersedes the batch-1 figures in D-095, which were optimistic
+on a smaller sample.
+
+**Only 262 of 500 produced a score at all.** The 162 `retrieval` questions
+sampled here score NOTHING -- their truth is `kind="entity"` with `papers=[]`,
+so `set_f1` (needs papers) and `judged_set_f1` (needs a universe) both decline
+and no scorer covers them. That is true of ALL 720 in the retrieval bank, not
+just the sample. They have never contributed to any arm comparison.
+
+**NOISE FLOOR vs n**, 95th percentile of |mean(a)-mean(b)|, 600 bootstrap draws:
+
+        n      typed    free-SQL
+       25      0.110       0.187
+       50      0.066       0.112
+      100      0.041       0.076
+      150      0.029       0.054
+      200      0.021       0.039
+      250      0.010       0.023
+
+**~150 questions for +/-0.03 on typed; free-SQL needs ~250** for the same.
+free-SQL is the noisier instrument by a factor of ~3 (per-question |a-b| 0.213
+vs typed's 0.077, 22% of its questions outright unstable against 7%).
+
+**THE FINDING: COUNT QUESTIONS DISCRIMINATE NOTHING.**
+
+    shape     n     discriminating   always-0   always-1   unstable
+    count   207          0  ( 0%)         97         96         14
+    set      55         24  (44%)         24          2          5
+
+**Zero of 207 count questions can separate two arms.** Every one is answered
+correctly every time or wrongly every time. They measure whether the system
+works, never which version works better. 57% of our question bank is `count`.
+This settles the count-vs-set question the user asked on 2026-09-02: they are
+not merely different, one of them is inert.
+
+**By source** (typed):
+
+    gabriel     8     75% discriminating     <-- human truth
+    type2       8     12%
+    tierB     159     11%      103 of 159 always wrong
+    tierA      87      0%       75 of  87 always right
+
+**We own 24 discriminating questions.** Out of 500 screened, out of ~1,500
+generated. To assemble the ~150 the noise curve demands, at the current yield
+(24/500 = 4.8%) we would have to screen ~3,000 -- more than exist.
+
+**So the bottleneck is not question COUNT, it is question CALIBRATION.** Our
+generators produce questions clustered at the extremes: Tier A trivially easy
+(86% always right), Tier B and the mined type-2 too hard (65% and 75% always
+wrong), retrieval unscoreable, count inert by construction. Generating more of
+the same cannot fix this.
+
+**What follows.**
+1. Score arms on SET questions only. Report count separately as a capability
+   check, never as part of an arm comparison.
+2. Fix or retire the retrieval bank -- 720 questions currently costing compute
+   and returning nothing.
+3. Generation must target the middle of the difficulty band. A question is
+   worth generating only if the system sometimes gets it right; the screen
+   gives us a cheap filter to enforce that.
+4. Gabriel's 8 remain the most informative questions in the project by a factor
+   of ~7, which is the strongest argument yet for spending his review time on
+   MORE of them rather than on anything we can generate.
+
+## D-097 — D-096 was wrong about two of its four banks; corrected, and the usable set more than doubled
+
+D-096 declared the 720-question retrieval bank unscoreable and Tier A
+0% discriminating. Both claims were checked against only three scorers
+(`judged_f1`, `set_f1`, `count_correct`) and are wrong -- correcting on the
+record rather than leaving a false result standing.
+
+**Retrieval bank: not broken.** It was built exactly as intended -- pick an
+entity, write a question that should surface it, check it comes back -- and
+`entity_retrieved` (already in `default_scorers()`) has been measuring it the
+whole time: 0.784 typed / 0.698 free-SQL, unweighted mean, on the 162 sampled.
+The earlier "unscoreable" claim only checked the three paper-shaped scorers and
+never noticed `entity_retrieved` covers this shape. What IS true: `papers=[]`
+in the stored truth (kind="entity" holds the entity id, never the paper list)
+means no PAPER-SET scorer can run, so it never contributed to `set_f1` or
+`judged_f1` -- a narrower and correct claim than "unscoreable".
+
+**Root cause of the always-miss group, checked by reading traces, not
+guessing.** 35 of 197 sampled retrieval questions always fail. Tool use splits
+three ways:
+
+    12   called NO TOOLS AT ALL -- answered from memory, never searched
+     7   used `facets` instead of `search` -- FOUND THE RIGHT PAPERS, scored 0
+         anyway because entity_retrieved only reads a.entity_ids, not facet hits
+    16   searched and genuinely did not find the entity
+
+So of 35 "failures", 7 are a scoring gap (facets results aren't credited) and
+12 are the model skipping retrieval outright (`Muon`, appearing in 22 papers
+under 10 spellings, returned ZERO entities on `facets(objects=[Muon])` in one
+sampled case) -- not a burial-in-noise problem, not a ranking problem. Only 16
+are real search misses. This says the next arm worth testing is "never abstain
+without searching" and crediting `facets`, not reranking.
+
+**Tier A: the metric was wrong, not the questions.** `label_recall` already
+existed (`mentioned_label_recall`, `retrieved_label_recall`) and was never
+looked at in D-096's analysis, which used `count_correct` against `truth.value`
+-- the wrong field for a "labels"-kind truth. Re-screened on the SAME 500-run
+data, no new compute:
+
+    metric                     typed DISCRIM   free-SQL DISCRIM
+    count_correct (wrong)          0% (0/87)        0% (0/87)
+    mentioned_label_recall        33% (24/73)       29% (21/73)
+
+**And it separates two different capabilities cleanly.** `retrieved_label_recall`
+(exact entity ids in the trace) is 99% always-1 on typed -- Tier A retrieval is
+essentially solved for typed -- but 51% always-0 on free-SQL: free-SQL is
+GENUINELY FAILING TO RETRIEVE the right entities on questions typed answers
+almost perfectly. Previously invisible; the count-only view could not show it.
+Separately, `count_closeness` (below) on the SAME Tier A questions'
+count-shaped half is 0% discriminating both systems -- so for Tier A, "how many"
+is trivial and "which ones exactly" is not. Naming, not counting, is where the
+system fails.
+
+## New: `count_closeness`, a graded count scorer
+
+`exact_count` is binary: 11 and 500 score identically against a truth of 12,
+both zero. D-096 found this made 0 of 207 count questions discriminating --
+every one was answered right every time or wrong every time. Added
+`count_closeness = 1 - |claimed-true|/true`, floored at 0, exact match at
+truth=0. Runs alongside `exact_count`, does not replace it (`default_scorers`).
+Recovers 7 typed / 16 free-SQL from zero, concentrated in tierB
+(count_closeness DISCRIM 6% typed / 13% free-SQL vs tierA's 0%/0% -- consistent
+with tierA's counts being trivial and tierB's being too small, see below).
+
+Tests: `tests/test_eval_harness.py::test_count_closeness_*` (6 cases: relative
+not absolute error, zero-truth edge case, prose-number fallback, abstains for
+non-count shapes). 862 tests pass project-wide.
+
+## New: `hepcoveragekg/eval/verify_truth.py` -- evidence-backed gold
+
+Two operations, both checked against the real graph on 2026-09-03:
+
+**`trim_question`**: for any SQL-set-truth question naming an `entity_id`,
+keeps only papers with >=1 evidence-linked assertion to that entity; drops
+papers with none; empties (and the question is discarded) if nothing survives.
+Applied to Tier B's 200 questions: 72 unchanged (fully backed already), 124
+trimmed (had some unsupported papers), 4 dropped entirely. Gabriel's
+human-verified truth is explicitly exempted -- this filter would be a downgrade
+there, never an upgrade.
+
+**Important limit, stated in the module docstring so it cannot be forgotten**:
+this catches the cheap, common failure (a claim with NOTHING behind it) and is
+NOT a substitute for a human reading the paper. A structural spot-check (does
+the quote's OWN assertion connect the paper to the concept, not just "is there
+a quote") passed all 6 sampled on 2026-09-03. A phrase-level recall check (is
+there a paper mentioning the concept that the gold is MISSING) found 1 of 31
+distinctive labels with an unaccounted mention, and that one was a generic
+phrase multiple systematics would plausibly share. So: not fully trustworthy,
+trustworthy enough to filter on.
+
+**`backfill_retrieval_papers`**: fixes the retrieval bank's actual bug --
+`papers=[]` where the question text asks "which analyses...". Fills `papers`
+from evidence-backed assertions, restricted to `min_papers=3` (128 of 720
+qualify; the other 592 resolve to 1-2 papers, all-or-nothing and weak
+discriminators per the D-096 screen). Output already evidence-filtered by
+construction -- no second trim pass needed. 127 converted, running as a paired
+control on QwQ now (54141-54144); result pending.
+
+Tests: `tests/test_verify_truth.py`, 10 cases against an in-memory sqlite
+fixture (evidence-backed vs unbacked papers, universe correctness -- a dropped
+paper must leave the universe too, never becomes a silent confirmed-negative --
+Gabriel exemption, file-level counts).
+
+## Re-screened total, same 500-run data, zero new compute
+
+    system     old (D-096, 3 metrics)   new (this decision, 4 metrics, union)
+    typed              24                        50
+    free-SQL          ~24                        44
+
+By pool (typed): tierA 24 (via label_recall, was 0), tierB 19 (12 via
+evidence-trimmed set_f1 + 7 via count_closeness, some overlap), gabriel 6,
+type2 1. The bottleneck named in D-096 -- "our generators cluster at the
+extremes" -- turns out to be partly a metric-choice artefact: Tier A was never
+at the easy extreme, it was being read through a scorer that couldn't see its
+real difficulty.
+
+## Wording-variance experiment (D-098-adjacent, same run)
+
+9 of Gabriel's questions reworded 3 ways each (36 total, meaning checked
+against the original condition -- 3 of the first-draft rewordings dropped a
+qualifier that carried the condition itself and were rewritten before running,
+see `eval/questions/gabriel-reworded-2026-09-03.jsonl` provenance), 6 repeats,
+QwQ typed (54135/54136 complete; free-SQL 54137/54138 running).
+
+    average within-one-wording std (repeat noise)   : 0.078
+    average across-4-wordings std (phrasing effect)  : 0.095
+
+**Phrasing moves the score by MORE than repeat noise does, on average.** One
+case is not noise at all: `gabriel-gf-01-condition` scores 0.03 on its ORIGINAL
+wording and 0.53-0.76 on all three independent rewordings. Traced to a specific
+mechanism, not guessed: on the original wording the model twice retrieved the
+right papers via `facets` (named MV2c10/DeepCSV/DL1r/DeepJet correctly in
+prose) and then wrote a summary-style answer with `papers_from="none"` in the
+answer contract -- describing what it found instead of committing to a listed
+set. The rewordings did not reliably trigger this pattern. Free-SQL half
+pending before this is reported as a system-wide finding rather than a
+typed-QwQ one.
+
+## D-098 — the evaluation set, rebuilt: 24 usable questions to 163
+
+Closing the work started in D-096/D-097. All numbers from paired controls on
+QwQ (two identical runs per system), screened as: a question DISCRIMINATES if
+both runs agree (|a-b| <= 0.34) and it lands strictly between always-right and
+always-wrong (0.05 <= mean <= 0.95). Anything else cannot separate two arms.
+
+**Result, by bank and system:**
+
+    bank              typed   free-SQL   union
+    retrieval-conv       72        35       84
+    tierA                24        21       36
+    tierB                19        20       34
+    gabriel               6         1        7
+    type2                 1         1        1
+    TOTAL               122        79      163
+
+Against the D-096 noise curve (~150 questions for +/-0.03 typed, ~250 for
+free-SQL): **typed is at 81% of target, free-SQL at 32%.** free-SQL needs more
+because it is the noisier instrument -- per-question |a-b| 0.213 vs typed 0.077.
+
+**The single biggest win was the retrieval bank, which D-096 called
+unscoreable.** Backfilling `truth.papers` from evidence-backed assertions
+(`verify_truth.backfill_retrieval_papers`, min 3 papers) converted 127 of 720
+into set questions and they discriminate at **63% on typed** -- the highest
+rate of ANY bank, Gabriel's included. The 592 skipped resolve to 1-2 papers and
+would be all-or-nothing.
+
+NOTE the trade: converting sets `truth.kind` from "entity" to "set", so
+`entity_retrieved` no longer applies to the converted copies. The original
+720-question file is unmodified, so both measurements remain available -- the
+original bank for retrieval capability, the converted 127 for arm comparison.
+
+**Where the growth came from, in order:**
+
+    +72  retrieval bank backfilled (D-097 fix)
+    +24  Tier A rescored with label_recall instead of count_correct (D-097 fix)
+    +19  Tier B, evidence-trimmed truth + count_closeness
+    ~24  the original D-096 count, now understood to have been metric-limited
+
+Two of the four gains were pure scoring corrections on data already collected --
+no new model calls. The retrieval conversion needed one QwQ run (free).
+
+## Wording variance, both systems (completes the D-097 stub)
+
+9 Gabriel questions x 4 wordings x 6 repeats, QwQ:
+
+                    repeat sd    wording sd
+    typed             0.078        0.095
+    free-SQL          0.139        0.108
+    ------------------------------------------
+    both              0.108        0.101
+
+**Correction to the typed-only reading in D-097**: with free-SQL included,
+phrasing and re-running contribute the SAME order of noise (0.101 vs 0.108),
+rather than phrasing dominating. The typed-only figure looked like phrasing
+mattered more; it does not hold across systems.
+
+Practical consequence: **a reworded question is worth about one extra repeat of
+noise, no more.** Rewordings test robustness; they do not multiply a question's
+statistical value, and 4 wordings of one question is not 4 questions.
+
+**One case is a real mechanism, not noise.** `gabriel-gf-01-condition` on TYPED
+scores 0.028 on its original wording and 0.669 averaged over three independent
+rewordings. On FREE-SQL the same comparison is 0.432 vs 0.409 -- no effect. So
+it is typed-specific. Traced by reading transcripts: on the original wording
+the model twice retrieved the right papers via `facets`, correctly named
+MV2c10/DeepCSV/DL1r/DeepJet in prose, then emitted `papers_from="none"` in the
+answer contract -- describing what it found instead of committing to a paper
+list. The score is 0 because it never named a set, not because it never found
+one. Same failure family as the 7 facets-route questions in D-097: the system
+finds the answer and fails to hand it over in the contracted form.
+
+**That is now the best-evidenced arm candidate we have** -- not reranking, not
+breadth: make the answer contract capture what the trace already contains.
+
+## D-099 — Gabriel's full batch 2 (104/104): 0.54 agreement, and two named causes
+
+Returned complete 2026-09-03. Supersedes the partial reading in D-092, which
+saw only the first 51 rows and was therefore biased toward the families he
+happened to do first.
+
+**Agreement fell from 0.708 (partial) to 0.54 (full).** The partial view had
+covered gf-01/02/04 only; the families he had not yet reached are the ones the
+system does worst on.
+
+    question    n   agree   acc   false-YES  miss  unsure
+    gf-01-cond 33      25   0.76         0      8      2
+    gf-02       6       2   0.33         4      0      0
+    gf-04       9       7   0.78         2      0      1
+    gf-05       9       1   0.11         8      0      0
+    gf-06       1       0   0.00         1      0      0
+    gf-07      14       1   0.07        13      0      0
+    gf-08      21      11   0.52        10      0      2
+    gf-10..15   6       6   1.00         0      0      0
+    TOTAL      99      53   0.54        38      8      5
+
+**The error structure is almost perfectly one-directional.** gf-01-cond is the
+ONLY question where the system misses (8 misses, 0 false-yes). On every other
+set question it OVER-CLAIMS: 38 false positives, 0 misses. Prior conclusions
+drawn from the 51-row partial -- which showed a balanced-looking split -- were
+an artefact of which families had been reviewed.
+
+**gf-07 (ttZ control region), 13 of 14 wrong. Cause: ttZ/ttbar conflation.**
+Of the 13 false positives, the cited evidence mentions ttZ in exactly ONE. Five
+cite `$t\bar{t}$` (plain ttbar) and seven cite something unrelated (`tWZ`,
+`Wt`, generic top-quark production). The system answers a ttZ question with
+ttbar evidence. This is the notation-collision family already known from the
+`\mathup` LaTeX problem (gf-07 was the original 2103.06956 case in D-087's
+lineage) -- `ttZ` and `tt` are not being kept apart.
+
+**gf-05 (Higgs candidate), 8 of 9 wrong. Cause: CONFIRMS D-087 INDEPENDENTLY.**
+Of the 8 false positives, five cite a "candidate" of the WRONG PARTICLE -- top
+candidate, boson candidate, quark candidate, 4mu, b+ candidate. The single
+correct answer is the only one whose evidence names Higgs. D-087 predicted
+exactly this from cosine geometry: bge-base has no `Higgs` token and splits it
+into `hi` + `##ggs`, so `Higgs candidate` degenerates to matching `candidate`.
+That was a lab measurement on hand-picked phrases; this is the supervisor
+independently marking the same failure on real questions he was not told about.
+**The encoder work (chATLAS / PhysBERT, D-087) is now evidence-backed as a fix
+for a named, supervisor-confirmed failure**, not a speculative improvement.
+
+**The value questions are a clean win: gf-10 through gf-15, 6 of 6 correct.**
+These are the ones reframed after his batch-1 complaint ("Not a yes/no
+question. What to do here?") to show OUR ANSWER and ask whether it is right.
+Every one upheld, with substantive notes (he adds the 2D exclusion contour
+detail on gf-12, the data-extracted b-tagging efficiencies on gf-11). The
+reframing worked and this question style should be extended.
+
+**A recurring note worth acting on separately**: on gf-11 and gf-13 he marks
+the ANSWER correct but observes the EVIDENCE SHOWN does not contain the fact
+the answer states ("It is correctly stated in the answer, but missing from the
+evidence presented"). Same shape on gf-06. So the answer is right and the
+evidence rendering under-reports what the system used -- a presentation gap in
+the review sheet, not a system error, but it makes the sheet harder to judge.
+
+**Our critic vs Gabriel, where it ruled: 26/30 = 0.867** (was 0.957 on the
+partial 51). Still the strongest component, still not the bottleneck.
+
+**Merged gold set** -> `eval/questions/gabriel-gold-2026-09-03-full.jsonl`:
+9 questions, **106 gold rows, 253 judged papers** (was 78/174 at batch 1, and
+93/209 at the partial merge). gf-07's universe more than doubles (39 -> 53),
+gf-05's 29 -> 38, gf-08's 23 -> 44. One conflict, unchanged from D-092:
+2012.01581 on gf-02, batch 2 wins.
+
+## D-100 — the set works, and aggregating question types hid the answer
+
+First arm test on the 164-question discriminating set (D-098). Encoder swap,
+typed system, one repeat, duplicate controls. Run on two models; **the QwQ half
+is void** -- 121 of 164 records errored (88 API timeouts, 33 harness timeouts)
+and the surviving text was garbled ("Okay, the's't the States the user is
+asking about"), the server having degraded under 16 concurrent requests on one
+A100. qwen3-32b was clean: 159/164 answered, zero errors.
+
+**Aggregate, all 161 scored questions:**
+
+    control-a 0.393   control-b 0.377   noise 0.016
+    chATLAS   0.380   delta -0.005      inside noise
+    PhysBERT  0.362   delta -0.023      marginally outside, NEGATIVE
+
+Read that alone and the verdict is "the encoders do nothing, PhysBERT slightly
+hurts". **That verdict is wrong, and the per-pool split shows why:**
+
+    pool             n   control  chATLAS  PhysBERT   noise
+    retrieval-conv  84    0.246    0.257    0.259     0.004
+    tierA           36    0.617    0.558    0.497     0.076
+    tierB           34    0.487    0.498    0.477     0.037
+    gabriel          6    0.409    0.372    0.339     0.162
+
+**On concept -> papers questions BOTH ENCODERS HELP, above a 0.004 noise floor:**
+chATLAS +0.011, PhysBERT +0.013, i.e. ~3x the noise. That is the retrieval task
+the encoder work was aimed at, and the effect is detected.
+
+**On per-paper questions PhysBERT HURTS, -0.120 against a 0.076 floor.** Tier A
+hands the system the paper, so retrieval is free there -- and changing the
+encoder changes which entities surface, which can only interfere. chATLAS moves
+-0.059 on Tier A, inside that pool's noise.
+
+**The two effects have opposite signs and nearly cancel in the aggregate.** This
+is the first hard evidence for the hypothesis the user raised on 2026-09-02 --
+that a mechanism can help one question type and hurt another, and that a single
+headline number is the wrong instrument. Every arm result reported before this
+one was an average over question types that behave differently.
+
+**METHOD RULE, promoted:** report arms PER POOL, never as one number. The pooled
+noise floors differ by 40x (0.004 on retrieval-conv, 0.162 on gabriel's six),
+so a single "noise floor" for a mixed set is meaningless as well.
+
+**The set is validated, with a caveat.** It detected a real effect that the
+aggregate hid, and the retrieval-conv pool's 0.004 floor at n=84 with ONE repeat
+is the tightest measurement this project has made. But the Gabriel pool's floor
+is 0.162 on six questions -- far too noisy to judge anything -- so "the set
+works" is true of its large pools and false of its most valuable one. gf-05, the
+question Gabriel's review showed failing on exactly the Higgs/candidate
+confusion the encoders were meant to fix, did not survive screening into the
+set at all, so this test could not check the prediction most directly.
+
+## D-101 — the PhysBERT verdict in D-100 was a bad draw; retracted
+
+D-100 reported PhysBERT at -0.122 on Gabriel's questions, "ABOVE noise", and
+built a mechanism story around it (mean-pooled anisotropic vectors degrading
+ranking). That was ONE REPEAT of 9 questions. Rerun at 3 repeats on both models
+at the user's request:
+
+                        control  noise   chATLAS   PhysBERT
+    qwen3-32b            0.331   0.135    +0.024    -0.032    both inside noise
+    QwQ                  0.381   0.076    +0.002    +0.025    both inside noise
+
+**Inside the noise floor on both models, and the sign flips between them.** The
+-0.122 was noise. The single clearest "evidence" cited -- gf-03 falling
+0.889 -> 0.333 -- inverts at 3 repeats: control 0.593, PhysBERT 0.889, i.e.
+PhysBERT is BETTER on that question.
+
+The anisotropy mechanism (D-087, PhysBERT similarities in a 0.62-0.68 band
+against bge-base's 0.86-0.89) is a real measured property. **It is not
+established that it degrades end-to-end performance.** The two claims were
+conflated; only the first is evidenced.
+
+**GABRIEL'S 9 QUESTIONS CANNOT RESOLVE ENCODER-SIZED EFFECTS.** Two identical
+controls differ by 0.135 (qwen3-32b) and 0.076 (QwQ) AT THREE REPEATS. Our most
+valuable ground truth is our least sensitive instrument. Any arm effect claimed
+on this pool alone needs repeats well beyond 3, or it is unreadable.
+
+**What survives unchanged:** the retrieval-conv pool (n=84, noise 0.004,
+chATLAS +0.011, PhysBERT +0.013). A large pool with a tiny floor is the only
+place this project has detected an encoder effect at all.
+
+**Standing verdict on encoders:** a small positive effect on concept->paper
+retrieval; no measurable effect elsewhere; no evidence of harm.
+
+**Method rule, third time this pattern has cost something (cf. D-093, D-096):**
+never report an arm from a single repeat on a small pool. The screen classifies
+questions at 1 repeat; that is not the same as SCORING an arm at 1 repeat.
+
+**Also observed:** QwQ scored only 6 of 9 Gabriel questions to qwen3-32b's 8 --
+gf-04 and gf-08 dropped because QwQ named no papers. The answer-contract
+failure again, and it narrows QwQ's Gabriel base further still.
+
+## D-102 — rephrasing the question beats resampling the model, 7 to 1
+
+Asked whether paraphrase-diversity and temperature-diversity are the same idea.
+They are not, and the reword run (D-098) already held the answer. Union of FOUR
+SAMPLES per question, QwQ typed, 9 Gabriel questions, same compute either way:
+
+                        F1      recall   precision
+    single sample     0.385     0.348      0.548
+    4 repeats         0.406     0.362      0.548     +0.021
+    4 WORDINGS        0.529     0.493      0.710     +0.144
+    both (8 samples)  0.536     0.499      0.712     +0.151
+
+**Rewording gains seven times what resampling gains, at equal cost.**
+
+**And it raises PRECISION, 0.548 -> 0.710.** A union normally trades precision
+for recall; this does not. So alternative phrasings are not retrieving MORE,
+they are retrieving BETTER -- a different phrasing sends a different query and
+lands on genuinely more relevant papers.
+
+**Resampling on top of rewording adds almost nothing** (0.529 -> 0.536). Once
+the question is diversified, diversifying the decoding is redundant. That is
+the direct answer to "is temperature another way of doing the same thing": no,
+it is a strictly weaker version, and dominated.
+
+Per-question, the mechanism is visible:
+
+    gf-07              overlap 0/6    the wordings found entirely different papers
+    gf-01-condition    overlap 6/22   single 0.167 -> 4 wordings 0.818
+
+gf-01-condition is the question whose ORIGINAL phrasing triggers the
+`papers_from="none"` contract failure (D-098). Rewording routes around that bug
+without fixing it.
+
+**This is the largest single effect measured in the project** -- larger than the
+encoder swap (+0.013 at best), `concept-prompt` (+0.072), `index-values`
+(unreplicated). It is multi-query retrieval, a standard RAG technique we had
+not tried.
+
+**CAVEATS, and they are not small.** n=9 questions, QwQ typed only, and the four
+wordings are the original plus three written BY HAND with meaning verified
+against the original condition (3 of the first drafts were rewritten because
+they dropped a qualifier that carried the condition). A machine-generated
+paraphrase has no such guarantee, and a paraphrase that quietly changes the
+question would inflate this number. Cost is 4x per question -- but unlike
+repeats, it buys signal rather than averaging noise.
+
+**Arm priority, revised:** (1) `--simple-answer`, already built, targets the
+contract failure directly rather than routing around it; (2) multi-query
+rewording, needs building, strongest evidence we have; (3) temperature+union,
+now known to be dominated -- run only to confirm.
+
+## D-103 — D-102's comparison was unfair; temperature was never tested
+
+D-102 concluded that rewording beats resampling 7 to 1 and called temperature
+"a strictly weaker version, and dominated". **The experiment behind that did not
+involve temperature.**
+
+`temperature=0.0` is hardcoded at every call site (planner.py:1311, 1582, 1597,
+1657; free_sql.py:507) with no override. So the "4 repeats" arm was four GREEDY
+runs, differing only by the batch-scheduling nondeterminism described in D-101 --
+accidental floating-point noise, not a diversification strategy. The measured
+contrast was therefore:
+
+    4 rewordings      deliberate diversification      0.529
+    4 greedy repeats  accidental infra noise          0.406
+
+which is rewording versus NOTHING. The +0.144 stands; the claim that it beats
+temperature does not, because temperature was never run.
+
+**Reasons temperature may in fact win, none of them tested:**
+  - it diversifies at EVERY step, not just the opening query. Rewording changes
+    the first call and then proceeds greedily; a single optional `category`
+    argument was worth 0.400 on gf-01-met, and that divergence was at round 1 of
+    several.
+  - it cannot corrupt the question. Three of the four hand-written rewordings
+    had to be rewritten because the first drafts dropped a qualifier carrying
+    the condition; a generated paraphrase has no such guarantee, and one that
+    quietly broadens the question would inflate D-102's number.
+  - one parameter to build, against a paraphrase generator plus a
+    meaning-preservation check.
+
+**The fair test, three arms at equal compute on Gabriel's nine:** 4 greedy
+repeats (0.406, known) / 4 samples at temperature ~0.7 (unknown) / 4 rewordings
+(0.529, known). Temperature needs plumbing first -- there is currently no way to
+set it.
+
+**Method note.** This is the fourth time this session a comparison has been
+read as stronger than its design supported (cf. D-093 path-tool, D-096 metric
+choice, D-101 single-repeat PhysBERT). The common shape: a difference is real,
+and the ATTRIBUTION of it is asserted rather than measured.
+
+## D-104 — retrieval is at 0.96; the whole loss is the handoff
+
+Eight arms, 164-question set, QwQ typed, control 54163/54164 (noise 0.034).
+Reporting `retrieval_reach` (did it FIND the right papers) beside `judged_f1`
+(did it SAY so) for the first time:
+
+    arm               retrieval_reach   answer F1    gap
+    control                 0.963         0.277     0.685
+    subgoal-status          0.966         0.400     0.566
+    tool-examples           0.977         0.262     0.715
+    path-tool               0.948         0.225     0.723
+    state-objective         0.959         0.216     0.743
+    simple-answer           0.930         0.179     0.751
+    index-values            0.956         0.203     0.753
+    reviewer                0.983         0.221     0.762
+
+**Every arm retrieves 93-98% of the right papers. The spread across all eight
+is 0.053. The answer then scores 0.18-0.40.** The gap is 0.57-0.76 everywhere.
+
+**Consequence for everything measured before this.** The encoder work, the path
+tool, index-values, search-sets, the quote indexing -- all of it targets a
+component already at 0.96 with almost no headroom. That is why every retrieval
+arm has come back inside noise: there is nothing left to win there. The session
+spent its effort on the wrong half of the pipeline.
+
+**subgoal-status, the only arm above noise (+0.071 overall), wins by narrowing
+the GAP** (0.685 -> 0.566), not by retrieving better (0.963 -> 0.966, inside
+noise). Its measured mechanism is reporting, not retrieval or memory -- not what
+it was designed for.
+
+**`--reviewer` diagnosed.** Best retrieval of any arm (0.983) and the worst gap
+(0.762). Instrumentation shows why, and it is a dose-response:
+
+    every plan rejected    n=8    rounds 1.25   ids named 0.00   F1 0.000
+    some rejected          n=76   rounds 2.21   ids named 2.51   F1 0.192
+    none rejected          n=80   rounds 2.19   ids named 7.09   F1 0.244
+
+150 of 387 plans rejected (39%); one question had 9 proposed and 9 rejected. 0
+unparsed verdicts and 0 ceiling hits, so the reviewer works as designed and the
+DESIGN is wrong: `review_plan` assumed rejections are free because "retry
+shouldn't consume a round", but they consume LLM CALLS, and the planner runs out
+of budget before finishing retrieval. It does not filter bad plans, it prevents
+work. It also pushes the answer toward citing `set_N` rather than listing:
+89/164 answers against the control's 75/164.
+
+**`--simple-answer` fixed the willingness and not the selection.** It cut
+"named nothing" from 0.468 to 0.139 -- the largest change any arm made to that
+number, and exactly its design intent -- while its gap stayed 0.751 and F1 moved
++0.012. Precision +0.002: the extra papers it names are as often wrong as right.
+So the handoff hypothesis in its own docstring ("typed retrieval is fine and our
+answer contract is awkward") is HALF right: the contract was awkward, and fixing
+it does not help, because the model cannot select which of the retrieved papers
+actually answer the question.
+
+**`--subgoal-status` on gf-01 is not a bug, it is the arm's own mechanism.**
+It scored 0.000 on gf-01, gf-01-condition and gf-01-met while the control scored
+0.55/0.17/0.40. Cause: it SUMMARISES instead of enumerating on exactly the
+multi-condition questions it targets -- "The graph identifies 23 analyses...
+These include papers such as X, Y, Z, and others listed in the facet results"
+(347 chars against the control's 3005). The three examples it cites fall outside
+the small judged universe. It is not systematically terse: median answer 3394
+chars against the control's 2711. Only on its target questions.
+
+**A real metric bug found on the way.** `judged_named_none` returns 1.0 when the
+answer named papers but none fell in the judged universe -- conflating "named
+nothing" with "named nothing judged". That is what first made this look like a
+scoring failure rather than a behaviour.
+
+**WHAT TO TEST NEXT, and it is a different problem.** Not retrieval. The
+question is which of ~0.96-recalled papers the answer commits to. `--reviewer`
+judges plans and `--critic` judges retrieved rows; nothing judges the FINAL
+SELECTION against the question. That is the untouched component and it holds
+the entire 0.57-0.76.
+
+## D-105 — the critic has been judging NOTHING; 100% of candidates defaulted
+
+Investigating why `--reviewer` names nothing (user's suspicion, 2026-09-05) led
+to a much larger finding. Across four 164-question runs:
+
+    run                 reviews  candidates   kept  defaulted  dropped
+    control                 131        7315   7315       7315        0
+    reviewer arm            128        7903   7903       7903        0
+    subgoal-status          170        9360   9360       9360        0
+    simple-answer           166        9258   9258       9258        0
+
+**33,836 candidates. 100% defaulted. Zero drops. The critic never judged a
+single candidate**, while every arm was reported as running with a critic.
+
+**Root cause, measured not guessed.** `CRITIC_MODEL=Qwen/Qwen3.5-9B` is served
+with `--reasoning-parser qwen3`, so the chain of thought goes to
+`reasoning_content` and `content` stays EMPTY until it stops thinking. On this
+task it never stops -- a direct call returned `finish_reason=length`,
+`completion_tokens=4000`, `content` empty. `_parse` finds no JSON, returns {},
+and every candidate takes the deliberate default in `judge_candidates`:
+
+    # A missing verdict defaults to the loosest kept rung, never to a drop.
+    # Flagging is recoverable ... while a drop the model never actually made
+    # is invisible.
+
+That asymmetry is right, and it is exactly what made this silent. `set_1` and
+`set_1_kept` had identical median size (58) in every run and nobody looked.
+
+**Two bugs, one on top of the other.**
+1. The critic call hardcoded `MAX_COMPLETION_TOKENS` (800) instead of
+   `completion_cap(model)` (4000 for this model) -- D-084 repeating on a path
+   the fix was never wired into. Fixed, and NOT SUFFICIENT: it thinks for
+   whatever it is given.
+2. The real fix is to turn thinking OFF. Judging a candidate against a question
+   is CLASSIFICATION, not reasoning. With
+   `extra_body={"chat_template_kwargs": {"enable_thinking": False}}` the same
+   model returns correct verdicts in under 800 tokens. Verified end-to-end
+   through `_build_critic`: b-tagged jet -> exact (kept), Muon -> unrelated
+   (dropped), Photon candidate -> unrelated (dropped). 1 of 3 kept, all judged.
+   Sent as `extra_body` with a plain retry on failure, so a non-Qwen judge is
+   unaffected.
+
+**WHAT THIS INVALIDATES.** Every arm measured on 2026-09-04/05 ran with an inert
+critic. They remain internally comparable -- all had the same dead critic -- but
+no absolute number from them means what it said, and the critic's own +0.231
+(D-062 era, measured with the Llama-8B judge) was never in force in any of them.
+D-104's central finding needs re-testing for the same reason: retrieval measured
+0.96 with NOTHING filtering the candidate set, so "retrieval is solved" was
+measured on an unfiltered set.
+
+**The three-stage view the user asked for, and why stage 2 was invisible:**
+
+    1. retrieved          mean 84-102 entities
+    2. judged relevant    SHOULD be set_N_kept -- was identical to set_N
+    3. named in the answer      mean 2.3-4.4 arXiv ids
+
+Stage 2 was a no-op, so the entire selection burden fell on the answer step
+unaided. That is a better explanation of the 0.57-0.76 gap than anything in
+D-104.
+
+Reran control x2 plus subgoal-status, reviewer, simple-answer, tool-examples
+with the working critic (54201-54206).
+
+## D-106 — an answer-stage critic, built and fast-tested: right mechanism, wrong threshold
+
+Built `hepcoveragekg/query/answer_critic.py` to sit on the 0.57-0.76 gap D-104
+measured between what retrieval finds (0.93-0.98) and what the answer says
+(0.18-0.40). Nothing addressed that gap: `--critic` judges ENTITIES against the
+SEARCH TEXT, `--reviewer` judges the PLAN, `verify.py` checks claims after the
+fact. None of them asks "does THIS PAPER satisfy the question".
+
+    critic         entity  vs  search term     keeps the candidate list sane
+    answer_critic  paper   vs  THE QUESTION    decides what the answer asserts
+
+**Deliberately Gabriel's task** -- question, paper, retrieved sentence, yes/no --
+so his 253 verdicts measure it directly rather than by proxy. No other component
+can be checked that way.
+
+**Fast test, qwen3-32b, four Gabriel questions, judged against his verdicts:**
+
+    question           keep-all F1   critic F1     candidate purity
+    gf-01-condition       0.88         0.77          78% gold
+    gf-04                 0.88         0.60          78% gold
+    gf-05                 0.63         0.40          46% gold
+    gf-07                 0.42         0.80          27% gold
+    OVERALL               0.661        0.618         -0.044
+
+**It filters well and still loses.** Precision 0.494 -> 0.808, zero defaulted, so
+the mechanism works. But recall falls 1.00 -> 0.50 and F1 drops 0.044. As
+configured it is not a win.
+
+**The sign tracks candidate purity, and that is the actionable part.** It helps
+where the candidate set is mostly wrong (gf-07: 27% gold, 0.42 -> 0.80) and
+hurts where it is mostly right (gf-04: 78% gold, 0.88 -> 0.60). gf-07 is the ttZ
+question every arm ever run has scored 0.00-0.29 on; this is the first mechanism
+to move it at all.
+
+So the next question is a THRESHOLD, not a redesign: apply it only when the
+candidate set is large or low-purity, or have it drop only what it is confident
+about. To be measured once the current arms finish -- tuning it on four
+questions would be exactly the fishing D-102 warns about.
+
+**Design decisions taken from this session's failures.** Quotes are shown, not
+just entity labels (gf-01-condition turns on `veto = use`, which lives in the
+sentence). Only RETRIEVED entities are used, so it measures the system and not
+the corpus. Missing verdicts KEEP the paper -- the `critic.py` asymmetry, since a
+drop the model never made is invisible -- but the default rate is counted,
+returned, and logged at WARNING above 25%, because that exact asymmetry hid a
+completely dead critic for weeks (D-105).
+
+**Caveat on the numbers.** The fast test judged only papers inside Gabriel's
+judged universe. In production it faces the whole retrieved set, larger and
+noisier, so 0.808 precision is an optimistic ceiling.
+
+Tests: `tests/test_answer_critic.py`, 8 cases (per-paper keep/drop, missing
+verdict keeps and is counted, unparseable output alarms, broken judge does not
+kill the run, invented ids ignored, chunking covers each paper once, the prompt
+carries the quote, evidence reads only retrieved entities).
+
+## D-107 — the arm differences on typed are mostly a formatting artefact, not reasoning
+
+Runs 54201-06 (QwQ, 164 discriminating questions, critic working after D-105).
+
+`judged_set_f1` and `set_f1` both read arXiv ids out of `a.text`. That is the
+right rule (D-062: a retrieval footprint must not count as an answer). But the
+agent very often writes a correct answer that contains no ids:
+
+  - a placeholder: "the analyses are: [list of papers from the intersection]"
+  - the papers by TITLE: "1. Measurement of the production cross section for a
+    W boson in association with a charm quark ..." -- 7 correct papers, scored 0
+  - a deferred instruction: "run `papers_of` on the intersection of set_3 and
+    set_4" -- and then it never ran it
+  - the citation tag `<papers_from>set_1_kept and set_3_kept</papers_from>`,
+    which `resolve_citations` did not resolve: `a.cited` came back "" in 59 of
+    the 60 Gabriel answers, so the legitimate cited-set path never fired
+
+Rate of the resulting hard zero, over the 108 set-scored questions per arm:
+
+    reviewer        71%      simple-answer   19%
+    tool-examples   50%      control         35-36%
+    subgoal-status  35%
+
+Decomposing score into (prints ids at all) x (quality when it does):
+
+    arm              score   print-rate   when-printed
+    ctrl-a           0.222      0.65         0.277
+    ctrl-b           0.225      0.64         0.272
+    subgoal-status   0.265      0.65         0.353
+    reviewer         0.180      0.29         0.312
+    simple-answer    0.214      0.81         0.244
+    tool-examples    0.221      0.50         0.308
+
+The left column is what we have been reporting as arm quality. The middle
+column is a property of the OUTPUT FORMAT. On Gabriel's 9 questions, the two
+where all six arms printed ids (gf-01, gf-02) score **0.626 in every single
+arm** -- the entire measured spread there came from who happened to print ids.
+
+Consequences:
+
+1. The reviewer's -0.025 is not the reviewer reasoning worse. It stops early
+   (1.8 rounds vs 2.4) and then writes a pointer instead of a list. Its
+   when-printed quality (0.312) is ABOVE both controls.
+2. simple-answer's gain is the opposite artefact: it prints ids more often
+   (81%) while being slightly worse per question (0.244).
+3. subgoal-status is the only arm that is better on BOTH axes, so D-096's
+   +0.038 survives -- it is the one real effect in the set.
+4. Every typed arm number reported before this is confounded. They are not
+   void (the ranking on the when-printed column is still a measurement), but
+   they must be reported as the product, not as answer quality.
+
+Fix, in order: (a) resolve `<papers_from>` properly -- it is already the
+designed mechanism and it is silently dead; (b) reject an answer whose text
+names a set but prints nothing, and re-ask once; (c) report `print_rate` and
+`f1_when_printed` alongside `judged_f1` in every arm table from now on.
+
+Do NOT "fix" this by falling back to `a.papers` -- that is the D-062 footprint
+trap, and on gf-08 it would hand back all 24 gold papers out of a 44-paper
+universe for free.
+
+## D-108 — three checks on an answer, not one reviewer
+
+Raised as "why not get a reviewer on the answer -- checks it is properly
+answered, checks everything is well cited, no empty lists". Right instinct,
+and the job splits into three with very different costs:
+
+  1. FORM      does the answer name anything at all?
+  2. TRUTH     is each paper it names actually right?
+  3. SUPPORT   is every claim tied to evidence we retrieved?
+
+**(1) is deterministic and gets no model call.** `query/answer_gate.py`. The
+four shapes are all decidable by looking at the text: a bracketed placeholder,
+an empty answer, a promise to run `papers_of`, or prose and titles with no
+arXiv id in them. An LLM here would add a call, a latency, a noise floor and
+the D-105 failure mode -- a judge defaulting silently -- to a question that has
+an exact answer. One retry, then accepted and flagged (`gate_failed`).
+
+Abstentions are EXEMT. "The graph does not record this" names nothing and is a
+legitimate answer; gating it would push the system to fabricate coverage, which
+is the failure that matters more than the one being fixed.
+
+**(2) is `answer_critic` (D-106), and it needed rewiring to measure anything.**
+It filtered `session.answer_papers`, which only a resolved citation fills --
+and D-107 measured `cited` empty in 59 of 60 Gabriel answers. It would have
+judged an empty list on nearly every question while reporting itself as run:
+the D-105 shape again, a mechanism that costs calls and changes no number. It
+now reads the ids out of the PROSE by the same rule the scorer uses, and
+strikes dropped ids from the text. `answer_before_critic` keeps the original --
+a harness that rewrites an answer and then scores it is measuring itself.
+
+**(3) is NOT built yet, deliberately.** `verification_score` already computes
+`unsupported_claims` and nothing acts on it (gf-08 control-a: 0.833 with
+`unsupported_claims: ["100"]`, run carried on). The reason to wait is D-107's
+own finding about the PLAN reviewer: it cut rounds 2.4 -> 1.8 and made the
+agent write a pointer instead of a list. A second LLM voice on the OUTPUT has
+the same risk -- it can make the agent hedge, and hedging is what produces
+prose with no ids. (1) and (2) can only narrow; neither can make it quit.
+
+If the gap survives (1) and (2), (3) is the next arm, and it should be a
+CITATION BINDER rather than a reviewer: every arXiv id in the answer must pair
+with an evidence id from this run, and an id with nothing behind it is struck.
+Deterministic, same as (1).
+
+Running as a 2x2 (54217-20, 164 questions, QwQ, working critic): control,
+gate, answer-critic, both. Not one arm: the critic filters what the answer
+names, so if the gate changes HOW OFTEN it names anything, the critic alone
+would confound the two -- which is the exact confound D-107 just found.
+
+## D-109 — the DIAS clone had drifted out of git, and it had been silent
+
+Found while deploying D-107. The clone was ~60 commits behind and a `git pull`
+there REFUSED, which is why nobody had run one:
+
+  - five job scripts existed only in its working tree -- `or_arm_job.sh`,
+    `dev200_job.sh`, `frozen_baseline_job.sh`, `overnight.sh`, `arm_8b_job.sh`
+  - `gabriel_arm_job.sh` was modified there and nowhere else (SYSTEM/WORKERS)
+  - the ENTIRE question set was untracked in both trees
+
+So every arm since 2026-08-30 ran from a script that was not in git, against
+question files that were not in git. A run cites its questions by path and by
+`questions_hash`; a set that is not versioned makes every score in `eval/runs/`
+unreproducible in principle, and it nearly did in practice -- four submitted
+jobs died in three seconds on a FileNotFoundError after a checkout removed the
+164-question file (54213-16).
+
+Fixed: DIAS's scripts committed verbatim (they are what actually ran, so they
+are the record), question sets committed, `logs/` gitignored -- `git add -A` on
+DIAS had swept 316 Slurm logs into a branch, after which `git checkout main`
+deleted the directory the job scripts write into (54209-12, dead in one
+second). The old working tree is preserved on branch `dias-wip-2026-09-05`.
+
+Nothing was lost. It took three failed submissions to find all of it, which is
+the argument for the fix rather than against it.
