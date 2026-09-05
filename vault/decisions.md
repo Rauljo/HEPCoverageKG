@@ -4305,3 +4305,85 @@ second). The old working tree is preserved on branch `dias-wip-2026-09-05`.
 
 Nothing was lost. It took three failed submissions to find all of it, which is
 the argument for the fix rather than against it.
+
+## D-110 — the citation fix works, and it hands the scorer a footprint
+
+Measured on the surviving records of 54217-20 (the servers died mid-run, see
+D-111, but the citation counts are per-answer and stand).
+
+D-107 fixed `resolve_citations` so a compound `papers_from` -- "set_1_kept and
+set_3_kept" -- resolves instead of dropping in silence. It worked:
+
+    arm         answers   cited   cited %   papers per citation
+    old ctrl        152       8       5%          32.6
+    control          29       6      21%          38.0
+    gate             31       7      23%          42.0
+    critic           30       6      20%          10.5
+    both             28       7      25%          12.7
+
+The citation path went from 5% of answers to 20-25%. **And what it cites is a
+38-42 paper set**, which is the retrieval footprint with a citation wrapped
+round it.
+
+THIS IS A RISK I INTRODUCED, and `judged_set_f1`'s own comment predicts it:
+
+    "gpt-5.6-luna scored judged_f1 0.889 on gf-01-condition that way, having
+     written no answer at all -- retrieving everything is optimal when the
+     yardstick is that short."
+
+The scorer distinguishes a CITED set (legitimate, v3's design) from a
+FOOTPRINT (not an answer). That distinction holds only while the model cites a
+narrowed set. It is now citing a wide one, and before the fix those answers
+scored 0 for naming nothing -- so the fix converts a formatting zero into a
+possible precision collapse. Both are wrong; they are wrong in opposite
+directions, and only the second is measurable.
+
+The answer-critic is what contains it: it cuts the cited set from 38-42 papers
+to 10-13. That is not a side effect, it is the mechanism doing its job on a
+footprint, and it is why the 2x2 (control / gate / critic / both) is the right
+design rather than one arm -- `--answer-gate` alone may well score WORSE than
+the old code by turning silent zeros into wide citations.
+
+The critic's stated reasons are specific and judge the condition rather than
+the topic, which is what it was built for:
+
+    2001.06899  "No photon object mentioned in quotes."
+    2007.02873  "Discusses top control region, not MB/BDT-CRW."
+    2004.14060  "No mention of f_a2 observable."
+
+It returned an all-drop verdict on 4 of 13 questions; the guard keeps every
+paper there rather than emptying the answer.
+
+STILL UNMEASURED: whether the papers it keeps are the RIGHT ones. No Gabriel
+question survived in the wreckage, so the check against his 253 verdicts --
+the one measurement that would settle it -- has not been made.
+
+## D-111 — an arm must refuse to start behind a server that will die first
+
+The D-108 2x2 was submitted behind a vLLM job showing `R 19:11:58` in squeue.
+It had a 20-hour limit, so it had 48 minutes left. Forty minutes later the
+server hit TIMEOUT and four 13-hour runs spent the rest of their lives
+collecting APIConnectionError: 44% of questions errored and about 30 clean
+records survived out of 164 per arm.
+
+On the same 52 questions, old control vs the wreckage:
+
+    abstained %    9.6 -> 44.2
+    rounds        1.98 -> 1.31
+    errored      0.096 -> 0.442
+
+Every guard passed. `wait_for` proved the port answered; `model_served` proved
+the id matched. Neither asks how long that stays true. "The server is up" was
+never the question -- "the server is up for the next thirteen hours" was.
+
+`server_outlives` now reads %L for the serving job on the answering host and
+refuses below NEEDED_HOURS (default 14). Where no job of ours is on that host
+it says so and continues rather than blocking on a server it cannot see.
+
+THIS IS THE THIRD INSTANCE OF ONE FAILURE SHAPE and it belongs in the
+write-up as such: D-088 the critic 404ing on every call, D-105 the reasoning
+judge returning empty content, D-111 the server disappearing underneath. Each
+time a missing dependency degraded into a PLAUSIBLE NUMBER instead of an
+error, and each time the run completed, scored and reported. A system that
+fails loudly is a design requirement here, not a nicety -- the alternative is
+what happened in all three cases: weeks of measurements read as findings.
