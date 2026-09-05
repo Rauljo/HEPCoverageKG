@@ -216,8 +216,49 @@ model_served() {
   return 1
 }
 
+# A LIVE MODEL IS NOT A MODEL THAT WILL STILL BE THERE.
+#
+# 2026-09-05: the 2x2 for D-108 was submitted behind a server showing
+# `R 19:11:58` in squeue. It had a 20-hour limit, so it had 48 minutes left.
+# Forty minutes later vLLM hit TIMEOUT, and four 13-hour runs spent the rest of
+# their lives collecting `APIConnectionError` -- 44% of questions errored, 30
+# clean records out of 164 per arm, the whole batch void. Every existing guard
+# passed: the port answered, the model id matched. Neither asks how long that
+# will remain true.
+#
+# So: find the serving job on this host and refuse if it cannot outlive the run.
+# NEEDED_HOURS is deliberately the caller's estimate rather than something
+# derived -- a wrong estimate that is stated is arguable; an unstated one is
+# what produced the failure above.
+server_outlives() {
+  local host="$1" want_h="${NEEDED_HOURS:-14}" left
+  left=$(squeue -h -u "$USER" -o '%N %L' 2>/dev/null \
+         | awk -v h="$host" '$1 == h {print $2; exit}')
+  if [ -z "$left" ]; then
+    echo "  NOTE: no Slurm job of ours is on $host -- cannot check its lifetime."
+    echo "        Continuing: the server may be someone else's or outside Slurm."
+    return 0
+  fi
+  # %L is [DD-]HH:MM:SS. Convert to hours, days included.
+  local hours
+  hours=$(printf '%s' "$left" | awk -F'[-:]' '
+    NF==4 {print $1*24 + $2 + $3/60; next}
+    NF==3 {print $1 + $2/60; next}
+    NF==2 {print $1/60; next}
+    {print 0}')
+  echo "  server on $host has $left left (~${hours}h); this run wants ${want_h}h"
+  awk -v a="$hours" -v b="$want_h" 'BEGIN{exit !(a+0 >= b+0)}' && return 0
+  echo "FATAL: the server will die before this run finishes."
+  echo "       Refusing to start: the run would complete, score, and report"
+  echo "       numbers built mostly out of connection errors (2026-09-05,"
+  echo "       jobs 54217-20). Restart the server with a longer --time, or set"
+  echo "       NEEDED_HOURS if this run really is shorter than $want_h hours."
+  return 1
+}
+
 wait_for "$LLM_BASE_URL" "answerer" || exit 3
 model_served "$LLM_BASE_URL" "$LLM_MODEL_NAME" "answerer" || exit 4
+server_outlives "$GPU_HOST" || exit 5
 case "$ARM" in
   *-8b|*-8b-persist)
     wait_for "$CRITIC_BASE_URL" "judge" || exit 3
