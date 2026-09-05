@@ -299,15 +299,27 @@ def judged_set_f1(q: Question, a: Answer) -> Optional[dict]:
     # gf-04/05/08 when Gabriel's full review grew their golds.
     oversized = 1.0 if len(truth) > TYPICAL_LISTED else 0.0
     if not got:
+        # TWO DIFFERENT FAILURES, and the flag used to call both of them the
+        # first. Naming nothing is a formatting failure (D-107); naming twenty
+        # papers of which none were ever judged is a selection failure inside a
+        # partial universe. The SCORE is 0.0 either way and correctly so --
+        # recall is 0/|truth| however the miss happened -- but an arm's
+        # `judged_named_none` is now read as its print rate, and six answers in
+        # 267 were inflating it while having named papers all along.
         return {"judged_precision": 0.0, "judged_recall": 0.0, "judged_f1": 0.0,
-                "judged_named_none": 1.0, "judged_coverage": coverage,
+                "judged_named_none": 0.0 if (named or getattr(a, "cited", ""))
+                                     else 1.0,
+                "judged_named_unjudged": 1.0 if named else 0.0,
+                "judged_coverage": coverage,
                 "judged_gold_exceeds_typical": oversized}
     tp = len(truth & got)
     precision = tp / len(got)
     recall = tp / len(truth)
     f1 = 0.0 if precision + recall == 0 else 2 * precision * recall / (precision + recall)
     return {"judged_precision": precision, "judged_recall": recall, "judged_f1": f1,
-            "judged_named_none": 0.0 if named else 1.0, "judged_coverage": coverage,
+            "judged_named_none": 0.0 if (named or getattr(a, "cited", "")) else 1.0,
+            "judged_named_unjudged": 0.0,
+            "judged_coverage": coverage,
             "judged_gold_exceeds_typical": oversized}
 
 

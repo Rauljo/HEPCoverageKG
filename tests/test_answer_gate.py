@@ -256,3 +256,38 @@ def test_a_broken_papers_of_leaves_the_answer_uncited_rather_than_dead():
                       papers=None)
     assert session.answer == "See 2004.14060."
     assert not session.answer_cited
+
+
+def test_named_none_means_named_none_not_named_unjudged():
+    """Two different failures. Both score 0; only one is a formatting failure."""
+    from hepcoveragekg.eval import scoring
+    from hepcoveragekg.eval.systems import Answer
+    from hepcoveragekg.eval.questions import Question, Truth
+
+    q = Question(qid="x", text="which?", shape="set",
+                 truth=Truth(kind="set", papers=["2004.14060"],
+                             universe=["2004.14060", "2006.05880"]))
+    # named twenty papers, none of them ever judged
+    outside = scoring.judged_set_f1(q, Answer(text="9901.11111 and 9902.22222"))
+    assert outside["judged_f1"] == 0.0
+    assert outside["judged_named_none"] == 0.0, "it DID name papers"
+    assert outside["judged_named_unjudged"] == 1.0
+
+    silent = scoring.judged_set_f1(q, Answer(text="the papers in the kept set"))
+    assert silent["judged_named_none"] == 1.0
+    assert silent["judged_named_unjudged"] == 0.0
+
+
+def test_a_cited_answer_is_not_named_none():
+    """The `cited` path puts papers where the scorer reads them, so an answer
+    with no ids in the prose has still named something."""
+    from hepcoveragekg.eval import scoring
+    from hepcoveragekg.eval.systems import Answer
+    from hepcoveragekg.eval.questions import Question, Truth
+
+    q = Question(qid="x", text="which?", shape="set",
+                 truth=Truth(kind="set", papers=["2004.14060"],
+                             universe=["2004.14060", "2006.05880"]))
+    a = Answer(text="the kept set", papers=["2004.14060"], cited="papers=set_1")
+    got = scoring.judged_set_f1(q, a)
+    assert got["judged_f1"] > 0 and got["judged_named_none"] == 0.0
