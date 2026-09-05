@@ -40,7 +40,17 @@
 set -euo pipefail
 module load Python/3.9.6-GCCcore-11.2.0
 cd /home/xucabrjs/HEPCoverageKG
+# THE SUBMITTED MODEL MUST WIN OVER .env (D-082). `set -a; . ./.env` re-exports
+# LLM_MODEL_NAME, which is pinned to the 72B, so `sbatch --export=...` was
+# silently discarded and the client asked a QwQ server for 72B weights. The
+# serve scripts were fixed; these eval jobs were not, and they are the half
+# that picks the model NAME sent in the request.
+_OVERRIDE_MODEL="${LLM_MODEL_NAME:-}"
 if [ -f .env ]; then set -a; . ./.env; set +a; fi
+# Restored after .env had its say.
+if [ -n "$_OVERRIDE_MODEL" ]; then export LLM_MODEL_NAME="$_OVERRIDE_MODEL"; fi
+echo "client will request model: ${LLM_MODEL_NAME:-<unset>}"
+
 
 GPU_HOST="${GPU_HOST:-compute-gpu-0-1}"
 export LLM_BASE_URL="http://${GPU_HOST}:${VLLM_PORT:-8000}/v1"
@@ -64,4 +74,4 @@ echo "answerer ready at $LLM_BASE_URL (waited ${waited}s)"
 echo "host=$(hostname)  system=free-sql  questions=$QUESTIONS  repeats=$REPEATS"
 
 .venv/bin/python -m hepcoveragekg.cli eval run "$QUESTIONS" \
-    --system free-sql --repeats "$REPEATS"
+    --system free-sql --repeats "$REPEATS" ${EXTRA_FLAGS:-}

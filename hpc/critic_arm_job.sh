@@ -51,6 +51,8 @@ esac
 case "${CONTRACT:-v1}" in
   v1) ;;
   v2) FLAGS="$FLAGS --answer-contract" ;;
+  v3) FLAGS="$FLAGS --contract v3" ;;
+  forced) FLAGS="$FLAGS --force-critic-set" ;;
   *) echo "unknown CONTRACT=$CONTRACT"; exit 2 ;;
 esac
 echo "host=$(hostname)  arm=$ARM  contract=${CONTRACT:-v1}  questions=$QUESTIONS  flags='$FLAGS'"

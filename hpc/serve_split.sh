@@ -33,15 +33,39 @@
 # =============================================================================
 set -euo pipefail
 cd "${REPO:-$HOME/HEPCoverageKG}"
+# THE SUBMITTED ENVIRONMENT MUST WIN OVER .env. `set -a; . ./.env` re-exports
+# every key in that file, so `sbatch --export=ALL,LLM_MODEL_NAME=X` was silently
+# overwritten by the model pinned in .env. Today that served the 72B to a client
+# asking for QwQ -- one record, empty answer, and nothing saying which model had
+# actually been loaded. Captured before the source, preferred after it.
+_OVERRIDE_BIG="${LLM_MODEL_NAME:-}"
+_OVERRIDE_SMALL="${CRITIC_MODEL:-}"
 if [ -f .env ]; then set -a; . ./.env; set +a; fi
 : "${LLM_API_KEY:?not set -- add it to .env on the cluster}"
 export HF_HUB_OFFLINE=1
 
-BIG="${LLM_MODEL_NAME:-Qwen/Qwen2.5-72B-Instruct-AWQ}"
-SMALL="${CRITIC_MODEL:-NousResearch/Meta-Llama-3.1-8B-Instruct}"
+BIG="${_OVERRIDE_BIG:-${LLM_MODEL_NAME:-Qwen/Qwen2.5-72B-Instruct-AWQ}}"
+SMALL="${_OVERRIDE_SMALL:-${CRITIC_MODEL:-NousResearch/Meta-Llama-3.1-8B-Instruct}}"
 IMG=~/hepcoveragekg_setup/images/vllm-openai-v0.8.5.sif
 
 echo "node: $(hostname)"
+# Said out loud, because the silent version cost a run: the log showed the
+# job starting and never which weights it loaded.
+echo "serving BIG=${BIG}  SMALL=${SMALL}"
+# A MIG-PARTITIONED NODE CANNOT HOST THESE MODELS, and says so here rather than
+# through a confusing symptom. LIGHTGPU's compute-gpu-0-0 advertises gpu:a100:6,
+# but those are six 3g.20gb slices of three cards. MIG instances cannot be
+# pooled -- vLLM cannot tensor-parallel across them -- and QwQ-32B-AWQ is 19GB
+# of weights against ~18GB usable, so it cannot load on one. Slurm hands out
+# slice ids (12, 21) that `nvidia-smi -i` rejects, so the ECC probe returned
+# "No devices were found" for every card and the job reported zero CLEAN cards.
+# It read as failing hardware. It was the wrong partition.
+if nvidia-smi -L 2>/dev/null | grep -q "MIG "; then
+    echo "ERROR: $(hostname) is MIG-partitioned -- slices are too small."
+    echo "       Submit to the GPU partition (whole cards), not LIGHTGPU."
+    exit 76
+fi
+
 ALLOCATED="${CUDA_VISIBLE_DEVICES:-}"
 [ -z "$ALLOCATED" ] && { echo "ERROR: no CUDA_VISIBLE_DEVICES -- refusing to guess"; exit 1; }
 
