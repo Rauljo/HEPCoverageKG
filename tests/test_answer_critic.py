@@ -235,3 +235,30 @@ def test_no_named_papers_means_no_calls():
     s = _session("The graph does not record this.")
     G._answer_critic({"conn": _conn_with([]), "answer_critic_chat": judge}, s)
     assert judge.seen == []
+
+
+def test_the_critic_runs_on_prose_ids_with_no_citation():
+    """The outer guard used to require `answer_papers`, which only a resolved
+    citation fills -- so the arm covered a third of answers while reporting
+    itself as on. D-107 measured `cited` empty in 59 of 60 answers."""
+    import json as _json
+    from hepcoveragekg.query import graph as G
+
+    judge = _Judge()
+    session = _session("Two analyses unfold: 2004.14060 and 2006.05880.")
+    session.answer_papers = []          # no citation resolved
+    state = {"session": session, "messages": [], "round": 1, "max_rounds": 6,
+             "max_places": 8, "max_rows": 25, "last_content": "",
+             "pending_calls": [{"id": "1", "name": "answer", "arguments":
+                                _json.dumps({"text": session.answer,
+                                             "reason": "answered"})}]}
+    cfg = {"configurable": {"execute": lambda n, a: None, "tools": [],
+                            "chat": None, "contract": "v3",
+                            "answer_critic": True,
+                            "conn": _conn_with(["2004.14060", "2006.05880"]),
+                            "answer_critic_chat": judge}}
+    session.steps.append(__import__(
+        "hepcoveragekg.query.planner", fromlist=["x"]).Step(1, "search", {}, rows=5))
+    G.execute(state, cfg)
+    assert set(judge.seen) == {"2004.14060", "2006.05880"}, \
+        "the critic must judge ids written in prose, not only a cited set"

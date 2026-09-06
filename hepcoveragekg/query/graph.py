@@ -526,7 +526,15 @@ def execute(state: PlannerState, config=None) -> PlannerState:
             # the question. It only ever narrows `answer_papers`, so it cannot
             # invent coverage, and it runs after the gate so it never judges a
             # list the gate was about to reject.
-            if runtime.get("answer_critic") and session.answer_papers:
+            # NOT `and session.answer_papers`. That guard was left over from
+            # the first wiring, which judged only a RESOLVED CITATION -- and
+            # `_answer_named` was then changed to read the ids out of the
+            # prose, because D-107 measured `cited` empty in 59 of 60 answers.
+            # The inner fix was applied and the outer guard was not, so the arm
+            # silently covered only the third of answers that cite a set: on
+            # 54245 the critic ran 8 times in 22 chances, and 9 of the skips
+            # had evidence available and prose ids to judge.
+            if runtime.get("answer_critic"):
                 _answer_critic(runtime, session)
 
             return state
