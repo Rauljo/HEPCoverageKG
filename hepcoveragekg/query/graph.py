@@ -684,10 +684,32 @@ def after_plan(state: PlannerState) -> str:
     if not session.steps and not session.nudged:
         return "nudge"
 
+    # THE OTHER WAY AN ANSWER GETS OUT, and until 2026-09-06 nothing checked
+    # it. The model wrote prose and made no tool call, so `last_content`
+    # becomes the answer -- and for a reasoning model `last_content` is its
+    # CHAIN OF THOUGHT. Measured on the D-108 arms: 23 of 125 set answers in
+    # the gate arm reached the scorer this way, every one of them opening
+    # "Okay, let's tackle this question step by step", every one scored as an
+    # answer, and the gate never saw a single one because it lives in the
+    # `answer` tool branch.
+    #
+    # So the gate is applied here too. It cannot ask again -- there is no tool
+    # call to reply to and the graph is on its way to `finish` -- but it can
+    # record what it found, which is the difference between a known 18% and an
+    # invisible one.
     session.answer = (state.get("last_content") or "").strip()
     session.stopped_because = ("answered from memory, no tool calls"
                                if not session.steps
                                else "answered without calling answer()")
+    from hepcoveragekg.query import answer_gate as _ag
+    verdict = _ag.check(session.answer, session.answer_cited,
+                        session.answerable, session.reason)
+    session.answer_gate_kind = verdict.kind
+    if not verdict.ok:
+        session.answer_gate_failed = True
+        logger.warning("answer without answer(): %s -- %d chars of prose, no "
+                       "ids, scored as an answer", verdict.kind,
+                       len(session.answer))
     return "finish"
 
 

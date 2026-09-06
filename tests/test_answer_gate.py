@@ -291,3 +291,48 @@ def test_a_cited_answer_is_not_named_none():
     a = Answer(text="the kept set", papers=["2004.14060"], cited="papers=set_1")
     got = scoring.judged_set_f1(q, a)
     assert got["judged_f1"] > 0 and got["judged_named_none"] == 0.0
+
+
+# --------------------------------------------------------------------------
+# the path the gate could not see
+# --------------------------------------------------------------------------
+
+def test_the_gate_also_runs_when_the_model_never_called_answer():
+    """`after_plan` turns `last_content` into the answer when the model writes
+    prose and makes no tool call -- and for a reasoning model `last_content` is
+    its chain of thought. 23 of 125 set answers in the D-108 gate arm reached
+    the scorer that way and the gate never saw one of them."""
+    from hepcoveragekg.query import graph as G
+
+    session = planner.Session(question="q")
+    session.steps.append(planner.Step(1, "search", {}, rows=5))
+    state = {"session": session, "pending_calls": [],
+             "last_content": "Okay, let's tackle this question step by step. "
+                             "First I need to find the analyses that ..."}
+    assert G.after_plan(state) == "finish"
+    assert session.answer_gate_kind == "silent"
+    assert session.answer_gate_failed, "it must be recorded, not silently scored"
+
+
+def test_that_path_is_clean_when_the_prose_does_name_papers():
+    from hepcoveragekg.query import graph as G
+
+    session = planner.Session(question="q")
+    session.steps.append(planner.Step(1, "search", {}, rows=5))
+    state = {"session": session, "pending_calls": [],
+             "last_content": "The analyses are 2004.14060 and 2006.05880."}
+    assert G.after_plan(state) == "finish"
+    assert not session.answer_gate_failed
+    assert session.answer_gate_kind == ""
+
+
+def test_an_abstention_on_that_path_is_still_exempt():
+    from hepcoveragekg.query import graph as G
+
+    session = planner.Session(question="q")
+    session.reason = "not_in_graph"
+    session.steps.append(planner.Step(1, "search", {}, rows=5))
+    state = {"session": session, "pending_calls": [],
+             "last_content": "The graph does not record this."}
+    G.after_plan(state)
+    assert not session.answer_gate_failed
