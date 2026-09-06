@@ -93,6 +93,16 @@ MECHANISMS = {
 #: 2 of 23 = 9%.
 MIN_FIRE_RATE = 0.5
 
+#: RATES ARE NOT JUDGED ON A HANDFUL OF RECORDS. Checked against a live run two
+#: minutes after launch, this reported 36/36 critic verdicts defaulted and
+#: called the run broken -- and the equivalent finished run had exactly the same
+#: first record and averaged 15% over 164. Early searches default and later ones
+#: do not, so a threshold applied to the first two records is noise. A check
+#: that cries wolf hourly is a check that gets ignored, which is the failure it
+#: exists to prevent, one level up.
+MIN_RECORDS_FOR_RATES = 20
+MIN_CHANCES_FOR_RATES = 10
+
 #: A judge that defaults most of its verdicts has not judged. D-105 ran at 100%
 #: for weeks; `answer_critic` warns above 25% at runtime and this is the same
 #: line drawn where a run can be refused rather than merely annotated.
@@ -138,9 +148,16 @@ def check(path, expect: dict) -> list:
         total = sum(fired(r.get("answer") or {}) for r in rows)
         acted = sum(1 for r in rows if fired(r.get("answer") or {}))
         chance = sum(chances(r.get("answer") or {}, r) for r in rows)
-        if total == 0:
+        if chance < MIN_CHANCES_FOR_RATES and n < MIN_RECORDS_FOR_RATES:
+            # No information yet. Saying nothing is right; saying FAIL is worse
+            # than saying nothing, because it trains the reader to skip the line.
+            out.append((None, f"{label} fired",
+                        f"{total} so far, {chance} chances -- too early to judge"))
+        elif total == 0 and chance:
             out.append((False, f"{label} fired",
                         f"NEVER, over {chance} chances -- the arm is a no-op"))
+        elif total == 0:
+            out.append((None, f"{label} fired", "no chances yet"))
         elif chance and acted / chance < MIN_FIRE_RATE:
             out.append((False, f"{label} fired",
                         f"{acted} of {chance} chances = {acted / chance:.0%} "
@@ -160,17 +177,24 @@ def check(path, expect: dict) -> list:
             for rv in get(r.get("answer") or {}):
                 seen += rv.get("candidates", 0)
                 defaulted += rv.get("defaulted", 0)
-        if seen:
+        if seen and n >= MIN_RECORDS_FOR_RATES:
             share = defaulted / seen
             out.append((share <= MAX_DEFAULT_RATE, f"{key} judged",
                         f"{defaulted}/{seen} defaulted = {share:.0%} "
                         f"(max {MAX_DEFAULT_RATE:.0%})"))
+        elif seen:
+            share = defaulted / seen
+            out.append((None, f"{key} judged",
+                        f"{defaulted}/{seen} = {share:.0%} over {n} records "
+                        f"-- too early to judge (need {MIN_RECORDS_FOR_RATES})"))
 
     # 3. HEALTH
     errs = sum(1 for r in rows if (r.get("answer") or {}).get("error"))
     rate = errs / n
-    out.append((rate <= MAX_ERROR_RATE, "error rate",
-                f"{errs}/{n} = {rate:.0%} (max {MAX_ERROR_RATE:.0%})"))
+    out.append((rate <= MAX_ERROR_RATE if n >= MIN_RECORDS_FOR_RATES else None,
+                "error rate",
+                f"{errs}/{n} = {rate:.0%} (max {MAX_ERROR_RATE:.0%})"
+                + ("" if n >= MIN_RECORDS_FOR_RATES else " -- too early")))
 
     # 4. RANGE
     scored = [r["scores"].get("judged_f1", r["scores"].get("set_f1"))
