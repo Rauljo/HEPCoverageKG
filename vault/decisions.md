@@ -4454,3 +4454,80 @@ New: `hepcoveragekg/eval/judge_gold.py` -- pairs from the gold, a cost
 `estimate()` printed before any call, and the confusion matrix in filter terms
 (keep-precision, keep-recall, drop rate) rather than as accuracy, because
 accuracy here is beaten by a constant.
+
+## D-113 — rank the candidates, do not filter them
+
+Raised by Raul: the critic only says relevant/irrelevant; rank instead, so the
+best papers sit at the top, and precision improves even where the answerer
+cannot report everything. Tested the same day on Gabriel's 253 verdicts for
+$0.07. It is the best result the project has on this problem.
+
+Same judge, same calls, same evidence -- only the OUTPUT changes, from
+keep/drop to a grade 0-3, ranked.
+
+                            prec   recall      F1
+    keep everything        0.419    1.000    0.591
+    binary critic (drop)   0.723    0.321    0.445     <- D-112
+    rank, take top-16      0.560    0.788    0.654     <- best
+    rank, take top-10      0.617    0.624    0.621
+
+                         p@1    p@3    p@5   p@10   p@16
+    random (today)      0.459  0.445  0.449  0.458  0.449
+    graded rerank       1.000  0.815  0.778  0.617  0.560
+    perfect ranking     1.000  1.000  0.956  0.851  0.698
+    share of headroom    100%    67%    65%    41%    44%
+
+p@1 = 1.00 on all nine questions: the top-ranked paper is one Gabriel approved,
+every time.
+
+WHY IT WORKS WHERE THE BINARY CRITIC FAILED, and this explains D-112. Grades
+against his verdicts, gpt-4.1-mini:
+
+    grade 3   n=38   P(gold) 0.79
+    grade 2   n=31   P(gold) 0.52
+    grade 1   n=64   P(gold) 0.36
+    grade 0   n=120  P(gold) 0.31
+
+Monotone, so the ordering is real -- but the BOTTOM is weak: grade 0 still
+holds 31% gold. The judge recognises the best evidence and cannot rule things
+out. All the discriminative power is at the top of the scale. A binary critic
+discards everything below its threshold and below the threshold is a third
+gold, so it bleeds recall; a ranking only needs the top to be right, and the
+top is right.
+
+THE CUT-OFF IS ALREADY THERE. Best F1 is at top-16, and `TYPICAL_LISTED = 16`
+in scoring.py -- measured from how many papers the planner actually writes. The
+answerer's natural truncation is the optimal cut-off, so nothing has to choose a
+threshold. That is the difference from D-112, whose whole failure was a
+threshold that had to be right globally and could not be.
+
+DEPLOYABLE ON WHAT WE ALREADY SERVE:
+
+    judge           p@1   p@3  F1@16   grade spread 3/2/1/0
+    gpt-4.1-mini   1.00  0.81  0.654   38/31/64/120
+    qwen3-32b      0.89  0.81  0.645   52/11/45/133
+    llama-3.1-8b   0.78  0.67  0.575   36/13/ 1/193
+
+qwen3-32b matches the paid model inside noise, so this needs no metered
+endpoint. THE 8B IS WORSE THAN DOING NOTHING (0.575 vs 0.591) and the spread
+says why: 14 of 253 papers in the two middle grades. It refuses the scale, so
+it is a binary classifier in a grader's prompt, and binary is what already
+failed. Consistent with D-112's finding that judge size matters far more here
+than for search filtering.
+
+A RUNTIME DIAGNOSTIC FALLS OUT OF THAT, and it needs no gold: if a judge puts
+almost nothing in the middle grades, its ranking is not usable. The binary
+critic never had such a check -- `defaulted` catches a judge that answers
+nothing, not one that answers with one grade.
+
+FREE SIGNAL ALREADY DISCARDED. `critic.py` grades every search candidate
+`exact | broader | unrelated` and `KEPT_RUNGS = (EXACT, BROADER)` collapses it,
+treating the two as identical. That is a three-level ranking computed on every
+run and thrown away. Ordering by rung costs no additional call.
+
+NEXT, in order:
+  1. rank by the rung we already have -- zero cost, testable on stored runs
+  2. `--rerank` arm: graded answer-critic, order the answer, no dropping
+  3. a question tier where ranking IS the task ("name the best example of X"),
+     scored p@1/p@3. Raul's point: for those, set_f1 is the wrong metric and we
+     currently have no question that exercises p@1 = 1.00.
