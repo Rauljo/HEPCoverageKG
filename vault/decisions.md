@@ -4387,3 +4387,70 @@ time a missing dependency degraded into a PLAUSIBLE NUMBER instead of an
 error, and each time the run completed, scored and reported. A system that
 fails loudly is a design requirement here, not a nicety -- the alternative is
 what happened in all three cases: weeks of measurements read as findings.
+
+## D-112 — the answer-critic loses to doing nothing, except on dirty candidate sets
+
+The first check of `answer_critic` against labels a physicist wrote. 253
+(question, paper) pairs from Gabriel's two batches, 106 yes and 147 no, with
+the evidence pooled from all 59 stored run files so every pair carries both
+labels and quotes (one run's `entity_ids` covered only 52 of 253). Run on
+OpenRouter for $0.099 total while the cluster ran the arms.
+
+    judge               prec  recall      F1   agree  defaulted
+    keep everything    0.419   1.000   0.591   0.419      -
+    drop everything      -     0.000   0.000   0.581      -
+    llama-3.1-8b       0.509   0.264   0.348   0.585      8
+    qwen3-32b          0.589   0.500   0.541   0.644     38
+    qwen3.8-flash      0.457   0.962   0.620   0.506    218
+    gpt-4.1-mini       0.723   0.321   0.444   0.664      0
+
+EVERY VALID JUDGE IS WORSE ON F1 THAN DOING NOTHING. qwen3.8-flash's apparent
+win is D-105 again -- 218 of 253 defaulted, 1085 completion tokens per call
+spent reasoning, nothing parseable returned. It is "always keep" in a judge's
+coat, and `enable_thinking=false` did not take on that endpoint.
+
+THE BOUNDARY IS SHARP AND IT IS PURITY (gold / candidates), gpt-4.1-mini:
+
+    gf-01-met   purity 0.23   +0.292        gf-05   purity 0.42   -0.093
+    gf-07       purity 0.19   +0.216        gf-02   purity 0.58   -0.108
+    gf-01       purity 0.24   +0.165        gf-03   purity 0.56   -0.143
+                                            gf-01-c purity 0.61   -0.203
+                                            gf-08   purity 0.55   -0.552
+                                            gf-04   purity 0.69   -0.618
+                                                             mean  -0.116
+
+Everything below 0.25 gains, everything above 0.4 loses. This confirms the
+2026-09-05 fast test (gf-07 0.42 -> 0.80, gf-04 0.88 -> 0.60) on nine
+questions instead of two.
+
+AND THE GATE IS NOT AVAILABLE. Purity is defined by the gold, and the judge's
+own drop rate does not proxy it:
+
+    gf-07  kept 5/53 = 9%   purity 0.19   gained 0.216
+    gf-04  kept 2/26 = 8%   purity 0.69   lost   0.618
+
+Same keep rate, opposite truth. On gf-04 -- "which analyses unfold", where 18
+of 26 candidates are right -- it kept TWO. A judge that cannot tell a clean
+candidate set from a dirty one cannot be gated on its own confidence, which is
+the only signal available at runtime.
+
+DECISION: `--answer-critic` stays OFF by default. It is not withdrawn: the one
+place it earns its keep is an answer that is a retrieval FOOTPRINT, which is
+exactly what D-110 found the citation fix now produces (38-42 papers cited),
+and exactly the gf-07 shape. The cluster arm (54234/54235) tests it against
+footprints rather than against this universe, so it remains the right
+experiment and this result does not pre-empt it.
+
+SECOND FINDING, and it contradicts a standing assumption. Judge size matters
+enormously here: keep-recall 0.264 (8B) -> 0.500 (32B) -> and gpt-4.1-mini
+reaches keep-precision 0.723 with zero defaults. The SEARCH critic measured
+the opposite -- the 8B was -0.0035 against the 72B, inside noise, which is why
+the 8B became standard for everything. The two jobs are not the same
+difficulty and the project has been treating them as if they were. Anything
+concluded about "the critic" from the 8B's performance on search candidates
+does not transfer to judging papers against a question.
+
+New: `hepcoveragekg/eval/judge_gold.py` -- pairs from the gold, a cost
+`estimate()` printed before any call, and the confusion matrix in filter terms
+(keep-precision, keep-recall, drop rate) rather than as accuracy, because
+accuracy here is beaten by a constant.
