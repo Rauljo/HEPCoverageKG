@@ -749,6 +749,12 @@ class Session:
     # and why is the measurement, and a keep-rate alone hides a judge that is
     # defaulting (D-105).
     answer_review: Any = None
+    #: Every `papers_of` reordering this run made (D-113). A list, because a
+    #: run calls `papers_of` more than once and each call is a separate
+    #: judgement whose spread has to be readable -- an arm whose rankings were
+    #: all discarded as unusable is a no-op at double the price, and that must
+    #: be in the record rather than inferred from a score that did not move.
+    rankings: list = field(default_factory=list)
     #: The answer as WRITTEN, kept when the critic struck ids out of it. The
     #: edit has to be auditable: a harness that silently rewrites an answer and
     #: then scores it is measuring itself.
@@ -1088,10 +1094,71 @@ def _render_rows(rows: list[dict], max_rows: int) -> str:
     return "\n".join(lines)
 
 
+def _paper_ranker(conn, session, rerank, answer_critic):
+    """Reorder a `papers_of` result best-first, or None when the arm is off.
+
+    Needs the graded judge, so it is only built when BOTH --rerank and
+    --answer-critic are on: the rung-level reordering above is free and always
+    applies under --rerank; this one costs a judging pass per call and is the
+    thing being measured.
+    """
+    if not (rerank and answer_critic):
+        return None
+    from hepcoveragekg.query import answer_critic as AC
+
+    client, model = _critic_client()
+    cap = completion_cap(model)
+
+    def chat(messages):
+        # `enable_thinking=false` first, then plain. D-105: a reasoning judge
+        # spends its budget thinking and returns empty content, and here that
+        # would leave every paper ungraded and the order untouched -- which is
+        # at least the safe direction, but it must still be visible.
+        try:
+            return client.chat.completions.create(
+                model=model, messages=messages, temperature=0.0, max_tokens=cap,
+                extra_body={"chat_template_kwargs": {"enable_thinking": False}})
+        except Exception:  # noqa: BLE001
+            pass
+        return client.chat.completions.create(
+            model=model, messages=messages, temperature=0.0, max_tokens=cap)
+
+    def rank(question, result):
+        papers = []
+        seen = set()
+        for row in result.rows:
+            pid = row.get("paper_id")
+            if pid and pid not in seen:
+                seen.add(pid)
+                papers.append(str(pid))
+        if len(papers) < 2:
+            return result
+        try:
+            evidence = AC.evidence_by_paper(conn, session.known_entity_ids, papers)
+            ranking = AC.rank_papers(chat, question, evidence)
+        except Exception as exc:  # noqa: BLE001 -- a ranker must not kill a run
+            logger.warning("paper rerank failed, order unchanged: %s", exc)
+            return result
+        session.rankings.append(ranking)
+        if not ranking.order or not ranking.usable:
+            # An unusable ranking is left alone rather than applied. A judge
+            # that puts nothing in the middle grades measured WORSE than not
+            # ranking (D-113), so acting on it would be a known regression.
+            return result
+        rank_of = {p: n for n, p in enumerate(ranking.order)}
+        result.rows.sort(key=lambda r: rank_of.get(str(r.get("paper_id")), 10**6))
+        return result
+
+    return rank
+
+
 def build_executor(conn, index, sets: Optional[dict] = None,
                    critic: Optional[Callable] = None,
                    answer_contract: bool = False,
-                   force_critic_set: bool = False) -> Callable[[str, dict], Any]:
+                   force_critic_set: bool = False,
+                   rerank: bool = False,
+                   rank_papers: Optional[Callable] = None,
+                   question_of: Optional[Callable] = None) -> Callable[[str, dict], Any]:
     """Bind the tools to this database, index and set of named results.
 
     Returned as a closure so the planner never holds a connection itself and
@@ -1215,8 +1282,27 @@ def build_executor(conn, index, sets: Optional[dict] = None,
                 # subset of `ids` would keep cluster-mates of dropped seeds and
                 # silently undo the judgement. Dedup already ruled those the same
                 # thing, so they travel together in both directions.
-                kept = templates.expand_canonical(conn, review.kept_ids) \
-                    if review.kept_ids else []
+                # RANK-PRESERVING EXPANSION (D-113). `expand_canonical`
+                # returns `sorted(ids)`, so any order handed to it is thrown
+                # away alphabetically -- which is why the critic's rung has
+                # never reached the answerer despite being computed every run.
+                # Expanding each rung separately and concatenating keeps
+                # `exact` ahead of `broader` without touching a function every
+                # other tool depends on. Membership is identical either way;
+                # only the order differs, and the order is what the answerer's
+                # own truncation acts on.
+                if rerank and review.kept_ids:
+                    kept, seen_k = [], set()
+                    for rung in (critic_mod.EXACT, critic_mod.BROADER):
+                        seeds = review.ids_at(rung)
+                        for eid in (templates.expand_canonical(conn, seeds)
+                                    if seeds else []):
+                            if eid not in seen_k:
+                                seen_k.add(eid)
+                                kept.append(eid)
+                else:
+                    kept = templates.expand_canonical(conn, review.kept_ids) \
+                        if review.kept_ids else []
                 sets[f"{name}_kept"] = kept
                 tally = review.tally
                 if widened:
@@ -1241,7 +1327,22 @@ def build_executor(conn, index, sets: Optional[dict] = None,
             return templates.subjects_of(conn, args["predicate"],
                                          ids_for(args, "object_ids", "object_set"))
         if tool == "papers_of":
-            return templates.papers_of(conn, ids_for(args, "entity_ids", "entity_set"))
+            result = templates.papers_of(conn, ids_for(args, "entity_ids", "entity_set"))
+            # THE TRUNCATION POINT (D-113). `papers_of` orders by paper_id --
+            # arXiv id, which is arbitrary -- and `_render_rows` then cuts the
+            # list at `max_rows`. So which papers reach the answerer at all is
+            # decided alphabetically. Measured against Gabriel's labels that is
+            # worth 0.45 precision at every cut-off; ordering the same papers by
+            # a graded judge reaches 0.78 at five and 0.62 at ten.
+            #
+            # NOTHING IS REMOVED. Every row still travels; only the order
+            # changes. A set question's answer IS the set, and a count over a
+            # trimmed set is a wrong number -- so the cut stays where it already
+            # was, at the answerer's own limit, and the ranking decides what
+            # falls on the right side of it.
+            if rank_papers is not None and result.rows:
+                result = rank_papers(question_of(), result)
+            return result
         if tool == "contents_of":
             papers = args.get("paper_ids") or args.get("paper_id") or []
             if isinstance(papers, str):
@@ -1775,7 +1876,8 @@ def _prepare(conn, index, question, max_rounds, max_places, max_rows,
              persist=False, push_further=False, simple_answer=False,
              fewshot="", tool_examples=False, reviewer=False,
              state_objective=False, subgoals=False, subgoal_status=False,
-             path_tool=False, answer_gate=False, answer_critic=False):
+             path_tool=False, answer_gate=False, answer_critic=False,
+             rerank=False):
     """The state and runtime config a run needs. Shared by answer() and stream()."""
     session = Session(question=question)
     if chat is None:
@@ -1822,7 +1924,11 @@ def _prepare(conn, index, question, max_rounds, max_places, max_rows,
                                   critic=_build_critic(question, session, use_critic,
                                                        critic_seed),
                                   answer_contract=answer_contract,
-                                  force_critic_set=force_critic_set),
+                                  force_critic_set=force_critic_set,
+                                  rerank=rerank,
+                                  rank_papers=_paper_ranker(conn, session, rerank,
+                                                            answer_critic),
+                                  question_of=lambda: question),
         "tools": [{"type": "function", "function": spec}
                   for spec in tools_for(answer_contract, contract, simple_answer,
                                         path_tool)],
@@ -1873,6 +1979,7 @@ def _prepare(conn, index, question, max_rounds, max_places, max_rows,
         runtime["review_schema"] = schema_card.render(conn)
     # THE ANSWER GATE (D-107). Costs no call at all -- it reads the answer the
     # model already wrote -- so the only thing an arm buys is the retry round.
+    runtime["rerank"] = bool(rerank)
     runtime["answer_gate"] = bool(answer_gate)
 
     # THE ANSWER CRITIC (D-106). Uses the SEARCH critic's endpoint, because the
@@ -1946,6 +2053,7 @@ def stream(
     path_tool: bool = False,
     answer_gate: bool = False,
     answer_critic: bool = False,
+    rerank: bool = False,
 ):
     """Yield `(node_name, session)` after each node completes.
 
@@ -1962,7 +2070,8 @@ def stream(
                                       persist, push_further, simple_answer,
                                       fewshot, tool_examples, reviewer,
                                       state_objective, subgoals, subgoal_status,
-                                      path_tool, answer_gate, answer_critic)
+                                      path_tool, answer_gate, answer_critic,
+                                      rerank)
     started = time.perf_counter()
     app = graph_module.build(checkpointer=checkpointer)
     for update in app.stream(state, config=config, stream_mode="updates"):
@@ -2000,6 +2109,7 @@ def answer(
     path_tool: bool = False,
     answer_gate: bool = False,
     answer_critic: bool = False,
+    rerank: bool = False,
 ) -> Session:
     """Answer one question, returning the answer and the whole trace.
 
@@ -2024,7 +2134,8 @@ def answer(
                                       persist, push_further, simple_answer,
                                       fewshot, tool_examples, reviewer,
                                       state_objective, subgoals, subgoal_status,
-                                      path_tool, answer_gate, answer_critic)
+                                      path_tool, answer_gate, answer_critic,
+                                      rerank)
     graph_module.build(checkpointer=checkpointer).invoke(state, config=config)
 
     session.seconds = time.perf_counter() - started

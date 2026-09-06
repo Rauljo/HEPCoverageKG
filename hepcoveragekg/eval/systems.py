@@ -98,6 +98,12 @@ class Answer:
     # verdict to KEEP looks identical to a judge that agreed with everything.
     answer_review: dict = field(default_factory=dict)
 
+    # THE RERANK (D-113). One entry per `papers_of` reordering, each carrying
+    # its grade spread and whether it was applied. An arm whose rankings were
+    # all refused as unusable is a no-op at double the price, and that has to be
+    # readable in the run rather than guessed at from a score that did not move.
+    rankings: list = field(default_factory=list)
+
     error: str = ""                  # a crash, recorded rather than raised
 
     @property
@@ -374,6 +380,7 @@ def from_session(session, conn=None) -> Answer:
         gate_retried=bool(getattr(session, "answer_gate_retried", False)),
         gate_failed=bool(getattr(session, "answer_gate_failed", False)),
         answer_review=_answer_review_dict(getattr(session, "answer_review", None)),
+        rankings=[r.to_dict() for r in getattr(session, "rankings", [])],
     )
 
 

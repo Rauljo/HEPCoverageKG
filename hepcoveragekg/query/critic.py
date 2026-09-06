@@ -132,6 +132,28 @@ class Review:
     def kept_ids(self) -> list[str]:
         return [v.entity_id for v in self.verdicts if v.kept]
 
+    def ids_at(self, rung: str) -> list[str]:
+        """The kept ids at one rung, in the order they were judged."""
+        return [v.entity_id for v in self.verdicts if v.rung == rung]
+
+    @property
+    def ranked_ids(self) -> list[str]:
+        """The kept ids, BEST FIRST (D-113).
+
+        `kept_ids` has always returned exact and broader mixed, in candidate
+        order, because `KEPT_RUNGS` treats them as one thing. That is right for
+        membership and throws away an ordering the critic already computed --
+        on every run, at no cost, since 2026-08. Measured against Gabriel's 253
+        verdicts, ordering candidates by relevance is worth more than filtering
+        them: the answerer writes about sixteen papers whatever we do, so what
+        decides the answer is WHICH sixteen are at the top of what it reads.
+
+        Deliberately not a score. Two rungs is the resolution the critic
+        actually has, and inventing a finer one here would be a number with
+        nothing behind it.
+        """
+        return self.ids_at(EXACT) + self.ids_at(BROADER)
+
     @property
     def tally(self) -> dict[str, int]:
         counts = {rung: 0 for rung in RUNGS}

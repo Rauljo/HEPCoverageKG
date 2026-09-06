@@ -592,6 +592,7 @@ def _cmd_eval(args) -> int:
                 path_tool=args.path_tool,
                 answer_gate=args.answer_gate,
                 answer_critic=args.answer_critic,
+                rerank=args.rerank,
             )
         system = make_system()
     else:
@@ -836,6 +837,15 @@ def build_parser() -> argparse.ArgumentParser:
     p_eval.add_argument("--tool-examples", action="store_true",
                         help="planner: attach one real worked call per tool, "
                              "mined from runs that answered correctly")
+    p_eval.add_argument("--rerank", action="store_true",
+                        help="planner: order candidates BEST FIRST instead of "
+                             "dropping them. Alone it costs nothing -- it uses "
+                             "the exact/broader rung the critic already "
+                             "computes. With --answer-critic it also grades and "
+                             "reorders each `papers_of` result. Never removes a "
+                             "paper: the answerer's own truncation stays where "
+                             "it is and the ranking decides what survives it "
+                             "(D-113)")
     p_eval.add_argument("--answer-gate", action="store_true",
                         help="planner: reject an answer that names no arXiv "
                              "ids -- a placeholder, a set reference, a list of "
