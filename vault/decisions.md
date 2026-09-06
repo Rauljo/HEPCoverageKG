@@ -4531,3 +4531,48 @@ NEXT, in order:
   3. a question tier where ranking IS the task ("name the best example of X"),
      scored p@1/p@3. Raul's point: for those, set_f1 is the wrong metric and we
      currently have no question that exercises p@1 = 1.00.
+
+## D-114 — a run must prove it ran the arm, before any number is read from it
+
+Raul, after three consecutive days of runs that produced numbers while a
+dependency was missing: check every running job once an hour, against what it
+was supposed to be running, and say so even when the results are bad.
+
+The point is that NONE of these crashed. Every one completed, scored and
+reported a plausible figure, and watching `squeue` caught none of them because
+in all four cases the job was RUNNING:
+
+    D-088  the critic 404'd on every call            six arms "critic-on"
+    D-105  reasoning judge returned empty content    33,836 candidates,
+                                                     100% defaulted, 0 drops
+    D-111  server hit its wall limit 40 min in       44% of questions errored
+    D-108  gate fired 2 times in 164 questions       18% of answers left by a
+                                                     path the gate cannot see
+
+`hpc/monitor/armcheck.py` asserts the four things that were each, in turn, the
+thing nobody checked:
+
+    FLAGS    the recorded config matches what was asked for
+    FIRING   the mechanism actually did something
+    HEALTH   the error rate is not eating the run
+    RANGE    the scores are inside what this system can produce
+
+FIRING IS AGAINST OPPORTUNITY, NOT AGAINST ZERO, and this is the part that
+matters. A `> 0` test passes the D-108 gate happily -- it fired twice while 23
+answers named nothing. Each mechanism declares both what it did and how many
+chances it had; below 50% is a FAIL. A judge defaulting above 30% is a FAIL,
+which is D-105's line drawn where a run can be refused rather than annotated.
+
+Verified against all four historical failures rather than asserted:
+
+    54217   FAIL error rate 23/52 = 44%
+    54233   FAIL gate fired 2 of 23 chances = 9%
+    54194   FAIL use_critic judged 8548/8548 defaulted = 100%
+    54127   FAIL 8548 candidates, 100% defaulted
+
+Exit status is 1 on any failure, so it can gate a report instead of being
+something to remember to read. An hourly job now runs it while anything is
+queued.
+
+CONSEQUENCE, IMMEDIATE: 54194 -- the `--subgoals` arm whose result was still
+outstanding -- had a 100% defaulted critic. It is void, and no longer pending.
