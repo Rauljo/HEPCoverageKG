@@ -2,6 +2,10 @@
 #SBATCH -p GPU
 #SBATCH --gres=gpu:a100:1
 #SBATCH --job-name=critic
+# Requeueable ON PURPOSE: the ECC check below puts the job back in the
+# queue when Slurm draws this node's faulty card, and a job that is not
+# marked requeueable cannot do that.
+#SBATCH --requeue
 #SBATCH --output=/home/xucabrjs/hepcoveragekg_setup/logs/critic_%j.out
 #SBATCH --time=08:00:00
 #SBATCH --mem=64G
@@ -102,7 +106,30 @@ errs=$(nvidia-smi -i "$gpu" --query-gpu=ecc.errors.uncorrected.aggregate.total \
         --format=csv,noheader,nounits 2>/dev/null || echo unknown)
 bus=$(nvidia-smi -i "$gpu" --query-gpu=pci.bus_id --format=csv,noheader 2>/dev/null || echo "?")
 echo "  gpu $gpu ($bus): uncorrected ECC = $errs"
-[ "$errs" = "0" ] || { echo "ERROR: card is not ECC-clean, refusing"; exit 75; }
+[ "$errs" = "0" ] || {
+    # REQUEUE, DO NOT DIE. compute-gpu-0-1 has three A100s and one of them
+    # (bus CA:00.0) carries 1413 uncorrected ECC errors. Which card Slurm hands
+    # out is luck, so refusing outright throws away the QUEUE WAIT as well as
+    # the job: on 2026-09-06 both servers waited 8h29m for a GPU, drew the bad
+    # card, and died one second after starting. The arms behind them never ran.
+    #
+    # A requeue puts the job back in the queue and Slurm may place it on a
+    # different card. Bounded by SLURM_RESTART_COUNT so a node whose cards are
+    # ALL bad stops rather than spinning -- an infinite requeue would hide the
+    # hardware fault, which is the thing this check exists to surface.
+    echo "ERROR: card is not ECC-clean ($errs uncorrected)."
+    tries="${SLURM_RESTART_COUNT:-0}"
+    if [ -n "${SLURM_JOB_ID:-}" ] && [ "$tries" -lt "${MAX_ECC_REQUEUE:-4}" ]; then
+        echo "       requeueing (attempt $((tries + 1)) of ${MAX_ECC_REQUEUE:-4})"
+        echo "       -- another card on this node may be clean."
+        scontrol requeue "$SLURM_JOB_ID"
+        sleep 30          # let the requeue land before the shell exits
+        exit 0
+    fi
+    echo "       giving up after $tries requeues: every card drawn was faulty."
+    echo "       Report the node -- this is hardware, not configuration."
+    exit 75
+}
 
 # NO pkill HERE. See the header. Anything already serving stays serving.
 ARGS=(
