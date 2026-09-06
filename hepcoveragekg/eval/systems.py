@@ -92,6 +92,7 @@ class Answer:
     gate_kind: str = ""
     gate_retried: bool = False
     gate_failed: bool = False
+    stopped_because: str = ""
 
     # THE ANSWER CRITIC (D-106). Same shape as `reviews`: the tally is the
     # measurement and `defaulted` is the alarm -- a judge defaulting every
@@ -377,6 +378,10 @@ def from_session(session, conn=None) -> Answer:
         nudged=bool(getattr(session, "nudged", False)),
         named_ids=len(set(_ARXIV_IN_TEXT.findall(session.answer or ""))),
         gate_kind=getattr(session, "answer_gate_kind", "") or "",
+        # HOW THE RUN ENDED. A Session field that never reached the record, so
+        # "the model answered without calling answer()" was invisible in every
+        # run to date and had to be inferred from the shape of the prose.
+        stopped_because=getattr(session, "stopped_because", "") or "",
         gate_retried=bool(getattr(session, "answer_gate_retried", False)),
         gate_failed=bool(getattr(session, "answer_gate_failed", False)),
         answer_review=_answer_review_dict(getattr(session, "answer_review", None)),
