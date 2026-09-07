@@ -1396,7 +1396,8 @@ def build_executor(conn, index, sets: Optional[dict] = None,
                    force_critic_set: bool = False,
                    rerank: bool = False,
                    rank_papers: Optional[Callable] = None,
-                   question_of: Optional[Callable] = None) -> Callable[[str, dict], Any]:
+                   question_of: Optional[Callable] = None,
+                   kind_fallback: bool = False) -> Callable[[str, dict], Any]:
     """Bind the tools to this database, index and set of named results.
 
     Returned as a closure so the planner never holds a connection itself and
@@ -1487,6 +1488,29 @@ def build_executor(conn, index, sets: Optional[dict] = None,
                 review = critic(args["text"], hits, refresh=True)
                 widened += 1
 
+            # THE KIND FALLBACK (D-119, arm). A `kind` narrows the search to one
+            # entity type, and whether that helps depends on how the GRAPH typed
+            # the concept, which the model cannot see. Replayed against the DIAS
+            # DB on Gabriel's questions: "Higgs" with kind=detector_object
+            # reaches 2 of 16 gold papers, without it 13 -- the candidate
+            # entities are typed event_region, physics_process, observable, and
+            # only 9 of 200-odd are detector_object. Yet the same filter HELPS
+            # gf-08 (+2) and gf-01 (+3). So neither keep nor drop: keep the
+            # kinded hits first, append the unfiltered ones, and let the critic
+            # judge the union. Measured offline over the five live kinded
+            # searches: 61 -> 74 of 79 gold papers reached, at one extra local
+            # search and zero LLM calls.
+            fallback_added = 0
+            if kind_fallback and args.get("kind"):
+                have = {h.entity_id for h in hits}
+                extra = [h for h in retrieve.search(index, args["text"], conn=conn,
+                                                    kind=None, limit=limit)
+                         if h.entity_id not in have]
+                if extra:
+                    hits = list(hits) + extra
+                    fallback_added = len(extra)
+                    if critic:
+                        review = critic(args["text"], hits, refresh=True)
             # `retrieve.concept` is `search` + `expand_canonical`, and the hits
             # are already in hand -- calling it here re-ran BM25 and the dense
             # encoder over the whole index a second time for every search, to
@@ -1509,6 +1533,11 @@ def build_executor(conn, index, sets: Optional[dict] = None,
             tagged = sum(1 for h in hits if h.facets)
             note = (f"saved as {name} ({len(ids)} entities, canonical clusters expanded). "
                     f"Pass {name} as object_set/entity_set -- do not retype the ids.")
+            if fallback_added:
+                note += (f" kind={args.get('kind')!r} matched {len(hits) - fallback_added}; "
+                         f"{fallback_added} more entities of OTHER kinds also match "
+                         f"'{args['text']}' and are included -- the graph types this "
+                         f"concept several ways.")
             if tagged:
                 note += (f" {tagged}/{len(hits)} hits carry facet tags; those keys are"
                          " what the `facets` tool takes.")
@@ -2115,7 +2144,7 @@ def _prepare(conn, index, question, max_rounds, max_places, max_rows,
              fewshot="", tool_examples=False, reviewer=False,
              state_objective=False, subgoals=False, subgoal_status=False,
              path_tool=False, answer_gate=False, answer_critic=False,
-             rerank=False, name_ids=False):
+             rerank=False, name_ids=False, kind_fallback=False):
     """The state and runtime config a run needs. Shared by answer() and stream()."""
     session = Session(question=question)
     if chat is None:
@@ -2166,7 +2195,8 @@ def _prepare(conn, index, question, max_rounds, max_places, max_rows,
                                   rerank=rerank,
                                   rank_papers=_paper_ranker(conn, session, rerank,
                                                             answer_critic),
-                                  question_of=lambda: question),
+                                  question_of=lambda: question,
+                                  kind_fallback=kind_fallback),
         "tools": [{"type": "function", "function": spec}
                   for spec in tools_for(answer_contract, contract, simple_answer,
                                         path_tool, name_ids)],
@@ -2218,6 +2248,7 @@ def _prepare(conn, index, question, max_rounds, max_places, max_rows,
     # THE ANSWER GATE (D-107). Costs no call at all -- it reads the answer the
     # model already wrote -- so the only thing an arm buys is the retry round.
     runtime["rerank"] = bool(rerank)
+    runtime["kind_fallback"] = bool(kind_fallback)
     runtime["answer_gate"] = bool(answer_gate)
 
     # THE ANSWER CRITIC (D-106). Uses the SEARCH critic's endpoint, because the
@@ -2293,6 +2324,7 @@ def stream(
     answer_critic: bool = False,
     rerank: bool = False,
     name_ids: bool = False,
+    kind_fallback: bool = False,
 ):
     """Yield `(node_name, session)` after each node completes.
 
@@ -2310,7 +2342,7 @@ def stream(
                                       fewshot, tool_examples, reviewer,
                                       state_objective, subgoals, subgoal_status,
                                       path_tool, answer_gate, answer_critic,
-                                      rerank, name_ids)
+                                      rerank, name_ids, kind_fallback)
     started = time.perf_counter()
     app = graph_module.build(checkpointer=checkpointer)
     for update in app.stream(state, config=config, stream_mode="updates"):
@@ -2350,6 +2382,7 @@ def answer(
     answer_critic: bool = False,
     rerank: bool = False,
     name_ids: bool = False,
+    kind_fallback: bool = False,
 ) -> Session:
     """Answer one question, returning the answer and the whole trace.
 
@@ -2375,7 +2408,7 @@ def answer(
                                       fewshot, tool_examples, reviewer,
                                       state_objective, subgoals, subgoal_status,
                                       path_tool, answer_gate, answer_critic,
-                                      rerank, name_ids)
+                                      rerank, name_ids, kind_fallback)
     graph_module.build(checkpointer=checkpointer).invoke(state, config=config)
 
     session.seconds = time.perf_counter() - started

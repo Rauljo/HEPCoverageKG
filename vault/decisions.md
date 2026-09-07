@@ -4789,3 +4789,25 @@ arm now has a named failure:
     summarise instead of list           12   --name-ids, gate
     quote-only extraction gap           10   --index-quotes
     tag ≠ selection (FP)                 8   graph precision, not a query fix
+
+## D-119 — the kind filter starves some questions and feeds others; fall back, don't choose
+
+Found by the offline retrieval bench (report 1, 2026-09-08). Replayed against
+the DIAS DB, "Higgs" with `kind=detector_object` -- as the model typed it --
+reaches 2 of gf-05's 16 gold papers; the same query without the kind reaches
+13. The Higgs-candidate entities on those papers are typed event_region (38),
+physics_process (39), observable (38), result (29): only 9 are detector_object.
+The model's guess was reasonable; the graph typed the concept differently, and
+the model cannot see that.
+
+But the SAME filter helps elsewhere: gf-08 +2, gf-01 +3. Over the five distinct
+kinded searches in the controls, with-kind reaches 61 of 79 gold papers,
+without 71. So neither policy is right.
+
+`--kind-fallback`: run the kinded search, then the unfiltered one, append what
+is new, tell the model how many entities of other kinds matched, hand the union
+to the critic. Predicted offline, before building: 61 -> 74 of 79 (+13), gf-05
+2 -> 13, one extra local search per kinded query, zero LLM calls.
+
+An arm, default off: wave 2 must stay comparable with wave 1. To be confirmed
+live on Gabriel's questions via OpenRouter before promotion.

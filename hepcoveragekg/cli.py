@@ -594,6 +594,7 @@ def _cmd_eval(args) -> int:
                 answer_critic=args.answer_critic,
                 rerank=args.rerank,
                 name_ids=args.name_ids,
+                kind_fallback=args.kind_fallback,
             )
         system = make_system()
     else:
@@ -838,6 +839,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_eval.add_argument("--tool-examples", action="store_true",
                         help="planner: attach one real worked call per tool, "
                              "mined from runs that answered correctly")
+    p_eval.add_argument("--kind-fallback", action="store_true",
+                        help="planner: when a search names a `kind`, also "
+                             "search without it and append what other kinds "
+                             "match. Offline on Gabriel's questions: 61 -> 74 "
+                             "of 79 gold papers reached; gf-05 2 -> 13 (D-119)")
     p_eval.add_argument("--name-ids", action="store_true",
                         help="planner: ask the answer to WRITE the arXiv ids "
                              "into `text`. v3 currently says the opposite -- "
