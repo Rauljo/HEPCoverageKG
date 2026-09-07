@@ -568,7 +568,8 @@ PATH_TOOL = "path"
 
 
 def tools_for(answer_contract: bool = False, contract: str = "",
-              simple_answer: bool = False, path_tool: bool = False) -> list[dict]:
+              simple_answer: bool = False, path_tool: bool = False,
+              name_ids: bool = False) -> list[dict]:
     """The tool schemas for one run.
 
     `contract` is "v1" (default), "v2" (everything) or "v3" (the lean version).
@@ -617,6 +618,30 @@ def tools_for(answer_contract: bool = False, contract: str = "",
                 spec["parameters"]["properties"]["text"]["description"] = (
                     "the answer, in prose. Cite the set of papers in `papers_from` "
                     "rather than writing arXiv ids into this text.")
+                if name_ids:
+                    # THE ARM (D-117). The line above tells the model NOT to
+                    # write arXiv ids into `text` -- and `text` is the only
+                    # field `set_f1` and `judged_set_f1` read. The system has
+                    # been instructed away from the one thing that scores, and
+                    # the citation it was pointed at instead resolved on 7% of
+                    # answers (D-116).
+                    #
+                    # An arm and not a default: v3 is what every recent result
+                    # was measured on, and rewording it silently is the D-062
+                    # failure -- a one-line prompt change that moved the control
+                    # while an arm was being read.
+                    spec["parameters"]["properties"]["text"]["description"] = (
+                        "The answer in prose, AND the arXiv ids of the papers it "
+                        "is about, written out: '2004.14060, 2006.05880'. Write "
+                        "the ids even when you also cite a set in `papers_from`.")
+                    spec["parameters"]["properties"]["papers_from"]["description"] = (
+                        "OPTIONAL, in ADDITION to the ids in `text`. The name of a "
+                        "set from this run, exactly as reported (e.g. "
+                        "'set_1_kept'). Not a description of one: 'the facets "
+                        "result' names no set and resolves to nothing.")
+                    spec["description"] += (
+                        " CALL THIS TOOL. An answer written as prose, or as a tag "
+                        "like <answer .../>, is not a tool call.")
         specs.append(spec)
     return specs
 
@@ -741,6 +766,9 @@ class Session:
     # first time. `answer_gate_failed` means it was asked and still named
     # nothing, which is the number that says whether the arm works.
     answer_gate_kind: str = ""
+    #: Which notation the model used for its answer call (D-116). Recorded so a
+    #: NEW form shows up as a number rather than as a week of odd results.
+    answer_syntax: str = ""
     answer_gate_retried: bool = False
     answer_gate_failed: bool = False
 
@@ -970,6 +998,39 @@ class _RecoveredCall:
 
 #: The `answer` tool's arguments, for harvesting them out of prose.
 ANSWER_ARGS = ("text", "papers_from", "value_from", "reason", "answerable", "papers")
+
+
+def answer_syntax(content: str) -> str:
+    """WHICH notation the model used to write its answer call.
+
+    Recorded on every run so a new form arrives as a number in the record
+    rather than as a week of confusing results. Four have been observed so far
+    and two models produced them; the fifth will be someone else's model, and
+    the point of this is that `unknown` climbing is the alarm.
+
+        json        `{"text": ...}` anywhere, however wrapped
+        tag_per_arg `<papers_from>set_1</papers_from>`
+        attrs       `<answer text="..." reason="answered"/>`
+        prose       ids in the text, no structure at all -- legitimate
+        none        no answer content found
+    """
+    content = content or ""
+    for blob in re.findall(r"\{[^{}]*\}", content, re.DOTALL):
+        try:
+            parsed = json.loads(blob)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict) and any(k in parsed for k in ANSWER_ARGS):
+            return "json"
+    for key in ANSWER_ARGS:
+        if re.search(rf"<{key}\s*>", content, re.IGNORECASE):
+            return "tag_per_arg"
+    for key, _ in _XML_ATTR.findall(content):
+        if key.lower() in ANSWER_ARGS:
+            return "attrs"
+    if re.search(r"\b\d{4}\.\d{4,5}\b", content):
+        return "prose"
+    return "none"
 
 
 def harvest_answer_args(content: str) -> dict:
@@ -2051,7 +2112,7 @@ def _prepare(conn, index, question, max_rounds, max_places, max_rows,
              fewshot="", tool_examples=False, reviewer=False,
              state_objective=False, subgoals=False, subgoal_status=False,
              path_tool=False, answer_gate=False, answer_critic=False,
-             rerank=False):
+             rerank=False, name_ids=False):
     """The state and runtime config a run needs. Shared by answer() and stream()."""
     session = Session(question=question)
     if chat is None:
@@ -2105,7 +2166,7 @@ def _prepare(conn, index, question, max_rounds, max_places, max_rows,
                                   question_of=lambda: question),
         "tools": [{"type": "function", "function": spec}
                   for spec in tools_for(answer_contract, contract, simple_answer,
-                                        path_tool)],
+                                        path_tool, name_ids)],
     }
     # WHICH CONTRACT, not "was the v2 flag passed". These are not the same
     # thing and the difference silently disabled half of v3.
@@ -2228,6 +2289,7 @@ def stream(
     answer_gate: bool = False,
     answer_critic: bool = False,
     rerank: bool = False,
+    name_ids: bool = False,
 ):
     """Yield `(node_name, session)` after each node completes.
 
@@ -2245,7 +2307,7 @@ def stream(
                                       fewshot, tool_examples, reviewer,
                                       state_objective, subgoals, subgoal_status,
                                       path_tool, answer_gate, answer_critic,
-                                      rerank)
+                                      rerank, name_ids)
     started = time.perf_counter()
     app = graph_module.build(checkpointer=checkpointer)
     for update in app.stream(state, config=config, stream_mode="updates"):
@@ -2284,6 +2346,7 @@ def answer(
     answer_gate: bool = False,
     answer_critic: bool = False,
     rerank: bool = False,
+    name_ids: bool = False,
 ) -> Session:
     """Answer one question, returning the answer and the whole trace.
 
@@ -2309,7 +2372,7 @@ def answer(
                                       fewshot, tool_examples, reviewer,
                                       state_objective, subgoals, subgoal_status,
                                       path_tool, answer_gate, answer_critic,
-                                      rerank)
+                                      rerank, name_ids)
     graph_module.build(checkpointer=checkpointer).invoke(state, config=config)
 
     session.seconds = time.perf_counter() - started

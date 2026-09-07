@@ -467,6 +467,7 @@ def execute(state: PlannerState, config=None) -> PlannerState:
                                 "reason=not_in_graph.")})
                 continue
 
+            session.answer_syntax = "tool_call"
             session.answer = str(args.get("text", "")).strip()
             session.answerable = bool(args.get("answerable", True))
             session.reason = claimed
@@ -639,6 +640,7 @@ def finish(state: PlannerState, config=None) -> PlannerState:
 
     if state.get("_prose_answer"):
         from hepcoveragekg.query import planner as _p
+        session.answer_syntax = _p.answer_syntax(session.answer)
         harvested = _p.harvest_answer_args(session.answer)
         if harvested:
             session.reason = str(harvested.get("reason") or session.reason or "")

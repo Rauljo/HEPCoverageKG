@@ -4686,3 +4686,49 @@ arm since the contract landed needs re-reading in that light, and the D-115
 comparison in particular: free-SQL scored higher set F1 while the typed
 system's answers were being taken from its prose rather than its answer call.
 Whether that gap survives the fix is the first thing to re-run.
+
+## D-117 — the prompt told the model not to write the one thing we score
+
+Raul: "maybe changing something in the prompt to ask for a specified
+notation?" -- and "we can still be checking for other notations that may be
+still being used". Both, and the second is the one that keeps working.
+
+WHAT THE PROMPT SAYS. `tools_for` rewrites the `answer` schema for v2 and v3:
+
+    "the answer, in prose. Cite the set of papers in `papers_from` rather than
+     writing arXiv ids into this text."
+
+`text` is the ONLY field `set_f1` and `judged_set_f1` read. So the system has
+been instructed away from the one thing that scores, and pointed instead at a
+citation that resolved on 7% of answers (D-116). Every "the answer named
+nothing" finding in D-107 was partly this.
+
+AN ARM, NOT A FIX. `--name-ids` reverses the instruction and gives an example.
+It is not made the v3 default: v3 is what every recent result was measured on,
+and rewording it silently is the D-062 failure -- a one-line prompt change that
+moved the control while an arm was being read. `test_the_v1_tool_schema_is_frozen`
+caught exactly that on the first attempt here, which is the second time that
+test has earned itself.
+
+Prior evidence the lever works: in D-107's decomposition `--simple-answer`,
+which asks for a literal id list instead of a citation, had the highest print
+rate of any arm -- 0.81 against 0.65 for the control.
+
+AND KEEP WATCHING THE NOTATIONS, because the prompt will not hold. Four forms
+observed, from two models:
+
+    json         `{"text": ...}` anywhere, however wrapped     QwQ, qwen3-32b
+    attrs        `<answer text="..." reason="answered"/>`      QwQ
+    tag_per_arg  `<papers_from>set_1</papers_from>`            qwen3-32b
+    prose        ids in the text, no structure                 both
+
+`answer_syntax()` classifies each answer and the result travels in the run
+record, so a fifth form arrives as a number rather than as a week of confusing
+results. `harvest_answer_args` reads the arguments BY NAME out of any of them,
+which is what survives a new model; a recogniser built from a list of observed
+forms does not.
+
+THE ORDER MATTERS. The harvest is a parser: it costs nothing, cannot regress,
+and works whatever the model does. The prompt is a behaviour change that has to
+be measured and can be undone by the next model. So the harvest is the floor
+and the prompt is the arm, not the other way round.

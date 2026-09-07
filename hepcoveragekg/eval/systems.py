@@ -90,6 +90,8 @@ class Answer:
     # `gate_failed` whether it stayed broken after being asked once.
     named_ids: int = 0
     gate_kind: str = ""
+    #: Which notation the answer call was written in (D-116).
+    answer_syntax: str = ""
     gate_retried: bool = False
     gate_failed: bool = False
     stopped_because: str = ""
@@ -378,6 +380,7 @@ def from_session(session, conn=None) -> Answer:
         nudged=bool(getattr(session, "nudged", False)),
         named_ids=len(set(_ARXIV_IN_TEXT.findall(session.answer or ""))),
         gate_kind=getattr(session, "answer_gate_kind", "") or "",
+        answer_syntax=getattr(session, "answer_syntax", "") or "",
         # HOW THE RUN ENDED. A Session field that never reached the record, so
         # "the model answered without calling answer()" was invisible in every
         # run to date and had to be inferred from the shape of the prose.

@@ -593,6 +593,7 @@ def _cmd_eval(args) -> int:
                 answer_gate=args.answer_gate,
                 answer_critic=args.answer_critic,
                 rerank=args.rerank,
+                name_ids=args.name_ids,
             )
         system = make_system()
     else:
@@ -837,6 +838,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_eval.add_argument("--tool-examples", action="store_true",
                         help="planner: attach one real worked call per tool, "
                              "mined from runs that answered correctly")
+    p_eval.add_argument("--name-ids", action="store_true",
+                        help="planner: ask the answer to WRITE the arXiv ids "
+                             "into `text`. v3 currently says the opposite -- "
+                             "cite a set instead of writing ids -- and `text` "
+                             "is the only field the set scorers read (D-117)")
     p_eval.add_argument("--rerank", action="store_true",
                         help="planner: order candidates BEST FIRST instead of "
                              "dropping them. Alone it costs nothing -- it uses "
