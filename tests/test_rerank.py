@@ -203,3 +203,47 @@ def test_a_usable_ranking_reorders_without_losing_rows():
     result.rows.sort(key=lambda r: rank_of.get(str(r.get("paper_id")), 10 ** 6))
     assert [r["paper_id"] for r in result.rows] == ranking.order
     assert len(result.rows) == len(papers), "ranking must not remove a row"
+
+
+# --------------------------------------------------------------------------
+# the cut is at the render site, so the order is decided there (D-118 class B)
+# --------------------------------------------------------------------------
+
+def test_order_by_rung_puts_exact_first_and_unrelated_last():
+    from hepcoveragekg.query import planner as P
+    rows = [{"entity_id": "u", "bears_on": "unrelated"},
+            {"entity_id": "b", "bears_on": "broader"},
+            {"entity_id": "n"},                          # unjudged
+            {"entity_id": "e", "bears_on": "exact"}]
+    P.order_by_rung(rows)
+    assert [r["entity_id"] for r in rows] == ["e", "b", "n", "u"]
+
+
+def test_order_by_rung_is_stable_and_a_noop_without_verdicts():
+    from hepcoveragekg.query import planner as P
+    rows = [{"entity_id": "c"}, {"entity_id": "a"}, {"entity_id": "b"}]
+    P.order_by_rung(rows)
+    assert [r["entity_id"] for r in rows] == ["c", "a", "b"], "retrieval order kept"
+    rows = [{"entity_id": "x", "bears_on": "exact"}, {"entity_id": "y", "bears_on": "exact"}]
+    P.order_by_rung(rows)
+    assert [r["entity_id"] for r in rows] == ["x", "y"], "ties keep retrieval order"
+
+
+def test_the_render_site_reorders_only_under_rerank():
+    """An exact hit past the window must be shown; an unrelated one inside it
+    must not push it out. Membership unchanged either way."""
+    import json
+    from hepcoveragekg.query import graph as G, planner, templates
+    rows = [{"entity_id": f"u{i}", "label": f"u{i}", "kind": "k", "bears_on": "unrelated"} for i in range(3)] \
+         + [{"entity_id": "gold", "label": "gold", "kind": "k", "bears_on": "exact"}]
+    def execute(name, args): return templates.QueryResult(shape="search", rows=list(rows))
+    for rerank in (False, True):
+        session = planner.Session(question="q")
+        state = {"session": session, "messages": [], "round": 1, "max_rounds": 6,
+                 "max_places": 8, "max_rows": 2, "last_content": "",
+                 "pending_calls": [{"id": "1", "name": "search",
+                                    "arguments": json.dumps({"text": "q"})}]}
+        G.execute(state, {"configurable": {"execute": execute, "tools": [], "chat": None,
+                                           "contract": "v3", "rerank": rerank}})
+        shown = state["messages"][-1]["content"]
+        assert ("gold" in shown) == rerank, f"rerank={rerank}: window={shown[:120]!r}"

@@ -1315,6 +1315,22 @@ def _collect_ids(rows: list[dict], note: str) -> set[str]:
     return found
 
 
+#: Rung -> sort key. Rows without a verdict sort after `broader` and before
+#: `unrelated`: an unjudged candidate is unknown, a judged-unrelated one is not.
+_RUNG_ORDER = {"exact": 0, "broader": 1, None: 2, "unrelated": 3}
+
+
+def order_by_rung(rows: list) -> None:
+    """Stable in-place sort of entity rows by the critic's `bears_on` rung.
+
+    A no-op when no row carries a verdict, so it is safe to call on every
+    result. Stable, so retrieval order (itself a weak ranking) breaks ties.
+    """
+    if not any(isinstance(r, dict) and "bears_on" in r for r in rows):
+        return
+    rows.sort(key=lambda r: _RUNG_ORDER.get(r.get("bears_on") if isinstance(r, dict) else None, 2))
+
+
 def _render_rows(rows: list[dict], max_rows: int) -> str:
     """Results as compact text for the planner's context.
 
@@ -1612,9 +1628,14 @@ def build_executor(conn, index, sets: Optional[dict] = None,
             return result
         if tool == "contents_of":
             papers = args.get("paper_ids") or args.get("paper_id") or []
+            # Same truncation, same fix as papers_of: contents_of rows carry a
+            # paper_id and are cut at max_rows in retrieval order.
             if isinstance(papers, str):
                 papers = [papers]
-            return templates.contents_of(conn, papers, args.get("predicate"))
+            result = templates.contents_of(conn, papers, args.get("predicate"))
+            if rank_papers is not None and result.rows and len(result.rows) > 1:
+                result = rank_papers(question_of(), result)
+            return result
         if tool == "facets":
             values = args.get("values") or args.get("value") or []
             if isinstance(values, str):
@@ -1637,6 +1658,10 @@ def build_executor(conn, index, sets: Optional[dict] = None,
                     summary = critic_mod.facet_summary(reading)
                     if summary:
                         result.note = f"{result.note} {summary}".strip()
+            # facets found 79 of Gabriel's gold papers to search's 52 (D-118) and
+            # is cut at max_rows like everything else; rank its paper rows too.
+            if rank_papers is not None and result.rows and len(result.rows) > 1:
+                result = rank_papers(question_of(), result)
             return result
         if tool == "facet_entities":
             value = args.get("value")
