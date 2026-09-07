@@ -4732,3 +4732,60 @@ THE ORDER MATTERS. The harvest is a parser: it costs nothing, cannot regress,
 and works whatever the model does. The prompt is a behaviour change that has to
 be measured and can be undone by the next model. So the harvest is the floor
 and the prompt is the arm, not the other way round.
+
+## D-118 — Gabriel's questions, replayed: retrieval and the handoff lose the same amount
+
+Wave-1 controls (54251/54252), every tool call replayed against the DIAS
+database because stored previews were empty (see the instrumentation branch).
+188 gold instances over 9 questions x 2 controls, one errored record excluded.
+
+    named correctly                    59   31%
+    reached, not named (handoff)       67   36%
+    in the graph, never reached        62   33%
+    not in the graph                    0
+
+D-104's "retrieval is at 0.96, the whole loss is the handoff" was measured on
+synthetic questions whose gold comes from the graph. On the physicist's
+questions retrieval misses a third -- and of those 62 misses, 44 sit on papers
+that CARRY an entity with the concept. The graph has it; search does not find
+it. 10 are in a quote but no entity; 8 are absent.
+
+By tool, gold papers reached: facets 79, search 52, subjects_of 38, papers_of 7.
+facets found more gold than search and was invisible to every reach metric.
+
+PER QUESTION -- the failure is different each time, which is the finding:
+
+  gf-05  Higgs candidate     reach 2/16. 13 of 14 misses carry `H->bb candidate`,
+                             `Diphoton system (H→γγ candidate)`, `Large-R jet
+                             (H→bḇ candidate)`. Question says Higgs, labels say H,
+                             in four notations. D-087 on a real question.
+  gf-08  ee OR mumu          reach 24/24, named 1. subjects_of returned 201 and
+                             224 rows; the model saw 25. Pure truncation.
+  gf-07  ttZ + CR            reach 8/10, named 0 (or 3 wrong). search 27,
+                             subjects_of 52 rows. Truncation + wrong picks.
+  gf-01-condition / -met     reach 11/11 and 3/3, named 1 each, no step over 25
+                             rows. "18 analyses use b-tagged jets" plus three
+                             examples. Summarise-instead-of-list.
+  gf-02  ABCD/sideband/matrix reach 6/11, named 6 -- perfect handoff. All 5
+                             misses are `Matrix method ...` labels. The model
+                             searched ABCD; the question named three concepts.
+  gf-04  unfolding           reach 10/18, named 10 -- perfect handoff. Misses:
+                             3 concept-absent, 3 quote-only (TUnfold in text),
+                             2 entity-present. Mostly a graph gap.
+  gf-03  HistFitter          reach 4/5, named 4. One quote-only miss.
+  gf-01  b-jets AND MET,     reach 7/8, named 6, EIGHT false positives -- and all
+         searches            eight are category=search, like the true positives.
+                             The facet tags are on all 14; Gabriel says 8 do not
+                             REQUIRE both in the selection. Tag ≠ selection
+                             (D-099, now located). No query arm fixes this.
+
+TWO CONSEQUENCES. The handoff loss is not universal: gf-02 and gf-04 hand off
+perfectly, gf-08 loses 23/24, and the difference is whether the result fit in
+25 rows. "The handoff" is really TRUNCATION, a much narrower claim. And every
+arm now has a named failure:
+
+    surface-form miss, entity present   44   encoder / aliases / multi-search
+    truncation at 25 rows               31   rerank, papers_from, max_rows
+    summarise instead of list           12   --name-ids, gate
+    quote-only extraction gap           10   --index-quotes
+    tag ≠ selection (FP)                 8   graph precision, not a query fix
