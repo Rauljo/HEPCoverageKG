@@ -4834,3 +4834,31 @@ Still uncovered: `subjects_of` rows are entities with no critic verdict (the
 critic runs only on search). gf-08's 224-row truncation was there. Options are
 a rung by paper overlap with the kept set, or the graded judge on labels; not
 built until the cheaper levers (`--max-rows`, rung ordering) are measured.
+
+## D-121 — on Gabriel's questions the index is not the bottleneck; every retrieval miss is in the query
+
+Offline bench, no LLM, concept queries, limit 60, DIAS database, 2x2 over the
+index variants:
+
+    index                  gold reached   of the 31 papers never reached live
+    values=0 quotes=0        105/106              30/31
+    values=1 quotes=0        105/106              30/31
+    values=0 quotes=1        105/106              30/31
+    values=1 quotes=1        104/106              30/31
+
+`--index-values` and `--index-quotes` change nothing here. The 10 misses D-118
+called "quote-only" were quote-only FOR THE KEYWORD; the papers themselves are
+reachable through other entities they carry. D-085's 31% (values) was a real
+effect on a different question set and stands; it does not transfer to these.
+
+With D-119 this closes classes A and D together: the surface forms are there,
+the retriever finds them, and the 62 "in the graph, never reached" gold papers
+are lost between the question and the search call --
+
+    the `kind` filter starving a query          gf-05   13    --kind-fallback
+    one facet where the question named three    gf-02    5    multi-concept search
+    the model typing one concept, not the set   (as-typed 88% vs concept 99%)
+
+"What is missing for retrieval to be perfect" on these questions is therefore
+not coverage or embeddings: it is that the agent issues one narrow query where
+the question implies several broad ones. Query formulation, not the index.
