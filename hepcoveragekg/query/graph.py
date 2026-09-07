@@ -467,7 +467,6 @@ def execute(state: PlannerState, config=None) -> PlannerState:
                                 "reason=not_in_graph.")})
                 continue
 
-            session.answer_syntax = "tool_call"
             session.answer = str(args.get("text", "")).strip()
             session.answerable = bool(args.get("answerable", True))
             session.reason = claimed
@@ -638,9 +637,17 @@ def finish(state: PlannerState, config=None) -> PlannerState:
     runtime = _runtime(config)
     session = state["session"]
 
+    # CLASSIFIED HERE, FOR EVERY EXIT. Setting it in the answer branch recorded
+    # "tool_call" for runs that ENTERED that branch and then left through the
+    # prose path anyway -- a gate retry or a refused citation both `continue`.
+    # Measured on a control run: 17 records marked tool_call against 8 that
+    # actually ended in an `answer` call.
+    from hepcoveragekg.query import planner as _p
+    session.answer_syntax = ("tool_call"
+                             if not state.get("_prose_answer")
+                             else _p.answer_syntax(session.answer))
+
     if state.get("_prose_answer"):
-        from hepcoveragekg.query import planner as _p
-        session.answer_syntax = _p.answer_syntax(session.answer)
         harvested = _p.harvest_answer_args(session.answer)
         if harvested:
             session.reason = str(harvested.get("reason") or session.reason or "")
