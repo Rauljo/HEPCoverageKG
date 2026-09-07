@@ -168,7 +168,9 @@ def plan(state: PlannerState, config=None) -> PlannerState:
     message = response.choices[0].message
     calls = list(getattr(message, "tool_calls", None) or [])
     if not calls:
-        calls = planner._recover_tool_calls(message.content or "")
+        known = {t.get("function", {}).get("name")
+                 for t in (tools or []) if isinstance(t, dict)}
+        calls = planner._recover_tool_calls(message.content or "", known - {None})
         if calls:
             session.recovered_calls += len(calls)
             logger.info(f"round {state['round']}: recovered {len(calls)} tool call(s) "

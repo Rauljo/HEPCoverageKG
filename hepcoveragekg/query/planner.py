@@ -908,6 +908,24 @@ def _values_in(rows: list[dict]) -> set[str]:
 _TEXT_TOOL_CALL = re.compile(
     r"<tool_call>\s*(\{.*?\})\s*(?:</tool_call>|$)", re.DOTALL)
 
+# THE SAME CALL, WRITTEN AS AN XML TAG. Measured 2026-09-07 across three runs:
+# of the 150 answers per run that never reached `answer()`, 115 (77%) end in
+#
+#     <answer text="18 analyses use b-tagged jets ..." papers_from="the facets
+#             result" reason="answered" answerable="true"/>
+#
+# which is an `answer` call in everything but syntax. `_TEXT_TOOL_CALL` wants
+# `<tool_call>{json}</tool_call>` and matches none of it, so the whole message
+# fell through to `after_plan`, where `last_content` becomes the answer -- raw,
+# uncited, with no `answer_papers` and no gate.
+#
+# That single miss is the root of four separate findings: the gate firing twice
+# in 164 questions (D-108), `cited` empty in 59 of 60 answers (D-107), the
+# answer-critic reaching 9% of its chances, and the citation mechanism reading
+# as dead. The model was calling `answer` about 78% of the time; we recorded 7%.
+_XML_TOOL_CALL = re.compile(r"<([a-z_][a-z0-9_]*)\s+([^>]*?)/?>", re.IGNORECASE)
+_XML_ATTR = re.compile(r'([a-z_][a-z0-9_]*)\s*=\s*"([^"]*)"', re.IGNORECASE)
+
 
 class _RecoveredCall:
     """Shaped like an SDK tool call, so the loop needs no special case."""
@@ -918,10 +936,18 @@ class _RecoveredCall:
         self.function = SimpleNamespace(name=name, arguments=arguments)
 
 
-def _recover_tool_calls(content: str) -> list:
-    """Tool calls the model wrote into the message body."""
+def _recover_tool_calls(content: str, known: Optional[set] = None) -> list:
+    """Tool calls the model wrote into the message body, in either syntax.
+
+    `known` is the set of tool names this run offers. It is required for the
+    XML form and ignored for the JSON one: `<tool_call>{...}</tool_call>` is
+    unambiguous, while `<answer .../>` is only a tool call because `answer` is
+    a tool -- without the check, any `<b ...>` or `<sub ...>` in prose would be
+    recovered as one.
+    """
+    content = content or ""
     out: list = []
-    for i, blob in enumerate(_TEXT_TOOL_CALL.findall(content or "")):
+    for i, blob in enumerate(_TEXT_TOOL_CALL.findall(content)):
         try:
             parsed = json.loads(blob)
         except json.JSONDecodeError:
@@ -932,6 +958,21 @@ def _recover_tool_calls(content: str) -> list:
         args = parsed.get("arguments", parsed.get("parameters", {}))
         out.append(_RecoveredCall(
             name, args if isinstance(args, str) else json.dumps(args), i))
+    if out or not known:
+        return out
+    # THE XML FORM, only when the JSON form found nothing -- a message holding
+    # both is the model correcting itself, and the explicit call wins.
+    for j, (tag, attrs) in enumerate(_XML_TOOL_CALL.findall(content)):
+        if tag.lower() not in known:
+            continue
+        args: dict = {}
+        for key, value in _XML_ATTR.findall(attrs):
+            low = value.strip().lower()
+            args[key] = (True if low == "true" else
+                         False if low == "false" else value)
+        if not args:
+            continue
+        out.append(_RecoveredCall(tag.lower(), json.dumps(args), 100 + j))
     return out
 
 

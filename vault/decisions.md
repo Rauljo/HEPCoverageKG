@@ -4635,3 +4635,54 @@ planner's path. The free-SQL system builds its Answer separately and never
 sets it, so `answer_names_papers` reads 12-15% for free-SQL when the scorer
 found ids in the text of 87-89 of its set answers. The field is a planner-only
 measurement and any cross-system table using it is wrong.
+
+## D-116 — the model was calling answer() all along, as an XML tag
+
+Chasing why 70-78% of answers never reached `answer()`. They did. We were not
+listening.
+
+Verbatim tail of run 54242, gabriel-gf-01-condition:
+
+    <answer text="18 analyses (papers) use b-tagged jets in their event
+            selection, identified via facets matching the 'BJet' tag."
+            papers_from="the facets result" reason="answered"
+            answerable="true"/>
+
+That is an `answer` call in everything but syntax. `_TEXT_TOOL_CALL` matches
+`<tool_call>{json}</tool_call>` and nothing else, so it matched none of these
+and the whole message fell through to `after_plan`, where `last_content`
+becomes the answer -- raw, uncited, no `answer_papers`, no gate, no critic.
+
+Measured over three 164-question runs, of the ~150 answers each that never
+reached `answer()`:
+
+    <answer ...> XML tag, missed      115 / 107 / 115   = 71-77%
+    no call at all, plain prose        34 /  40 /  33   = 22-27%
+    bare {"name":"answer"} json         1 /   3 /   2   =  1-2%
+
+So the model called `answer` on roughly 78% of questions. We recorded 7%.
+
+ONE MISSED SYNTAX IS THE ROOT OF FOUR SEPARATE FINDINGS:
+
+    D-107  `cited` empty in 59 of 60 Gabriel answers
+    D-107  answers that "name nothing" -- they named plenty, in a tag
+    D-108  the gate firing twice in 164 questions
+    D-113  the answer-critic reaching 9% of its chances
+
+Every one of those was read as a property of the system. All four are one
+regex. The citation mechanism, the gate, the answer-critic and `answer_papers`
+were each doing exactly what they were built to do, on the 7% of answers that
+reached them.
+
+FIXED: `_recover_tool_calls` takes the run's tool names and recovers the XML
+form, but only when the JSON form found nothing (a message holding both is the
+model correcting itself, and the explicit call wins) and only for tags that
+name an actual tool -- without that check any `<sub scale="1">` in prose
+becomes a call.
+
+WHAT THIS INVALIDATES. Nothing measured is wrong, but much of it was measured
+on a system whose answer contract was unreachable 93% of the time. Every typed
+arm since the contract landed needs re-reading in that light, and the D-115
+comparison in particular: free-SQL scored higher set F1 while the typed
+system's answers were being taken from its prose rather than its answer call.
+Whether that gap survives the fix is the first thing to re-run.
