@@ -923,8 +923,40 @@ _TEXT_TOOL_CALL = re.compile(
 # in 164 questions (D-108), `cited` empty in 59 of 60 answers (D-107), the
 # answer-critic reaching 9% of its chances, and the citation mechanism reading
 # as dead. The model was calling `answer` about 78% of the time; we recorded 7%.
-_XML_TOOL_CALL = re.compile(r"<([a-z_][a-z0-9_]*)\s+([^>]*?)/?>", re.IGNORECASE)
+# THREE SYNTAXES, not two. Sampling the misses after the first fix showed a
+# third form, and it is the commonest of all: the tool name as a WRAPPER round
+# the JSON arguments.
+#
+#     <answer>
+#     {"text": "23 analyses require missing transverse momentum ...",
+#      "papers_from": "the facets response", "reason": "answered"}
+#     </answer>
+#
+# Attribute form second, and note why the naive `[^>]*` regex only caught a
+# third of those: attribute VALUES carry physics. `text="H->bb candidate"` has
+# a `>` in it, so a character class excluding `>` ends the tag mid-value, the
+# attributes fail to parse, and the call is dropped. The extent of the tag has
+# to be found with the quoting respected, which is what `_xml_tag_end` does.
+_XML_WRAPPED = re.compile(
+    r"<([a-z_][a-z0-9_]*)\s*>\s*(\{.*?\})\s*</\1\s*>", re.IGNORECASE | re.DOTALL)
+_XML_OPEN = re.compile(r"<([a-z_][a-z0-9_]*)(?=[\s/>])", re.IGNORECASE)
 _XML_ATTR = re.compile(r'([a-z_][a-z0-9_]*)\s*=\s*"([^"]*)"', re.IGNORECASE)
+
+
+def _xml_tag_end(text: str, start: int) -> int:
+    """Index just past the `>` that closes the tag opened at `start`.
+
+    Quote-aware, because an attribute value like `text="H->bb candidate"`
+    contains the character a naive scan stops on.
+    """
+    in_quote = False
+    for i in range(start, len(text)):
+        ch = text[i]
+        if ch == '"':
+            in_quote = not in_quote
+        elif ch == ">" and not in_quote:
+            return i + 1
+    return -1
 
 
 class _RecoveredCall:
@@ -960,19 +992,55 @@ def _recover_tool_calls(content: str, known: Optional[set] = None) -> list:
             name, args if isinstance(args, str) else json.dumps(args), i))
     if out or not known:
         return out
-    # THE XML FORM, only when the JSON form found nothing -- a message holding
+    # THE XML FORMS, only when the JSON form found nothing -- a message holding
     # both is the model correcting itself, and the explicit call wins.
-    for j, (tag, attrs) in enumerate(_XML_TOOL_CALL.findall(content)):
+    #
+    # Wrapper form first: `<answer>{json}</answer>` carries real JSON, so it is
+    # both commoner and more trustworthy than attributes scraped off a tag.
+    seen: set = set()
+    for j, (tag, blob) in enumerate(_XML_WRAPPED.findall(content)):
         if tag.lower() not in known:
             continue
-        args: dict = {}
-        for key, value in _XML_ATTR.findall(attrs):
+        try:
+            parsed = json.loads(blob)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(parsed, dict):
+            continue
+        # `{"name": ..., "arguments": ...}` inside the wrapper is the JSON form
+        # wearing a tag; anything else IS the argument object.
+        args = parsed.get("arguments") if "name" in parsed and "arguments" in parsed \
+            else parsed
+        name = str(parsed.get("name") or tag).lower()
+        if name not in known:
+            continue
+        seen.add(name)
+        out.append(_RecoveredCall(
+            name, args if isinstance(args, str) else json.dumps(args), 100 + j))
+    if out:
+        return out
+
+    pos, j = 0, 0
+    while True:
+        match = _XML_OPEN.search(content, pos)
+        if not match:
+            break
+        tag = match.group(1).lower()
+        end = _xml_tag_end(content, match.end())
+        if end < 0:
+            break
+        pos = end
+        if tag not in known:
+            continue
+        args = {}
+        for key, value in _XML_ATTR.findall(content[match.end():end]):
             low = value.strip().lower()
             args[key] = (True if low == "true" else
                          False if low == "false" else value)
         if not args:
             continue
-        out.append(_RecoveredCall(tag.lower(), json.dumps(args), 100 + j))
+        out.append(_RecoveredCall(tag, json.dumps(args), 200 + j))
+        j += 1
     return out
 
 
