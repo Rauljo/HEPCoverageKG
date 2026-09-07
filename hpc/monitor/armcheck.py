@@ -83,8 +83,14 @@ MECHANISMS = {
     "rerank": (
         "rerank",
         lambda a: sum(x.get("graded", 0) for x in a.get("rankings", [])),
+        # ONLY THE CALLS IT COULD ACT ON. `rank_papers` returns early below two
+        # papers -- there is no order to change -- and on 54248 thirty of
+        # forty-three `papers_of` calls came back with fewer than two. Counting
+        # those as chances put the rate at 49% against a 50% threshold and
+        # reported a working mechanism as broken. Against calls it could act
+        # on, it fires on every one.
         lambda a, r: sum(1 for s in a.get("steps", [])
-                         if s.get("tool") == "papers_of"),
+                         if s.get("tool") == "papers_of" and (s.get("rows") or 0) >= 2),
     ),
 }
 
