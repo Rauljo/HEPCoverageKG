@@ -297,42 +297,52 @@ def test_a_cited_answer_is_not_named_none():
 # the path the gate could not see
 # --------------------------------------------------------------------------
 
+def _prose(last_content, reason="", cfg=None):
+    """Route a prose answer and then service it, as the graph does."""
+    from hepcoveragekg.query import graph as G
+
+    session = planner.Session(question="q")
+    session.reason = reason
+    session.steps.append(planner.Step(1, "search", {}, rows=5))
+    state = {"session": session, "pending_calls": [],
+             "last_content": last_content}
+    assert G.after_plan(state) == "finish"
+    assert state.get("_prose_answer"), "the exit must be marked for `finish`"
+    G.finish(state, cfg or {"configurable": {}})
+    return session
+
+
 def test_the_gate_also_runs_when_the_model_never_called_answer():
     """`after_plan` turns `last_content` into the answer when the model writes
     prose and makes no tool call -- and for a reasoning model `last_content` is
     its chain of thought. 23 of 125 set answers in the D-108 gate arm reached
     the scorer that way and the gate never saw one of them."""
-    from hepcoveragekg.query import graph as G
-
-    session = planner.Session(question="q")
-    session.steps.append(planner.Step(1, "search", {}, rows=5))
-    state = {"session": session, "pending_calls": [],
-             "last_content": "Okay, let's tackle this question step by step. "
-                             "First I need to find the analyses that ..."}
-    assert G.after_plan(state) == "finish"
-    assert session.answer_gate_kind == "silent"
-    assert session.answer_gate_failed, "it must be recorded, not silently scored"
+    s = _prose("Okay, let's tackle this question step by step. "
+               "First I need to find the analyses that ...")
+    assert s.answer_gate_kind == "silent"
+    assert s.answer_gate_failed, "it must be recorded, not silently scored"
 
 
 def test_that_path_is_clean_when_the_prose_does_name_papers():
-    from hepcoveragekg.query import graph as G
-
-    session = planner.Session(question="q")
-    session.steps.append(planner.Step(1, "search", {}, rows=5))
-    state = {"session": session, "pending_calls": [],
-             "last_content": "The analyses are 2004.14060 and 2006.05880."}
-    assert G.after_plan(state) == "finish"
-    assert not session.answer_gate_failed
-    assert session.answer_gate_kind == ""
+    s = _prose("The analyses are 2004.14060 and 2006.05880.")
+    assert not s.answer_gate_failed
+    assert s.answer_gate_kind == ""
 
 
 def test_an_abstention_on_that_path_is_still_exempt():
-    from hepcoveragekg.query import graph as G
+    s = _prose("The graph does not record this.", reason="not_in_graph")
+    assert not s.answer_gate_failed
 
-    session = planner.Session(question="q")
-    session.reason = "not_in_graph"
-    session.steps.append(planner.Step(1, "search", {}, rows=5))
-    state = {"session": session, "pending_calls": [],
-             "last_content": "The graph does not record this."}
-    G.after_plan(state)
-    assert not session.answer_gate_failed
+
+def test_arguments_written_as_prose_are_harvested(): 
+    """qwen3-32b, verbatim: one tag per argument, no answer call at all."""
+    s = _prose("18 analyses use b-tagged jets.\n\n"
+               "<papers_from>set_1</papers_from>\n<reason>answered</reason>")
+    assert s.reason == "answered"
+
+
+def test_a_harvested_abstention_is_honoured():
+    s = _prose('Nothing found. <answer text="none" answerable="false" '
+               'reason="not_in_graph"/>')
+    assert s.answerable is False and s.reason == "not_in_graph"
+    assert not s.answer_gate_failed, "an abstention names nothing, correctly"

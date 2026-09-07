@@ -968,6 +968,71 @@ class _RecoveredCall:
         self.function = SimpleNamespace(name=name, arguments=arguments)
 
 
+#: The `answer` tool's arguments, for harvesting them out of prose.
+ANSWER_ARGS = ("text", "papers_from", "value_from", "reason", "answerable", "papers")
+
+
+def harvest_answer_args(content: str) -> dict:
+    """The `answer` arguments a model wrote without calling `answer`.
+
+    STOP CHASING SYNTAXES. Three runs of QwQ produced `<answer .../>`,
+    `<answer>{json}</answer>` and bare JSON; one run of qwen3-32b added
+    `<answerable>{json}</answerable>` -- the tool's ARGUMENT name used as the
+    tag -- and `<papers_from>set_1</papers_from><reason>answered</reason>`,
+    one tag per argument. Each new model invents another, and a recogniser
+    built from a list of observed forms is a recogniser that fails on the next
+    model.
+
+    What does NOT vary is the argument NAMES: the model has the schema and
+    serialises it wrongly. So harvest by name, in any of:
+
+        <papers_from>set_1</papers_from>          tag per argument
+        <anything>{"papers_from": "set_1"}</...>  json in a wrapper
+        papers_from="set_1"                       attribute anywhere
+
+    Returns {} when nothing recognisable is there, which is the plain-prose
+    case and belongs to the gate, not here.
+    """
+    content = content or ""
+    out: dict = {}
+
+    # JSON anywhere, whatever wraps it. Later blobs win: a model that writes
+    # twice is correcting itself.
+    for blob in re.findall(r"\{[^{}]*\}", content, re.DOTALL):
+        try:
+            parsed = json.loads(blob)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict):
+            for key in ANSWER_ARGS:
+                if key in parsed:
+                    out[key] = parsed[key]
+
+    # One tag per argument. A tag whose body is JSON was a WRAPPER, not a
+    # value: qwen3-32b writes `<answerable>{"text": ..., "reason": ...}
+    # </answerable>`, and reading that body as the value of `answerable`
+    # turns it into False -- an abstention the model never made.
+    for key in ANSWER_ARGS:
+        hit = re.search(rf"<{key}\s*>(.*?)</{key}\s*>", content,
+                        re.IGNORECASE | re.DOTALL)
+        if not hit or key in out:
+            continue
+        body = hit.group(1).strip()
+        if body.startswith("{"):
+            continue
+        out[key] = body
+
+    # Attributes, anywhere in the message.
+    for key, value in _XML_ATTR.findall(content):
+        if key.lower() in ANSWER_ARGS and key.lower() not in out:
+            out[key.lower()] = value
+
+    for key in ("answerable",):
+        if isinstance(out.get(key), str):
+            out[key] = out[key].strip().lower() in ("true", "yes", "1")
+    return out
+
+
 def _recover_tool_calls(content: str, known: Optional[set] = None) -> list:
     """Tool calls the model wrote into the message body, in either syntax.
 

@@ -86,6 +86,10 @@ class PlannerState(TypedDict, total=False):
     # `after_plan` is a routing function and receives no config, so whether the
     # reviewer is on has to travel in state. Set by `plan` from runtime.
     _reviewing: bool
+    # Set by `after_plan` when the model answered in prose instead of
+    # calling `answer`. `finish` then applies what the answer branch would
+    # have: harvested arguments, citations, the gate, the critic.
+    _prose_answer: bool
 
 
 # --------------------------------------------------------------------------
@@ -613,16 +617,52 @@ def nudge(state: PlannerState) -> PlannerState:
     return state
 
 
-def finish(state: PlannerState) -> PlannerState:
+def finish(state: PlannerState, config=None) -> PlannerState:
     """Terminal. Verifies the answer against what the tools actually returned.
 
     Verification lives here rather than being left to the caller so that no
     answer can leave unchecked -- it is part of the machine, not a courtesy the
     caller extends.
+
+    It is also where an answer written as PROSE is serviced (D-116). The model
+    calls retrieval tools properly and improvises the answer call, differently
+    per model -- QwQ writes `<answer .../>` and `<answer>{json}</answer>`,
+    qwen3-32b writes `<answerable>{json}</answerable>` and one tag per
+    argument. Chasing each form with another regex fails on the next model, so
+    the arguments are harvested BY NAME and handed to exactly the code an
+    `answer` call would have reached.
     """
     from hepcoveragekg.query import verify
 
+    runtime = _runtime(config)
     session = state["session"]
+
+    if state.get("_prose_answer"):
+        from hepcoveragekg.query import planner as _p
+        harvested = _p.harvest_answer_args(session.answer)
+        if harvested:
+            session.reason = str(harvested.get("reason") or session.reason or "")
+            if "answerable" in harvested:
+                session.answerable = bool(harvested["answerable"])
+            if harvested.get("papers_from") or harvested.get("value_from"):
+                _p.resolve_citations(session, harvested,
+                                     _papers_resolver(runtime))
+            logger.info("harvested %s from an answer written as prose",
+                        sorted(harvested))
+        from hepcoveragekg.query import answer_gate as _ag
+        verdict = _ag.check(session.answer, session.answer_cited,
+                            session.answerable, session.reason)
+        session.answer_gate_kind = verdict.kind
+        if not verdict.ok:
+            # NOT retried: there is no tool call to reply to and the graph is
+            # already terminal. Recorded, which is the difference between a
+            # known rate and an invisible one.
+            session.answer_gate_failed = True
+            logger.warning("answer written as prose: %s, %d chars",
+                           verdict.kind, len(session.answer))
+        if runtime.get("answer_critic"):
+            _answer_critic(runtime, session)
+
     session.evidence_ids = sorted(set(session.evidence_ids))
     session.verification = verify.verify_session(session)
     return state
@@ -711,15 +751,13 @@ def after_plan(state: PlannerState) -> str:
     session.stopped_because = ("answered from memory, no tool calls"
                                if not session.steps
                                else "answered without calling answer()")
-    from hepcoveragekg.query import answer_gate as _ag
-    verdict = _ag.check(session.answer, session.answer_cited,
-                        session.answerable, session.reason)
-    session.answer_gate_kind = verdict.kind
-    if not verdict.ok:
-        session.answer_gate_failed = True
-        logger.warning("answer without answer(): %s -- %d chars of prose, no "
-                       "ids, scored as an answer", verdict.kind,
-                       len(session.answer))
+
+    # The gate, the citation resolver and the critic all need `runtime`, and a
+    # routing function receives no config -- the same constraint that put
+    # `_reviewing` in state. So this exit is MARKED here and serviced in
+    # `finish`, which does get config. Before D-116 it was serviced nowhere,
+    # and it is where about 70% of answers leave.
+    state["_prose_answer"] = True
     return "finish"
 
 
