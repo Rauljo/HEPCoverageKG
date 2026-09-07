@@ -4576,3 +4576,62 @@ queued.
 
 CONSEQUENCE, IMMEDIATE: 54194 -- the `--subgoals` arm whose result was still
 outstanding -- had a 100% defaulted critic. It is void, and no longer pending.
+
+## D-115 — the first noise floors, and free-SQL beats typed on set F1
+
+Runs 54242-48, 164 questions, QwQ, one worker per job, both systems with two
+identical controls. Every job passed armcheck on flags, error rate (0-2%) and
+critic defaulting (10-12%).
+
+THE NOISE FLOORS, which this project has never had for the typed system:
+
+    typed    set_f1     0.0006      <- usable
+    typed    judged_f1  0.0843      <- NOT usable for arms
+    free-sql set_f1     0.0534
+    free-sql judged_f1  0.1494
+
+`judged_f1` runs on Gabriel's nine questions and its floor is 0.084. Every arm
+difference this project has reported on that metric -- including D-096's
++0.038 for subgoal-status -- is inside it. `set_f1` is the metric that can
+carry an ablation; `judged_f1` can only carry a description.
+
+THE ARMS, against the control mean (* = outside the noise floor):
+
+    typed rerank        judged -0.043   set_f1 -0.030*
+    typed rerank+ac     judged -0.042   set_f1 -0.009*
+
+RERANKING HURT, and it is outside the floor, so it is real. It contradicts
+D-113's offline +0.063 and the difference is what was reordered: offline the
+ranking was over the papers THE ANSWER NAMED; `--rerank` reorders `set_N_kept`
+and the `papers_of` rows. Ordering the retrieval is not ordering the answer,
+and the offline result does not transfer to the place it was wired into.
+
+TYPED vs FREE-SQL, and free-SQL wins on the metric with a floor:
+
+    arm            set_f1   reach   via text  via a.papers  papers/ans
+    typed a         0.228   0.969      67          31          38.7
+    typed b         0.228   0.983      74          24          41.2
+    free-sql a      0.308   0.523      87          11           4.5
+    free-sql b      0.254   0.548      89           9           6.0
+
+It is not a scoring artefact, which was the first thing checked. `set_f1`
+falls back to `a.papers` when the text names nothing, and that fallback is the
+D-062 footprint trap -- but free-SQL barely uses it (9-11 of ~98) and its
+fallback set is 4.5-6.0 papers, an answer. TYPED uses it 24-31 times on a
+38-41 PAPER FOOTPRINT. So the typed system is being scored on its retrieval
+footprint a quarter of the time, and that is where its set F1 goes.
+
+Retrieval reach 0.97 against 0.52 makes the same point from the other side:
+the typed system finds nearly twice as much and converts it worse.
+
+BY QUESTION TYPE the two systems are not close, and they split cleanly:
+
+    tierA (36)   typed 0.73-0.77   free-sql 0.51-0.60    typed wins
+    tierB (34)   typed 0.21-0.28   free-sql 0.48-0.55    free-SQL wins
+    retrieval    0.21-0.24         0.23-0.27             flat
+
+CORRECTION TO THE RUN RECORD: `named_ids` is written by `from_session`, the
+planner's path. The free-SQL system builds its Answer separately and never
+sets it, so `answer_names_papers` reads 12-15% for free-SQL when the scorer
+found ids in the text of 87-89 of its set answers. The field is a planner-only
+measurement and any cross-system table using it is wrong.
