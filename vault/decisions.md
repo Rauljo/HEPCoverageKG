@@ -4811,3 +4811,26 @@ to the critic. Predicted offline, before building: 61 -> 74 of 79 (+13), gf-05
 
 An arm, default off: wave 2 must stay comparable with wave 1. To be confirmed
 live on Gabriel's questions via OpenRouter before promotion.
+
+## D-120 — decide the order where the cut is, and on every tool that found the gold
+
+D-118 replayed which tool actually reached Gabriel's gold papers: facets 79,
+search 52, subjects_of 38, papers_of 7. The rerank hook (D-113) covered
+papers_of only -- the tool that found the fewest.
+
+The cut is one place for every tool: `_render_rows` at `max_rows=25`, and rows
+arrive in retrieval order. Search rows already carry the critic's rung as
+`bears_on`; with 60 hits and a 25-row window an `exact` hit ranked 40th by
+BM25 is dropped while an `unrelated` one ranked 3rd is shown to the model.
+
+Under `--rerank` now: entity rows are stable-sorted by rung at the render site
+(exact, broader, unjudged, unrelated -- retrieval order breaks ties), and the
+graded paper ranker also runs on `facets` and `contents_of` results, not only
+`papers_of`. Membership, counts and sets are unchanged; only which side of the
+window a row lands on. Off by default; `--max-rows` is now a knob so the
+window itself can be an axis.
+
+Still uncovered: `subjects_of` rows are entities with no critic verdict (the
+critic runs only on search). gf-08's 224-row truncation was there. Options are
+a rung by paper overlap with the kept set, or the graded judge on labels; not
+built until the cheaper levers (`--max-rows`, rung ordering) are measured.
