@@ -4862,3 +4862,29 @@ are lost between the question and the search call --
 "What is missing for retrieval to be perfect" on these questions is therefore
 not coverage or embeddings: it is that the agent issues one narrow query where
 the question implies several broad ones. Query formulation, not the index.
+
+## D-122 — class B predicted offline: the window is the lever, ordering cannot be judged without the critic
+
+Every wave-1 control step whose result exceeded 25 rows and contained gold,
+replayed against the DIAS DB. Gold papers VISIBLE to the model (inside the
+first `max_rows` rows), summed over those steps:
+
+    max_rows        25      50     100     250
+    visible         81      94     101     108   of 108
+
+    gf-08 subjects_of (202 rows, 20 gold):   3 ->  8 -> 13 -> 20
+    gf-07 subjects_of ( 52 rows,  8 gold):   3 ->  7 ->  8 ->  8
+
+`--max-rows 100` recovers 20 of the 27 gold papers the 25-row window hides;
+250 recovers all. The window is the cheapest lever in the project and was not
+a knob until today.
+
+Rung/kept ORDERING showed no effect in this replay -- and that is not evidence
+against it. The replay ran with `critic=None`, so no `*_kept` set exists and
+the kept-signal had nothing to act on; and on `search` rows all gold was
+already inside the window (8/8, 24/24), so no ordering can add. D-113's offline
+result (F1 0.591 -> 0.654) stands; whether the live mechanism realises it can
+only be measured live, with the critic on.
+
+Order of live tests on the OpenRouter lane, cheapest first: `--max-rows 50` and
+`100` on gf-08/gf-07; then `--rerank` on top; then `--subgoals` on gf-02.
