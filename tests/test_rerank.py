@@ -247,3 +247,21 @@ def test_the_render_site_reorders_only_under_rerank():
                                            "contract": "v3", "rerank": rerank}})
         shown = state["messages"][-1]["content"]
         assert ("gold" in shown) == rerank, f"rerank={rerank}: window={shown[:120]!r}"
+
+
+def test_kept_entities_rank_ahead_when_rows_carry_no_verdict():
+    """subjects_of rows have no rung. An entity the critic already kept for this
+    question is known-relevant, not unknown (gf-08: 224 rows, no rungs)."""
+    from hepcoveragekg.query import planner as P
+    rows = [{"entity_id": "stranger"}, {"entity_id": "kept_one"}, {"entity_id": "other"}]
+    P.order_by_rung(rows, kept={"kept_one"})
+    assert [r["entity_id"] for r in rows] == ["kept_one", "stranger", "other"]
+
+
+def test_a_verdict_on_the_row_beats_the_kept_signal():
+    from hepcoveragekg.query import planner as P
+    rows = [{"entity_id": "kept_but_unrelated", "bears_on": "unrelated"},
+            {"entity_id": "kept_no_verdict"},
+            {"entity_id": "exact", "bears_on": "exact"}]
+    P.order_by_rung(rows, kept={"kept_but_unrelated", "kept_no_verdict"})
+    assert [r["entity_id"] for r in rows] == ["exact", "kept_no_verdict", "kept_but_unrelated"]

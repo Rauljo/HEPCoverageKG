@@ -578,7 +578,8 @@ def execute(state: PlannerState, config=None) -> PlannerState:
                 # an `unrelated` one ranked 3rd is shown. A stable sort by rung
                 # changes only which side of the window a row lands on --
                 # membership, counts and sets are untouched.
-                planner.order_by_rung(result.rows)
+                planner.order_by_rung(result.rows, kept={
+                    e for k, v in session.sets.items() if k.endswith("_kept") for e in v})
             body = planner._render_rows(result.rows, state["max_rows"])
             if result.note:
                 body += f"\n[{result.note}]"

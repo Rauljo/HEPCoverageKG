@@ -1320,15 +1320,32 @@ def _collect_ids(rows: list[dict], note: str) -> set[str]:
 _RUNG_ORDER = {"exact": 0, "broader": 1, None: 2, "unrelated": 3}
 
 
-def order_by_rung(rows: list) -> None:
-    """Stable in-place sort of entity rows by the critic's `bears_on` rung.
+def order_by_rung(rows: list, kept: Optional[set] = None) -> None:
+    """Stable in-place sort of entity rows by relevance, best first.
 
-    A no-op when no row carries a verdict, so it is safe to call on every
-    result. Stable, so retrieval order (itself a weak ranking) breaks ties.
+    Two signals, both free. `bears_on` is the critic's rung and rides on search
+    rows. `kept` is the union of every `*_kept` set this run has built: an
+    entity the critic already judged relevant for THIS question, when it
+    surfaces again from `subjects_of` or `describe` with no verdict of its
+    own, is not an unknown -- it is a known-relevant. gf-08's 224-row
+    `subjects_of` result had no rungs at all; this is what orders it.
+
+    A no-op when neither signal applies. Stable, so retrieval order (itself a
+    weak ranking) breaks ties.
     """
-    if not any(isinstance(r, dict) and "bears_on" in r for r in rows):
+    kept = kept or set()
+    def key(r):
+        if not isinstance(r, dict):
+            return 2
+        if "bears_on" in r:
+            return _RUNG_ORDER.get(r["bears_on"], 2)
+        if kept and r.get("entity_id") in kept:
+            return 1                         # known-relevant, ranks with `broader`
+        return 2
+    if not any(isinstance(r, dict) and ("bears_on" in r or (kept and r.get("entity_id") in kept))
+               for r in rows):
         return
-    rows.sort(key=lambda r: _RUNG_ORDER.get(r.get("bears_on") if isinstance(r, dict) else None, 2))
+    rows.sort(key=key)
 
 
 def _render_rows(rows: list[dict], max_rows: int) -> str:
