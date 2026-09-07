@@ -339,8 +339,14 @@ def from_session(session, conn=None) -> Answer:
         answered=bool(session.answerable),
         papers=cited_papers or _papers_of(conn, entity_ids),
         value=getattr(session, "answer_value", None),
+        # `preview` TRAVELS. It was recorded on the Session (graph.py sets
+        # body[:200]) and dropped here, so no run file could say what any tool
+        # returned; diagnosing Gabriel's questions on 2026-09-08 needed a full
+        # replay against the DIAS database because 406 stored steps carried
+        # 406 empty previews.
         steps=[{"round": s.round, "tool": s.tool, "args": s.args, "rows": s.rows,
                 "error": s.error, "seconds": round(s.seconds, 3),
+                "preview": s.preview,
                 **({"redirected_from": s.redirected_from} if s.redirected_from else {})}
                for s in session.steps],
         sets={k: list(v) for k, v in session.sets.items()},

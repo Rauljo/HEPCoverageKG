@@ -1308,6 +1308,9 @@ def _collect_ids(rows: list[dict], note: str) -> set[str]:
     """Entity ids a result handed back, from its rows and its note."""
     found = {str(r[k]) for r in rows for k in _ID_COLUMNS
              if isinstance(r, dict) and r.get(k)}
+    # A row may carry a LIST of ids (facets: every entity that earned the tag).
+    found |= {str(e) for r in rows if isinstance(r, dict)
+              for e in (r.get("entity_ids") or []) if e}
     found |= set(re.findall(r"hepkg:[a-z_]+:[A-Za-z0-9_.\-]+", note or ""))
     return found
 
