@@ -112,15 +112,22 @@ it removes rows before they are counted.
 | typed, critic a / b (w1) | 0.972 / 0.972 | 0.368 / 0.350 | 0.60 / 0.62 |
 | free-SQL a / b | 0.297 / 0.235 | 0.500 / 0.541 | -0.20 / -0.31 |
 
-This is the cleanest picture of the two systems' characters. The typed
-planner's `contents_of` returns 97% of the truth labels, and the answer then
-mentions 30% of them: it finds and does not say. Free-SQL's queries retrieve a
-third of the labels and the answer mentions half the truth -- it says more
-than its own retrieval shows because the model fills in from the rows it saw
-and from its own knowledge (negative "truncation loss" means the answer
-mentioned labels the tools did not return). For the write-up: on questions
-whose answer is a list of labels, the typed system's loss is entirely at the
-handoff from retrieval to prose.
+Read with caveat 5 below. The typed planner's `contents_of` returns 97% of
+the truth entities (exact, by id) and the answer then contains 30% of their
+stored labels *verbatim*; the free-SQL answer contains 50% verbatim while its
+`retrieved` column is undercounted (its queries return paper ids, not entity
+ids). The verbatim requirement matters: the worst typed record on this
+metric ("Which backgrounds does analysis 2206.09466 estimate?") retrieved all
+7 truth entities and wrote "Drell-Yan, nonprompt lepton (reducible) from
+Z+jets and tt̄, nonresonant WW, top quark, triboson, WZ/Vγ/Vγ* multiboson, and
+ZZ" -- a correct answer that scores 0.00 mentioned because none of the stored
+labels appears whole, while free-SQL's answer to the same question, which is
+its chain of thought, scores 0.71 because it copies label strings from its
+rows. What survives the caveat: the typed planner finds these entities
+essentially always (0.97), and it paraphrases rather than lists; free-SQL
+tends to copy rows into the answer. Whether paraphrase is a loss depends on
+the reader; for a coverage map the entity ids are the answer and neither
+system writes those.
 
 ### 1.5 Gabriel's questions inside the 164 (9; one repeat per job)
 
@@ -454,3 +461,10 @@ generated questions because those are one query each.
 4. The free-SQL OpenRouter run whose SQL is quoted in the traces (28311)
    predates the current gold; every free-SQL number in this document is from
    the rerun on the current gold (85223).
+5. The per-paper metrics (section 1.4) measure label *reproduction*:
+   `mentioned_label_recall` counts a stored label only when its full text
+   appears, normalised, inside the answer, so paraphrases score zero and
+   copied rows score high; `retrieved_label_recall` reads entity ids from the
+   tool results, which free-SQL's paper-id queries do not carry. Use the
+   typed `retrieved` column (exact, 0.97) as the retrieval fact and treat the
+   `mentioned` columns as a style measurement, not a correctness one.
