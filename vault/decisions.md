@@ -6075,3 +6075,20 @@ read from those records. Re-running the 20 count questions on the current
 code (OpenRouter, typed no-critic and free-SQL, 2 repeats each,
 eval/questions/count20.jsonl) settles it and is the figure to report.
 
+## D-151 outcome -- count questions re-run on current code (OpenRouter, qwen3-32b, 20 questions x 2 repeats)
+
+| system | exact | closeness | over / under | how the count was made |
+|---|---|---|---|---|
+| typed, no critic (93826) | 0.500 | 0.565 | 8 / 0 | no `count` call 26/40 (exact 0.42); `count` over explicit ids 12/40 (exact 0.75); `count` over a search set 2/40 (exact 0.00) |
+| free-SQL (93857) | 0.750 | 0.792 | 3 / 6 | COUNT(DISTINCT paper_id) on the entity id from search |
+
+No "X papers" placeholders in either run: that artefact belonged to the
+wave-2 code/model and is closed. The count loss on the typed side is now
+legible: on 26 of 40 answers the planner never calls its `count` tool and
+counts the rows it was shown (exact 0.42, always over when wrong); when it
+calls `count` with the specific entity ids it is as exact as free-SQL (0.75);
+when it passes a whole search set it is wrong every time (2/40). Free-SQL's
+remaining errors are the LIKE/IN family over-match (3 over) and too-narrow
+entity choice (6 under). Report these figures in the baseline chapter in
+place of the cluster ones (0.30 / 0.35), with the lane stated.
+
