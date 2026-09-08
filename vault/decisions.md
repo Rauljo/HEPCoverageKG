@@ -5597,3 +5597,17 @@ trigger 0.498 -> +coverage fix 0.475 -> no rerank 0.470 -> ENUM_LIMIT=20 0.485
 0.562. (*23 records, 4 errors.) On the 164 (wave 2): the critic itself is
 worth nothing; the arms that move are all on retrieval reach or the handoff.
 
+## D-137 addendum -- 54267 replaced by 54268: the client timeout, not the record budget
+
+At 08:40, 54267 (4 workers, --timeout 1500) had 6 record errors in 38, 5 in its
+last 20, every one `APITimeoutError: Request timed out.` -- the OpenAI client's
+per-request limit, LLM_TIMEOUT, default 120 s, which a QwQ completion on a
+100-row prompt exceeds under six concurrent requests. The record budget never
+came into it. The control (54261) was fine: 4 timeouts in 103. My first read of
+the 08:40 numbers counted tool-step errors (`duplicate_call`,
+`unknown_entity_id`) as record failures and overstated both jobs; the
+record-level count is the one above. Cancelled 54267 at 38 records and
+submitted 54268 with LLM_TIMEOUT=600 (not in the run config -- a client
+setting; recorded here), same flags, config hash 60d0e15fd8c8, started
+08:42. Server deadline 15:58; at ~300 s a record and 4 workers, ~3.5 h.
+
