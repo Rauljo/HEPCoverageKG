@@ -5208,3 +5208,18 @@ that is where it will show, if anywhere: as a slightly stronger control.
 
 Consequence: the planned re-run of the stack on D-127 code is not worth the
 lane. The lane goes to D-128 once the judge format is settled (D-129).
+
+## D-122 addendum — at max_rows=100 the residual truncation is one result, and it is gf-05
+
+Replaying the stack+gate run (max_rows=100): 37 tool results, ONE still over
+100 rows -- gf-05's subjects_of, 277 rows, 15 gold papers inside, 8 visible at
+100, 13 at 250. Everywhere else the window of 100 held the whole result.
+
+That single result is the gf-05 loss in D-126: reach 1.00, 19 named, 13 wrong.
+The model read the first 100 of 277 in retrieval order and composed from that.
+It is the exact case D-128 is for -- an ordered list handed to the answer step
+-- and, failing that, a window of 250 on subjects_of alone.
+
+Cost side: the two gf-08 timeouts on this run are the price of 100-row windows
+in a 600 s budget on a slow endpoint, not of truncation. 100 is the right
+default for the next arms; 250 is a per-tool experiment, not a global one.
