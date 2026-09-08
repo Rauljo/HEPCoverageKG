@@ -99,6 +99,11 @@ _OVERRIDE_CRITIC="${CRITIC_MODEL:-}"
 if [ -f .env ]; then set -a; . ./.env; set +a; fi
 # Restored after .env had its say.
 if [ -n "$_OVERRIDE_MODEL" ]; then export LLM_MODEL_NAME="$_OVERRIDE_MODEL"; fi
+# THE RANKER'S KEY, from .env ON THE NODE (D-129). The ranker may point at a
+# hosted 32B (RANK_MODEL / RANK_BASE_URL, passed through --export) while the
+# search critic stays local. Its key is never a command-line argument: it is
+# read here from the sourced .env, exactly like LLM_API_KEY.
+export RANK_API_KEY="${RANK_API_KEY:-${OPENROUTER_API_KEY:-}}"
 echo "client will request model: ${LLM_MODEL_NAME:-<unset>}"
 
 
