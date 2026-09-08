@@ -5611,3 +5611,14 @@ submitted 54268 with LLM_TIMEOUT=600 (not in the run config -- a client
 setting; recorded here), same flags, config hash 60d0e15fd8c8, started
 08:42. Server deadline 15:58; at ~300 s a record and 4 workers, ~3.5 h.
 
+## D-139 addendum -- replicate 0.579; pooled 0.570 +- 0.032 against 0.435
+
+Replicate 20260908T071623-hepkg-73785, identical config hash b488cd98aa54:
+judged 0.579, reach 0.852, gold named 5.9, precision 0.713, zero errors. Per
+question the two runs agree within +-0.13 (gf-02 +0.12, gf-07 +0.13, gf-05
+-0.07, the rest within 0.02). Pooled over 54 records: mean 0.570, sd 0.234,
+standard error 0.032; the control's 27 records pool to 0.435 (0.452 as a
+per-question mean). The gap is about four standard errors. This is the
+number for the write-up on Gabriel's 9, with the caveat that gf-08 alone
+carries a 0.14 spread (D-138). Night's OpenRouter spend since 05:50: $1.18.
+
