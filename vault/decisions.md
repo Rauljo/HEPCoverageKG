@@ -5646,3 +5646,28 @@ belongs in the write-up next to its gain (D-120/D-122), and the fix is a
 context budget that trims the oldest tool results before the call (not built;
 see ideas). Enumeration fired on 12 of 115 records, kinded searches on 65.
 
+## D-141 -- CORRECTION: on the 164, `judged_f1` exists for 10 records; the 164-wide metric is set_f1
+
+Found while pairing wave 3: `judged_f1` (Gabriel's verdicts with the universe
+restriction, D-072) is non-None on 10 of the 164 records -- the Gabriel
+questions inside the set. Every "judged" figure quoted for a 164-question run
+(D-125's 0.455 vs 0.354 / 0.361; D-133's wave-2 table and its "critic effect
+-0.037") is therefore a mean over 9-10 records, and dropping two questions
+from the pairing moves it from 0.354 to 0.393. Those entries stand as
+Gabriel-9 numbers; the claims about "the full 164" must be re-read against
+set_f1 and the per-shape scores, which D-133 also reported: critic on/off
+set_f1 0.234 / 0.215, floor 0.030 -- the conclusion (the critic is worth
+nothing on the 164) survives, on the right column.
+
+Wave 3 control on the merged code (54261, 7204b6d, 162 of 164 at 11:15):
+against the wave-1 control on the same questions it exits through `answer()`
+on 117 records instead of 96 (the D-116 recovery), writes 4.0 arXiv ids per
+set answer instead of 7.0, and its Gabriel-9 judged mean is 0.372 vs 0.442.
+Recovering the call WITHOUT --name-ids costs the control about 0.07 on the 9
+-- D-117 measured on the cluster. set_f1 0.258 vs 0.219 / 0.249 (wave 1).
+
+Stack 54268 (provisional, 115 of 164): Gabriel-9 judged 0.444 vs ctrl-c 0.330
+on the same questions; set_f1 0.189 vs 0.258 -- naming 15 ids per set answer
+(8 of 95 answers id-less) buys judged recall on the 9 and costs exact-set
+precision on the generated questions. Final numbers when 54268 ends (~12:20).
+
