@@ -268,3 +268,16 @@ def test_a_verdict_on_the_row_beats_the_kept_signal():
             {"entity_id": "exact", "bears_on": "exact"}]
     P.order_by_rung(rows, kept={"kept_but_unrelated", "kept_no_verdict"})
     assert [r["entity_id"] for r in rows] == ["exact", "kept_no_verdict", "kept_but_unrelated"]
+
+
+def test_the_ranker_uses_its_own_endpoint_when_given_one(monkeypatch):
+    """D-129: small judges rank at random; the ranker may point at a 32B while
+    the search critic stays small and local."""
+    from hepcoveragekg.query import planner as P
+    monkeypatch.setattr(P, "_critic_client", lambda: ("CRITIC", "small"))
+    monkeypatch.delenv("RANK_BASE_URL", raising=False); monkeypatch.delenv("RANK_MODEL", raising=False)
+    assert P._rank_client()[1] == "small", "unset -> the critic's client"
+    monkeypatch.setenv("RANK_BASE_URL", "https://example.test/v1"); monkeypatch.setenv("RANK_MODEL", "qwen/qwen3-32b")
+    monkeypatch.setenv("RANK_API_KEY", "k")
+    client, model = P._rank_client()
+    assert model == "qwen/qwen3-32b" and client != "CRITIC"

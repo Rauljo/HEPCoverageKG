@@ -292,6 +292,9 @@ class PlannerSystem:
             # named explicitly or the comparison is unreproducible.
             "index_values": bool(index_values),
             "index_quotes": bool(index_quotes),
+            # The ranker's judge, when it differs from the critic's (D-129).
+            "env.RANK_MODEL": os.environ.get("RANK_MODEL", ""),
+            "env.RANK_BASE_URL": os.environ.get("RANK_BASE_URL", ""),
             **effective_config(planner.answer, planner_kwargs),
         }
 

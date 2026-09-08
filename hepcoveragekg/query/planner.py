@@ -1398,7 +1398,7 @@ def _paper_ranker(conn, session, rerank, answer_critic=None):
         return None
     from hepcoveragekg.query import answer_critic as AC
 
-    client, model = _critic_client()
+    client, model = _rank_client()
     cap = completion_cap(model)
 
     def chat(messages):
@@ -2139,6 +2139,31 @@ def _critic_client():
         timeout=float(os.environ.get("LLM_TIMEOUT", 120)),
         max_retries=int(os.environ.get("LLM_MAX_RETRIES", 3)),
     ), os.environ.get("CRITIC_MODEL", "NousResearch/Meta-Llama-3.1-8B-Instruct")
+
+
+def _rank_client():
+    """The judge the RANKER uses: RANK_* env, else the critic's client (D-129).
+
+    Candidate filtering is easy enough for an 8B (D-089); ordering papers by
+    how well they satisfy a question is not -- llama-8b and qwen3-14b ranked at
+    random in both pointwise and listwise form, qwen3-32b ranked (F1 0.645).
+    Separating the endpoints lets the cluster keep its local search critic and
+    send only the ranking to a 32B, hosted, for cents.
+    """
+    from openai import OpenAI
+    from dotenv import load_dotenv
+    load_dotenv()
+    base = os.environ.get("RANK_BASE_URL")
+    model = os.environ.get("RANK_MODEL")
+    if not base or not model:
+        return _critic_client()
+    return OpenAI(
+        base_url=base,
+        api_key=os.environ.get("RANK_API_KEY") or os.environ.get("CRITIC_API_KEY")
+                or os.environ.get("LLM_API_KEY", "dummy"),
+        timeout=float(os.environ.get("LLM_TIMEOUT", 120)),
+        max_retries=int(os.environ.get("LLM_MAX_RETRIES", 3)),
+    ), model
 
 
 def _client():

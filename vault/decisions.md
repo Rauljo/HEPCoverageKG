@@ -5289,3 +5289,29 @@ Decisions: 100 stays the default for every next arm. The next OpenRouter arms
 run with --timeout 900 so gf-08 records survive. gf-05 and gf-08 are the case
 for ordering at the answer step (D-128), not for a wider window: at 250 the
 gf-05 prompt would pass 150k tokens.
+
+## D-129 outcome — listwise does not rescue a small judge; the ranker needs a 32B, and gets its own endpoint
+
+Pointwise grade vs listwise order (grades by position), Gabriel's 253 verdicts:
+
+    judge          format     p@1   p@3   p@5  p@10  F1@16  P(gold) by grade 3/2/1/0
+    llama-3.1-8b   pointwise  0.78  0.67  0.58  0.48  0.575  0.53 0.38 0.00 0.40
+    llama-3.1-8b   listwise   0.78  0.63  0.58  0.51  0.568  0.49 0.42 0.39 0.37
+    qwen3-14b      listwise   0.33  0.52  0.62  0.48  0.570  0.50 0.43 0.39 0.35
+    qwen3-32b      pointwise  0.89  0.81  0.73  0.61  0.645  0.73 0.64 0.40 0.30
+    gpt-4.1-mini   pointwise  1.00  0.81  0.78  0.62  0.654  0.79 0.52 0.36 0.31
+    keep everything                                    0.591
+
+The small judges cannot ORDER either: listwise P(gold) is flat across the
+grades, qwen3-14b puts a wrong paper first two times in three. It is capacity,
+not format. And listwise makes the spread guard vacuous -- 49% "middle" by
+construction over an order that is barely better than random -- so the
+diagnostic that matters is monotonicity of P(gold) by grade, not middle share.
+
+Consequence: the graded ranker (D-113, D-120) and the ranked answer (D-128)
+need a 32B-class judge on both endpoints. The search critic can stay small
+(D-089: the 8B is -0.0035 against the 72B on candidate filtering -- a
+different, easier task). So the ranker gets its own client: RANK_MODEL /
+RANK_BASE_URL / RANK_API_KEY, falling back to the critic's when unset. On the
+cluster that means the ranker calls hosted qwen3-32b (~$0.02 per 253 papers)
+while everything else stays local.
