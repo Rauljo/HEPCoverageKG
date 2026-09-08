@@ -4923,3 +4923,29 @@ Replaying the run's own kinded searches against the DIAS DB, fallback off -> on:
 Three of three searches gain, two reach every gold paper. The cost is ~50
 extra entities per kinded search for the critic to judge -- which is what the
 critic is for.
+
+## D-119 addendum 3 — the critic brakes the fallback's extras; the loss that remains is the answer stage
+
+Interim on the live fallback arm (12/27 records): reach 0.706 -> 0.824 overall,
+gf-05 0.21 -> 0.81, gf-04 0.65 -> 1.00; judged_f1 flat (-0.025, inside the
+control's 0.292 spread). gf-01-condition fell 0.36 -> 0.08 with reach held at
+1.00, so it was read closely:
+
+  repeat 1  facets objects=BJet, 38 papers, critic kept 38/38. Answer: "The
+            graph explicitly lists 38 papers (e.g., 2001.06899, 2004.04545,
+            2009.04363, etc.)" and <papers_from>facets_result_38</papers_from>
+            -- a set name that does not exist. Prose exit, 5 ids named. 0.17.
+  repeat 2  search "b-jet" kind=detector_object, 83 rows (60 kinded + fallback).
+            Critic kept 47, dropped 36 -- non_b_tagged_jet, jet_r04,
+            hadronic-jet: every drop correct. Answer text EMPTY. 0.00.
+  repeat 3  errored.
+
+The fallback did what it should and the critic did what it is for. What
+remains is class C -- summarise-with-examples, a phantom set name, an empty
+answer -- and those are `--name-ids` / gate territory. So the next OpenRouter
+arm is the STACK, not another single lever:
+
+    --kind-fallback --name-ids --max-rows 100 --rerank
+
+A retrieval fix that widens the candidate set raises the price of a weak
+answer stage; measuring it alone under-reads it.
