@@ -6054,3 +6054,24 @@ labels and selection cuts (MET > X GeV is a requirement), (b) a
 region-normalises-background relation, (c) "reconstructs candidate" as an
 object-level relation. None of that is query-time work.
 
+## D-151 -- count questions: the typed agent counts over the search superset; the wave-2 placeholder cannot be diagnosed from its records
+
+Reproduced through the real graph on the DIAS copy: search("OpenLoops",
+kind=generator) returns 40 hits, saved as set_1; count(sample_uses_generator,
+object_set=set_1) expands them to 57 canonical ids and returns
+{papers: 59, facts: 352, assertions: 386} -- for a question whose truth is 3.
+The count tool works; what it is given is every entity the search touched,
+and it aggregates over all of them. This is the same failure attributed to
+free-SQL's `LIKE '%photon%'` in the baseline: neither system narrows the
+search hits to the one entity the question means before counting, so both
+over-count; free-SQL is merely closer because it at least counts in the
+database. The relevance critic makes typed counts worse (0.15 vs 0.30) by
+pruning the set that is then counted.
+
+On the wave-2 "**X papers**" answers: on current code the model receives the
+count row verbatim and the step preview records it; wave 2 ran on code that
+dropped step previews, so whether the model saw the number there cannot be
+read from those records. Re-running the 20 count questions on the current
+code (OpenRouter, typed no-critic and free-SQL, 2 repeats each,
+eval/questions/count20.jsonl) settles it and is the figure to report.
+
