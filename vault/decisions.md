@@ -5002,3 +5002,44 @@ Consequence for the loop: no further retrieval lever is worth testing alone
 until the handoff moves. The stack (--kind-fallback --name-ids --max-rows 100
 --rerank --answer-critic) is running; its decomposition against this table is
 the next read.
+
+## D-124 — the stack is not additive: the answer-critic filter strikes gold, the graded ranker is inert on an 8B judge
+
+--kind-fallback --name-ids --max-rows 100 --rerank --answer-critic, 9 x 3 on
+OpenRouter, 27/27 clean, against the same control: judged_f1 0.452 -> 0.417
+(inside the 0.297 spread), reach 0.692 -> 0.760. Decomposition: named 32%,
+reached-not-named 50%, never-reached 18% -- the fallback's gain, and no more.
+
+Per question it redistributes, and the record says why for each:
+
+  --name-ids WORKS. gf-01-condition 0.36 -> 0.77; gold named 3.3 -> 8.3 across
+  repeats (8, 6, 11). gf-01-met 0.32 -> 0.52. Class C, fixed where it applies.
+
+  THE ANSWER-CRITIC FILTER STRIKES GOLD. Of 16 papers it dropped across the
+  records read, 7 were gold. Its stated reasons: "uses b-tagged jet veto" (the
+  prompt itself says a veto counts as using), "no ABCD method mentioned" on a
+  paper Gabriel marked yes, "regularized unfolding without correction",
+  "employs ABCD reweighting technique, not sideband". D-112 said the filter
+  loses to doing nothing; this is it doing so live on the questions that matter.
+  gf-02 0.65 -> 0.37, gf-03 0.89 -> 0.59, gf-04 0.67 -> 0.53.
+
+  THE GRADED RANKER WAS INERT. `usable=False` on nearly every ranking: the
+  OpenRouter judge is llama-3.1-8b, which D-113 measured as refusing the middle
+  grades (14 of 253), and the guard correctly declined to apply its order. Only
+  the free rung ordering acted. On the cluster the judge is Qwen3.5-9B; this
+  says nothing about that.
+
+  THE GATE WAS MISSING. The stack omitted --answer-gate; one gf-03 repeat
+  called answer() naming nothing and scored 0.00 with reach 1.00.
+
+  PATH VARIANCE dominates gf-05: reach 0.29 here vs 0.66 with the fallback
+  alone, because in two of three repeats the model faceted and never issued a
+  kinded search (kinded=0, nothing to fall back from). Same mechanism, a
+  different route chosen by the model.
+
+DECISIONS. --rerank and --answer-critic were coupled in code (the ranker needed
+the filter's flag to build its judge); decoupled, so the ranker -- which only
+reorders and cannot lose a paper -- can run without the filter. Next arm:
+--kind-fallback --name-ids --max-rows 100 --rerank --answer-gate. The filter
+is out of the stack and stays out until a judge that does not strike gold is
+measured against Gabriel's verdicts.

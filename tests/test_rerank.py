@@ -156,14 +156,17 @@ def test_the_spread_travels_in_the_record():
 # the wiring: papers_of is where the truncation happens
 # --------------------------------------------------------------------------
 
-def test_the_paper_ranker_is_off_unless_both_flags_are_on():
-    """The rung reordering is free and always applies under --rerank; the
-    graded pass costs a call per `papers_of` and is the thing being measured."""
+def test_the_paper_ranker_needs_only_rerank(monkeypatch):
+    """D-124: the ranker used to require --answer-critic too, so it could not be
+    had without the filter -- and the filter struck 7 gold papers in 16 drops
+    on the live stack. The ranker only reorders and cannot lose a paper."""
     from hepcoveragekg.query import planner
 
     assert planner._paper_ranker(None, None, False, False) is None
-    assert planner._paper_ranker(None, None, True, False) is None
-    assert planner._paper_ranker(None, None, False, True) is None
+    assert planner._paper_ranker(None, None, False, True) is None, "the filter alone does not rank"
+    monkeypatch.setattr(planner, "_critic_client", lambda: (object(), "m"))
+    monkeypatch.setattr(planner, "completion_cap", lambda m: 100)
+    assert planner._paper_ranker(None, planner.Session(question="q"), True, False) is not None
 
 
 def test_an_unusable_ranking_is_not_applied():

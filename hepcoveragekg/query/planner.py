@@ -1370,15 +1370,20 @@ def _render_rows(rows: list[dict], max_rows: int) -> str:
     return "\n".join(lines)
 
 
-def _paper_ranker(conn, session, rerank, answer_critic):
+def _paper_ranker(conn, session, rerank, answer_critic=None):
     """Reorder a `papers_of` result best-first, or None when the arm is off.
 
-    Needs the graded judge, so it is only built when BOTH --rerank and
-    --answer-critic are on: the rung-level reordering above is free and always
-    applies under --rerank; this one costs a judging pass per call and is the
-    thing being measured.
+    DECOUPLED FROM THE FILTER (D-124). This used to require --answer-critic as
+    well, because both use the same judge client -- so the ranker could not be
+    had without the filter. The live stack showed why that matters: the filter
+    struck seven gold papers in sixteen drops ("uses b-tagged jet veto", which
+    the prompt itself says counts as using), while the ranker only ever
+    reorders and cannot lose a paper. --rerank now builds its own judge;
+    --answer-critic remains the filter and is a separate decision.
+
+    `answer_critic` is accepted and ignored, so existing callers do not move.
     """
-    if not (rerank and answer_critic):
+    if not rerank:
         return None
     from hepcoveragekg.query import answer_critic as AC
 
