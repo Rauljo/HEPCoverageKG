@@ -5271,3 +5271,21 @@ asserts added against concepts. Off by default. No LLM call.
 
 Where it cannot help: gf-05 enumerates nothing -- one concept the graph types
 several ways; that is D-119's territory.
+
+## D-122 addendum 2 — what a 100-row window costs, and where
+
+Control (25) vs stack+gate (100), per record, clean records only:
+
+    prompt tokens   22.6k -> 27.3k   (+20%)
+    seconds           193 ->   220
+    rounds            3.7 ->   3.3
+
+Cheap on average, and concentrated where truncation was: gf-05 22.8k -> 72.4k
+tokens (the 277-row subjects_of), gf-04 23.9k -> 45.5k. gf-08 timed out twice
+at 600 s -- but it took 407 s in the control, the slowest question already;
+the window pushed it over the runner's cutoff rather than causing it.
+
+Decisions: 100 stays the default for every next arm. The next OpenRouter arms
+run with --timeout 900 so gf-08 records survive. gf-05 and gf-08 are the case
+for ordering at the answer step (D-128), not for a wider window: at 250 the
+gf-05 prompt would pass 150k tokens.
