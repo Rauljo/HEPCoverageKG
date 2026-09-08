@@ -5998,3 +5998,24 @@ intersection is. The write-up should present the dial, not the 0.684 alone.
 Cost: about $0.90 for the two runs; median 442 s per union record (two full
 answers). Day's OpenRouter total: $3.83.
 
+## D-149 -- gf-01's false positives are an extraction limit, not a query mistake
+
+Asked on the DIAS database, against Gabriel's 8 gold and 33 judged papers for
+gf-01 (searches selecting on both b-tagged jets and MET), search papers only:
+
+| query | papers | gold | judged wrong | P | R | F1 |
+|---|---|---|---|---|---|---|
+| both concepts occur on the paper (what both agents did) | 22 | 7/8 | 11 | 0.39 | 0.88 | 0.54 |
+| both required by some region (`region_requires_object`) | 8 | 4/8 | 3 | 0.57 | 0.50 | 0.53 |
+| both required by the same region | 4 | 3/8 | 1 | 0.75 | 0.38 | 0.50 |
+| (reference) papers that veto b-jets in a region | 14 | 2/8 | 8 | | | |
+
+The stricter reading is expressible and buys precision, but half the gold
+papers have no `region_requires_object` edge for MET or the b-jets -- the
+requirement is in region labels and quotes -- so recall halves and F1 does not
+move. Class E on this question is therefore a coverage limit of the extracted
+selection edges, and the honest write-up line is that the graph records
+"mentions" reliably and "requires" for about half the papers. A query-time
+fix does not exist; an extraction pass that turns region labels into
+requirement edges would.
+

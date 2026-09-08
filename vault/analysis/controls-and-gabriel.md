@@ -265,6 +265,17 @@ mechanism this week fixed (the answer-critic filter struck gold, D-124). The
 "searches rather than measurements" clause is honoured by both systems through
 the paper category. One QwQ free-SQL repeat named nothing.
 
+Could the stricter reading have been asked? Yes, and it was measured on the
+DIAS database (D-149): "both concepts occur on the paper" (what the agents
+did) returns 22 search papers, 7 of 8 gold, 11 judged wrong -- P 0.39, R 0.88;
+"both required by some region" returns 8, 4 gold, 3 wrong -- P 0.57, R 0.50;
+"both required by the same region" returns 4, 3 gold, 1 wrong -- P 0.75,
+R 0.38. F1 is 0.50-0.54 whichever way it is asked. The requirement edge
+(`region_requires_object`) exists for only half the gold papers; for the
+other half MET and the b-jets sit in region labels and quotes. So gf-01's
+precision loss is an extraction-coverage limit of the graph, not a query the
+agents got wrong.
+
 ### gf-01-condition -- analyses that use b-tagged jets in their event selection (gold 11, judged 18)
 
 | control | judged_f1 | named | gold | FP | outside |
