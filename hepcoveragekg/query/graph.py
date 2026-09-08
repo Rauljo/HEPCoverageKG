@@ -319,6 +319,48 @@ def _answer_named(session) -> list:
     return in_text or list(session.answer_papers)
 
 
+def _grade_strike(session) -> None:
+    """Strike from the named answer the papers the ranker graded at or below
+    STRIKE_GRADE_MAX (D-142). Off unless the variable is set.
+
+    The stack names ~21 ids per set answer against truth sets of 2-8 on the
+    generated questions: precision 0.19 to the control's 0.27. The 32B judge's
+    grade 0 ("does not satisfy") carries P(gold) 0.15 against 0.49 at grade 3
+    (D-135), so it is the one signal in hand that can shorten a list without a
+    second judge pass. Rules: only USABLE rankings count; an ungraded paper is
+    kept (no evidence is not evidence against, D-105); the strike never empties
+    the answer; the original text is kept in `answer_before_strike`.
+    """
+    raw = os.environ.get("STRIKE_GRADE_MAX", "")
+    if raw == "":
+        return
+    try:
+        max_grade = int(raw)
+    except ValueError:
+        return
+    best: dict = {}
+    for r in getattr(session, "rankings", []) or []:
+        if not getattr(r, "usable", False):
+            continue
+        for pid, g in r.grades.items():
+            if pid not in best or g > best[pid]:
+                best[pid] = g
+    named = _answer_named(session)
+    if not best or not named:
+        return
+    dropped = [p for p in named if p in best and best[p] <= max_grade]
+    if not dropped or len(dropped) >= len(named):
+        return
+    session.answer_before_strike = session.answer
+    for pid in dropped:
+        session.answer = session.answer.replace(pid, "")
+    if session.answer_papers:
+        session.answer_papers = [p for p in session.answer_papers if p not in set(dropped)]
+    session.grade_struck = list(dropped)
+    logger.info("grade strike: removed %d of %d named papers graded <= %d",
+                len(dropped), len(named), max_grade)
+
+
 def _answer_critic(runtime, session) -> None:
     """Drop the papers the answer names that do not satisfy the question.
 
@@ -629,6 +671,7 @@ def execute(state: PlannerState, config=None) -> PlannerState:
             # had evidence available and prose ids to judge.
             if runtime.get("answer_critic"):
                 _answer_critic(runtime, session)
+            _grade_strike(session)
 
             return state
 
@@ -794,6 +837,7 @@ def finish(state: PlannerState, config=None) -> PlannerState:
                            verdict.kind, len(session.answer))
         if runtime.get("answer_critic"):
             _answer_critic(runtime, session)
+        _grade_strike(session)
 
     session.evidence_ids = sorted(set(session.evidence_ids))
     session.verification = verify.verify_session(session)

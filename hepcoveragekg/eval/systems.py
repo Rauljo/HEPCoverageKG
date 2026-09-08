@@ -112,6 +112,8 @@ class Answer:
     #: The ranked answer (D-128).
     ranked_answer_asked: bool = False
     ranked_answer_shown: int = 0
+    #: The grade strike (D-142): ids removed from the named answer.
+    grade_struck: list = field(default_factory=list)
     #: Enumeration expansion (D-131).
     enum_concepts: int = 0
     enum_added: int = 0
@@ -300,6 +302,7 @@ class PlannerSystem:
             # Hits per enumerated concept (D-131 addendum 4).
             "env.ENUM_LIMIT": os.environ.get("ENUM_LIMIT", ""),
             "env.RANKED_ASK_MIN_MISSING": os.environ.get("RANKED_ASK_MIN_MISSING", ""),
+            "env.STRIKE_GRADE_MAX": os.environ.get("STRIKE_GRADE_MAX", ""),
             **effective_config(planner.answer, planner_kwargs),
         }
 
@@ -416,6 +419,7 @@ def from_session(session, conn=None) -> Answer:
         kind_fallback_added=getattr(session, "kind_fallback_added", 0),
         ranked_answer_asked=bool(getattr(session, "ranked_answer_asked", False)),
         ranked_answer_shown=getattr(session, "ranked_answer_shown", 0),
+        grade_struck=list(getattr(session, "grade_struck", []) or []),
         enum_concepts=getattr(session, "enum_concepts", 0),
         enum_added=getattr(session, "enum_added", 0),
     )

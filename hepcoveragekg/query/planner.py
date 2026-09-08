@@ -803,6 +803,9 @@ class Session:
     #: edit has to be auditable: a harness that silently rewrites an answer and
     #: then scores it is measuring itself.
     answer_before_critic: str = ""
+    #: The grade strike (D-142): the text before it, and what it removed.
+    answer_before_strike: str = ""
+    grade_struck: list = field(default_factory=list)
 
     # THE PLAN REVIEWER (separate from the search critic, which judges retrieved
     # rows). Counted apart from the planner's own calls and tokens: the whole
