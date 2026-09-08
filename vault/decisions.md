@@ -5393,3 +5393,16 @@ measures reranking on the search path only. Not pulled to DIAS until wave 3
 ends -- a mid-wave pull would change a lazily-imported module under running
 jobs.
 
+## D-131 addendum 2 -- facets-first firing confirmed, and it over-fired
+
+Second live run of stack + --enum-expand with the facets-first trigger (run
+20260908T042252-hepkg-67385, 3 repeats): judged 0.498 (+0.047 vs control 0.452),
+reach 0.902 -- the highest reach of any arm -- and gf-02, the question the fix
+was for, went 0.65 -> 0.77 with reach 0.48 -> 0.85. But 0.085 below the first
+enum run (0.583): coverage was judged on the facet CODES ('BJet', 'MET'), which
+never read as 'b-tagged jets', so every facets-first record re-searched
+concepts the facet had already found and pushed 60-176 entities into a set --
+gf-04 lost 0.19, gf-07 and gf-08 lost precision. Fixed in 392e43f: coverage is
+judged on the rows' evidence labels, with hyphen-split, singularised tokens.
+enum3 (same config, fixed code, plus the D-133 ranker fix) is the arbiter.
+
