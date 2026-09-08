@@ -4906,3 +4906,20 @@ gf-08 on truncation, gf-02 hands off perfectly at half the reach. The classes
 are properties of the question-to-query step, not of the answering model --
 which is what makes them fixable by mechanism rather than by model choice.
 Typed judged_f1 0.435 +/- 0.086 over 27 records; the noise floor to beat.
+
+## D-119 addendum 2 — confirmed firing live, and the gain on the searches actually issued
+
+The in-flight OpenRouter fallback arm (20260908T002432-hepkg-9786) predates
+the counter, so it was verified by replay: its gf-03 search ("HistFitter",
+kind=statistical_method) gives set_1 = 11 with the fallback off and 77 with it
+on (56 appended); the live record shows 77. It fired.
+
+Replaying the run's own kinded searches against the DIAS DB, fallback off -> on:
+
+    gf-03  HistFitter      statistical_method   4/5   -> 5/5    +56 entities
+    gf-05  Higgs boson     detector_object      5/16  -> 13/16  +57
+    gf-04  unfolding       statistical_method   14/18 -> 18/18  +42
+
+Three of three searches gain, two reach every gold paper. The cost is ~50
+extra entities per kinded search for the critic to judge -- which is what the
+critic is for.
