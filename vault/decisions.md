@@ -5223,3 +5223,25 @@ It is the exact case D-128 is for -- an ordered list handed to the answer step
 Cost side: the two gf-08 timeouts on this run are the price of 100-row windows
 in a 600 s budget on a slow endpoint, not of truncation. 100 is the right
 default for the next arms; 250 is a per-tool experiment, not a global one.
+
+## D-130 — --subgoal-status: more retrieval, weaker handoff; retired from the stack
+
+qwen3-32b + llama-8b critic, Gabriel's 9 x 3, same control, 26/26 clean:
+
+    judged_f1   0.452 -> 0.351   (-0.101)
+    reach       0.692 -> 0.797   (+0.105)
+    gold named  3.5   -> 2.8 per record
+
+Reach up on gf-02 (0.48 -> 0.70), gf-08 (0.52 -> 0.88), gf-05 (0.21 -> 0.48);
+f1 down on seven of nine. The pattern D-107 found for the plan reviewer:
+a mechanism that extends the loop and degrades the write-up.
+
+On gf-02 -- the question it exists for, "ABCD, or an ABCD-style sideband or
+matrix method" -- it faceted ABCD in all three repeats. Decomposition did not
+yield one search per named concept; one repeat added "ABCD method", reached
+1.00 and named nothing. D-096's earlier read of subgoal-status (the one arm
+beating noise on both axes) was on the pre-D-116 system.
+
+Retired from the stack. The multi-concept failure needs a mechanism that
+issues the searches the question already names, not one that asks the model
+to plan them.
