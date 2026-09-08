@@ -160,7 +160,33 @@ per-record spread (0.30) for their n.
 |---|---|---|---|---|
 | typed, critic (runs 1914 + 63766, 6 repeats) | 0.452 (1914) | 0.69 | 3.5 | the control every mechanism was measured against |
 | typed, no critic (run 84932) | 0.383 | 0.78 | 3.2 | reach up (+0.08), naming down: the critic's value on this lane is a shorter page the model then lists (see 2, gf-05) |
-| free-SQL (run 85223) | *pending* | | | the earlier free-SQL run (28311, 2026-09-02) predates the current gold file -- gf-04 has no judged score in it -- and is not used for numbers |
+| free-SQL (run 85223) | **0.571** | 0.51 (entity reach; not comparable for SQL) | 4.4 | precision 0.84 on the judged set, recall 0.51; equals the full typed stack (0.570, D-139) on this metric -- see 1.8 |
+
+
+### 1.8 The fair reading of the Gabriel lane
+
+`judged_f1` ignores papers named outside Gabriel's judged set, and the arms
+differ in how many of those they name. The same 27-record runs, read four
+ways (recall is over *all* his gold, 106 slots per 27 records):
+
+| arm | judged_f1 | named / record | gold / record | outside judged set / record | precision on judged set | precision if outside counted wrong | recall (all gold) |
+|---|---|---|---|---|---|---|---|
+| typed, critic (1914) | 0.435 | 7.1 | 3.4 | 2.3 | 0.71 | 0.48 | 0.29 |
+| typed, no critic (84932) | 0.383 | 7.9 | 3.2 | 3.1 | 0.67 | 0.40 | 0.27 |
+| free-SQL (85223) | 0.571 | 9.4 | 4.4 | 4.0 | 0.81 | 0.46 | 0.37 |
+| full typed stack (72812 / 73785) | 0.562 / 0.579 | 14.8 | 5.8 | 6.3 | 0.68 | 0.39 | 0.49 |
+
+(judged_f1 here is the record mean; the per-question mean quoted elsewhere
+is 0.452 for the control.) So on Gabriel's questions the free-SQL baseline and
+the best typed stack tie on the headline, by different routes: free-SQL is the
+more precise system on the judged set (0.81 vs 0.68) and the typed stack the
+higher-recall one (0.49 vs 0.37 of all gold). Both name papers nobody judged,
+the stack half again as many. Which of the two a reader prefers is a choice
+about the map: a coverage map wants recall; a literature answer wants
+precision. Neither reading makes the typed system's retrieval machinery
+better than a model writing SQL over the same graph; what it buys is recall
+on the three hard questions (gf-05, gf-07, gf-08: free-SQL 0.18 / 0.33 / 0.12,
+full stack 0.41 / 0.29 / 0.35).
 
 ## 2. Gabriel's nine questions, one by one
 
@@ -175,8 +201,10 @@ class in the D-118 vocabulary: **A** surface form / query formulation,
 **B** truncation at max rows, **C** summarise or point instead of list,
 **D** quote-only (extraction gap), **E** tag is not selection (false positive).
 
-Runs: typed+critic OpenRouter = 1914 + 63766 (6 repeats); free-SQL OpenRouter
-= 28311 (3 repeats, older gold -- traces are valid, judged numbers are not);
+Runs: typed+critic OpenRouter = 1914 + 63766 (6 repeats); typed no-critic
+OpenRouter = 84932 (3 repeats); free-SQL OpenRouter = 85223 (3 repeats, current
+gold; the SQL quoted in the traces below is from the earlier run 28311, whose
+queries are the same kind);
 typed no-critic QwQ = 54257/54258; free-SQL QwQ = 54259/54260; typed critic QwQ
 = 54251/54252.
 
@@ -186,7 +214,7 @@ typed no-critic QwQ = 54257/54258; free-SQL QwQ = 54259/54260; typed critic QwQ
 |---|---|---|---|---|---|
 | typed+critic OR (6) | 0.53 | 17.3 | 5.7 | 7.7 | 4.0 |
 | typed no-critic OR (3) | 0.48 | 13.0 | 4.7 | 5.7 | 2.7 |
-| free-SQL OR (3) | 0.51 | 15.0 | 5.3 | 7.7 | 2.0 |
+| free-SQL OR (3, run 85223) | 0.54 | 10.0 | 4.7 | 4.3 | 1.0 |
 | typed no-critic QwQ (2) | 0.27 | 9.0 | 3.0 | 4.0 | 2.0 |
 | typed critic QwQ (2) | 0.55 | 18.0 | 6.0 | 8.0 | 4.0 |
 | free-SQL QwQ (2) | 0.00 | 1.5 | 0.0 | 0.0 | 1.5 |
@@ -208,7 +236,7 @@ the paper category. One QwQ free-SQL repeat named nothing.
 |---|---|---|---|---|---|
 | typed+critic OR (6) | 0.45 | 7.2 | 2.8 | 0.7 | 3.7 |
 | typed no-critic OR (3) | 0.25 | 8.0 | 2.7 | 0.7 | 4.7 |
-| free-SQL OR (3) | 0.44 | 21.3 | 4.7 | 1.3 | 15.3 |
+| free-SQL OR (3, run 85223) | 0.76 | 21.0 | 5.0 | 1.7 | 14.3 |
 | typed no-critic QwQ (2) | 0.76 | 18.0 | 8.0 | 2.0 | 8.0 |
 | typed critic QwQ (2) | 0.17 | 3.0 | 1.0 | 0.0 | 2.0 |
 | free-SQL QwQ (2) | 0.59 | 21.0 | 5.0 | 1.0 | 15.0 |
@@ -229,7 +257,7 @@ spot to over-listing is most visible.
 |---|---|---|---|---|---|
 | typed+critic OR (6) | 0.29 | 12.3 | 0.5 | 0.5 | 11.3 |
 | typed no-critic OR (3) | 0.31 | 20.0 | 1.0 | 2.7 | 16.3 |
-| free-SQL OR (3) | 0.46 | 31.7 | 2.0 | 3.7 | 26.0 |
+| free-SQL OR (3, run 85223) | 0.80 | 16.7 | 2.0 | 0.0 | 14.7 |
 | typed no-critic QwQ (2) | 0.00 | 1.0 | 0.0 | 0.0 | 1.0 |
 | typed critic QwQ (2) | 0.40 | 23.0 | 1.0 | 1.0 | 21.0 |
 | free-SQL QwQ (2) | 0.20 | 6.0 | 0.5 | 0.5 | 5.0 |
@@ -249,7 +277,7 @@ about the metric.
 |---|---|---|---|---|---|
 | typed+critic OR (6) | 0.65 | 5.8 | 5.7 | 0.0 | 0.2 |
 | typed no-critic OR (3) | 0.31 | 2.0 | 2.0 | 0.0 | 0.0 |
-| free-SQL OR (3) | 0.92 | 12.7 | 9.7 | 0.3 | 2.7 |
+| free-SQL OR (3, run 85223) | 0.87 | 14.0 | 9.3 | 0.7 | 4.0 |
 | typed no-critic QwQ (2) | 0.71 | 6.0 | 6.0 | 0.0 | 0.0 |
 | typed critic QwQ (2) | 0.71 | 6.0 | 6.0 | 0.0 | 0.0 |
 | free-SQL QwQ (2) | 0.56 | 9.0 | 5.5 | 0.5 | 3.0 |
@@ -271,7 +299,7 @@ system's gf-02 from 0.65 to 0.77 once it fired on facets-first runs.
 |---|---|---|---|---|---|
 | typed+critic OR (6) | 0.89 | 8.0 | 4.0 | 0.0 | 4.0 |
 | typed no-critic OR (3) | 0.74 | 4.0 | 3.0 | 0.0 | 1.0 |
-| free-SQL OR (3) | 0.89 | 5.0 | 4.0 | 0.0 | 1.0 |
+| free-SQL OR (3, run 85223) | 0.89 | 5.0 | 4.0 | 0.0 | 1.0 |
 | typed no-critic QwQ (2) | 0.89 | 4.0 | 4.0 | 0.0 | 0.0 |
 | typed critic QwQ (2) | 0.89 | 8.0 | 4.0 | 0.0 | 4.0 |
 | free-SQL QwQ (2) | 0.33 | 10.0 | 1.0 | 0.0 | 9.0 |
@@ -288,7 +316,7 @@ not change reach (D-121). The QwQ free-SQL run wrote a wrong query (10 named,
 |---|---|---|---|---|---|
 | typed+critic OR (6) | 0.67 | 9.8 | 9.3 | 0.2 | 0.3 |
 | typed no-critic OR (3) | 0.57 | 12.7 | 8.0 | 2.0 | 2.7 |
-| free-SQL OR (3) | n/a (older gold) | 11.7 | 9.3 | 0.7 | 1.7 |
+| free-SQL OR (3, run 85223) | 0.65 | 10.3 | 9.0 | 0.7 | 0.7 |
 | typed no-critic QwQ (2) | 0.71 | 10.0 | 10.0 | 0.0 | 0.0 |
 | typed critic QwQ (2) | 0.71 | 10.0 | 10.0 | 0.0 | 0.0 |
 | free-SQL QwQ (2) | 0.71 | 11.0 | 10.0 | 0.0 | 1.0 |
@@ -307,7 +335,7 @@ reachable by any query. Both systems reach it.
 |---|---|---|---|---|---|
 | typed+critic OR (6) | 0.07 | 2.0 | 0.7 | 1.3 | 0.0 |
 | typed no-critic OR (3) | 0.32 | 6.3 | 3.7 | 2.0 | 0.7 |
-| free-SQL OR (3) | 0.11 | 2.7 | 1.0 | 1.0 | 0.7 |
+| free-SQL OR (3, run 85223) | 0.18 | 3.0 | 1.7 | 0.7 | 0.7 |
 | typed no-critic QwQ (2) | 0.16 | 2.0 | 1.5 | 0.5 | 0.0 |
 | typed critic QwQ (2) | 0.11 | 1.5 | 1.0 | 0.5 | 0.0 |
 | free-SQL QwQ (2) | 0.33 | 5.0 | 3.5 | 1.5 | 0.0 |
@@ -333,7 +361,7 @@ semantic condition.
 |---|---|---|---|---|---|
 | typed+critic OR (6) | 0.21 | 1.7 | 0.5 | 1.2 | 0.0 |
 | typed no-critic OR (3) | 0.29 | 1.0 | 1.0 | 0.0 | 0.0 |
-| free-SQL OR (3) | 0.43 | 3.7 | 2.7 | 1.0 | 0.0 |
+| free-SQL OR (3, run 85223) | 0.33 | 2.0 | 2.0 | 0.0 | 0.0 |
 | typed no-critic QwQ (2) | 0.00 | 1.5 | 0.0 | 0.5 | 1.0 |
 | typed critic QwQ (2) | 0.00 | 1.5 | 0.0 | 0.0 | 1.5 |
 | free-SQL QwQ (2) | 0.00 | 1.0 | 0.0 | 1.0 | 0.0 |
@@ -360,7 +388,7 @@ bucket: the gold enters through `subjects_of` and never meets `papers_of`.
 |---|---|---|---|---|---|
 | typed+critic OR (6) | 0.08 | 1.8 | 1.0 | 0.7 | 0.2 |
 | typed no-critic OR (3) | 0.16 | 4.3 | 2.7 | 1.3 | 0.3 |
-| free-SQL OR (3) | 0.10 | 0.7 | 0.7 | 0.0 | 0.0 |
+| free-SQL OR (3, run 85223) | 0.12 | 3.0 | 1.7 | 1.3 | 0.0 |
 | typed no-critic QwQ (2) | 0.44 | 23.5 | 9.0 | 8.0 | 6.5 |
 | typed critic QwQ (2) | 0.04 | 1.0 | 0.5 | 0.0 | 0.5 |
 | free-SQL QwQ (2) | 0.00 | 2.5 | 0.0 | 0.0 | 2.5 |
@@ -409,6 +437,6 @@ generated questions because those are one query each.
 3. gf-01-met has 3 yes in 13 judged; gf-07 has 10 in 53. Per-question deltas
    on the 9 move by ±0.05 on gf-08 alone (D-138); three repeats are the
    minimum and single-repeat rows above are marked as such.
-4. The free-SQL OpenRouter run used for the traces (28311) predates the
-   current gold; its judged numbers are not comparable and the rerun (85223)
-   replaces them in section 1.7 when it lands.
+4. The free-SQL OpenRouter run whose SQL is quoted in the traces (28311)
+   predates the current gold; every free-SQL number in this document is from
+   the rerun on the current gold (85223).

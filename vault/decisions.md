@@ -5812,3 +5812,28 @@ work the typed arms add. The write-up must present both, and D-133's
 "formatting coin toss" line is withdrawn. Every other conclusion of D-133
 (critic worth nothing on the 164) stands.
 
+## D-146 -- free-SQL on Gabriel's 9, current gold: 0.571 -- the baseline ties the best typed stack
+
+Run 20260908T155549-free-sql-85223 (qwen3-32b, 3 repeats, 27 records, zero
+errors, median 107 s): judged_f1 0.571 (record mean), precision 0.84 on the
+judged set, recall 0.51; per question gf-01 0.54, gf-01-condition 0.76,
+gf-01-met 0.80, gf-02 0.87, gf-03 0.89, gf-04 0.65, gf-05 0.18, gf-07 0.33,
+gf-08 0.12. The earlier free-SQL run on this lane (28311) predates the current
+gold file and was quoted in D-133/D-145 as 0.21 / 0.36 on the 10 inside the
+164; that figure is withdrawn for the 9. The typed critic control on the same
+27 records is 0.435 (record mean; 0.452 per question); the typed no-critic
+control (84932) is 0.383; the full typed stack is 0.562 / 0.579.
+
+Read fairly (analysis/controls-and-gabriel.md 1.8): free-SQL and the full
+stack tie on the headline by different routes -- free-SQL more precise on the
+judged set (0.81 vs 0.68), the stack higher recall over all gold (0.49 vs
+0.37), and the stack names half again as many papers outside the judged set
+(6.3 vs 4.0 per record), which judged_f1 does not see. Where the stack earns
+its recall is the three hard questions (gf-05, gf-07, gf-08). Consequence for
+the write-up: the typed system's retrieval machinery does not beat a model
+writing SQL over the same typed graph on the supervisor's questions; the
+graph is what both systems share, and the schema is what makes the SQL
+possible. The typed arms' contribution is recall on the questions whose
+concept is spread across labels, and the ability to be measured mechanism by
+mechanism. The critic's sign flips between lanes (analysis doc 1.6).
+
