@@ -560,7 +560,19 @@ def execute(state: PlannerState, config=None) -> PlannerState:
                 strong = [p for p, g in cands if g >= 2]
                 named_now = set(re.findall(r"\b\d{4}\.\d{4,5}\b", session.answer or ""))
                 session.ranked_answer_shown = len(cands)
-                if strong and len(named_now & set(strong)) < len(strong) / 2:
+                # RANKED_ASK_MIN_MISSING: with the cap at 40 the ask fired on 2
+                # of 27 records -- the model names most of the page, so "fewer
+                # than half" rarely holds while gf-08 still leaves 42 graded
+                # gold unnamed (D-135). When set, ask whenever at least that
+                # many strong candidates are unnamed. Unset keeps D-132's rule.
+                missing = len(set(strong) - named_now)
+                try:
+                    min_missing = int(os.environ.get("RANKED_ASK_MIN_MISSING", "") or 0)
+                except ValueError:
+                    min_missing = 0
+                should_ask = (missing >= min_missing) if min_missing > 0 else (
+                    len(named_now & set(strong)) < len(strong) / 2)
+                if strong and should_ask:
                     session.ranked_answer_asked = True
                     session.answer_before_gate = session.answer
                     listing = "\n".join(f"  {p}  grade {g}" for p, g in cands)

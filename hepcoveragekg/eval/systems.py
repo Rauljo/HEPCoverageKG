@@ -299,6 +299,7 @@ class PlannerSystem:
             "env.RANKED_TOP_N": os.environ.get("RANKED_TOP_N", ""),
             # Hits per enumerated concept (D-131 addendum 4).
             "env.ENUM_LIMIT": os.environ.get("ENUM_LIMIT", ""),
+            "env.RANKED_ASK_MIN_MISSING": os.environ.get("RANKED_ASK_MIN_MISSING", ""),
             **effective_config(planner.answer, planner_kwargs),
         }
 

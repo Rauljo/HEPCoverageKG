@@ -5480,3 +5480,18 @@ losers are gf-04 (0.67 -> 0.48 / 0.61 / 0.35) and gf-07, where the enumeration
 set holds 140-176 entities after canonical expansion and papers_of on it fills
 100 rows the model then names. The next knob is the size of that set.
 
+## D-132 addendum -- RANKED_TOP_N=40: 0.530, the ask still rarely fires
+
+Stack + enum-expand + rerank (32B) + --ranked-answer with RANKED_TOP_N=40,
+--timeout 1200 (run 20260908T054115-hepkg-71515): judged 0.530 (+0.078 vs
+control, +0.054 vs enum3 = same stack without the ranked answer), reach 0.838,
+gold named 5.2 per record (highest of any arm), zero errors, median 306 s.
+gf-08 0.11 -> 0.34 (two records at 0.49 / 0.46, one at 0.08 with no papers_of
+call), gf-01-met +0.18, gf-01-condition 0.92 again. But the ask fired on 2 of 27
+records: the model names most of the page, so "fewer than half of the strong
+candidates" rarely holds -- the gf-08 gain came on a record that was shown 40
+candidates in the reordered rows, not asked. The +0.054 over enum3 is inside
+the 0.297 record spread. Next: RANKED_ASK_MIN_MISSING (ask when at least N
+strong candidates are unnamed; unset keeps this rule), run with N=3.
+Spend: $0.36 for enum4 + ranked40 + most of enum5.
+
