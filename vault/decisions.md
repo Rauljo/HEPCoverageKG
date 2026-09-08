@@ -5361,3 +5361,35 @@ it fires when answer names < half of grade>=2 candidates, and with a usable rank
 that condition is rarely met. Compare stack+enum 0.583 (D-131), which addresses the
 same handoff loss from the retrieval side and moves more.
 
+## D-133 -- wave 2 on the 164: the critic's effect is nil; and the ranker was blind on facets-first runs
+
+Wave 2 (QwQ-32B, 164 questions, runs 54257-54260, scored against wave 1):
+
+| arm | judged_f1 | set_f1 | reach | print rate |
+|---|---|---|---|---|
+| typed + critic (a, b) | 0.354 / 0.361 | 0.219 / 0.249 | 0.96 | 80-85% |
+| typed, no critic (a, b) | 0.426 / 0.363 | 0.207 / 0.223 | 0.97 | 85-88% |
+| free-SQL (a, b) | 0.209 / 0.360 | 0.300 / 0.265 | 0.54-0.59 | 10-15% |
+
+Floors (repeat-to-repeat): typed+critic 0.007 judged / 0.030 set; typed no-critic
+0.063 / 0.016; free-SQL 0.151 / 0.035. Critic effect on typed: -0.037 judged,
++0.018 set -- both inside the floors. The free-SQL arm's two repeats differ by
+0.15 because it prints ids in one answer in eight; its score is a coin toss on
+formatting, exactly D-107. Conclusion for the write-up: on the full set the
+relevance critic is not where the score lives; the arms of the night that move
+it (kind-fallback, max-rows, enum-expand) all act on retrieval reach or on the
+handoff, not on filtering.
+
+Also found while verifying wave 3's first records against their queued flags:
+every facets-first record (gf-01, gf-01-condition, gf-02, gf-04 -- four of the
+nine) carried a ranking with zero candidates and zero judge calls, on the
+cluster and on OpenRouter alike. The ranker built its evidence from
+`session.known_entity_ids`, which graph.py fills only after the executor
+returns; the ranker runs inside it. Fixed: the ranker now unions the ids of
+the rows it is ranking (commit after 1c7a2b7; test
+`test_ranker_uses_ids_of_the_rows_it_ranks`). Every `--rerank` number so far
+(D-120, D-122, D-132, wave-3 jobs 54262-54265 which run 7204b6d) therefore
+measures reranking on the search path only. Not pulled to DIAS until wave 3
+ends -- a mid-wave pull would change a lazily-imported module under running
+jobs.
+
