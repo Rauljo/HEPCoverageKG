@@ -777,6 +777,11 @@ class Session:
     # and why is the measurement, and a keep-rate alone hides a judge that is
     # defaulting (D-105).
     answer_review: Any = None
+    #: How many entities the kind fallback appended, summed over this run's
+    #: searches (D-119). Zero with the arm on and kinded searches made means
+    #: the arm did nothing -- the D-105 shape, and armcheck asserts it.
+    kind_fallback_added: int = 0
+    kinded_searches: int = 0
     #: Every `papers_of` reordering this run made (D-113). A list, because a
     #: run calls `papers_of` more than once and each call is a separate
     #: judgement whose spread has to be readable -- an arm whose rankings were
@@ -1423,6 +1428,15 @@ def _paper_ranker(conn, session, rerank, answer_critic):
     return rank
 
 
+def _fallback_counter(session):
+    """Counts kinded searches and appended entities onto the session (D-119)."""
+    def hook(added: int, kinded: bool = False):
+        if kinded:
+            session.kinded_searches += 1
+        session.kind_fallback_added += int(added)
+    return hook
+
+
 def build_executor(conn, index, sets: Optional[dict] = None,
                    critic: Optional[Callable] = None,
                    answer_contract: bool = False,
@@ -1430,7 +1444,8 @@ def build_executor(conn, index, sets: Optional[dict] = None,
                    rerank: bool = False,
                    rank_papers: Optional[Callable] = None,
                    question_of: Optional[Callable] = None,
-                   kind_fallback: bool = False) -> Callable[[str, dict], Any]:
+                   kind_fallback: bool = False,
+                   on_fallback: Optional[Callable] = None) -> Callable[[str, dict], Any]:
     """Bind the tools to this database, index and set of named results.
 
     Returned as a closure so the planner never holds a connection itself and
@@ -1534,6 +1549,8 @@ def build_executor(conn, index, sets: Optional[dict] = None,
             # searches: 61 -> 74 of 79 gold papers reached, at one extra local
             # search and zero LLM calls.
             fallback_added = 0
+            if args.get("kind") and on_fallback:
+                on_fallback(0, kinded=True)          # a kinded search happened
             if kind_fallback and args.get("kind"):
                 have = {h.entity_id for h in hits}
                 extra = [h for h in retrieve.search(index, args["text"], conn=conn,
@@ -1542,6 +1559,8 @@ def build_executor(conn, index, sets: Optional[dict] = None,
                 if extra:
                     hits = list(hits) + extra
                     fallback_added = len(extra)
+                    if on_fallback:
+                        on_fallback(fallback_added)
                     if critic:
                         review = critic(args["text"], hits, refresh=True)
             # `retrieve.concept` is `search` + `expand_canonical`, and the hits
@@ -2238,7 +2257,8 @@ def _prepare(conn, index, question, max_rounds, max_places, max_rows,
                                   rank_papers=_paper_ranker(conn, session, rerank,
                                                             answer_critic),
                                   question_of=lambda: question,
-                                  kind_fallback=kind_fallback),
+                                  kind_fallback=kind_fallback,
+                                  on_fallback=_fallback_counter(session)),
         "tools": [{"type": "function", "function": spec}
                   for spec in tools_for(answer_contract, contract, simple_answer,
                                         path_tool, name_ids)],

@@ -106,6 +106,9 @@ class Answer:
     # all refused as unusable is a no-op at double the price, and that has to be
     # readable in the run rather than guessed at from a score that did not move.
     rankings: list = field(default_factory=list)
+    #: The kind fallback (D-119): kinded searches made, entities it appended.
+    kinded_searches: int = 0
+    kind_fallback_added: int = 0
 
     error: str = ""                  # a crash, recorded rather than raised
 
@@ -395,6 +398,8 @@ def from_session(session, conn=None) -> Answer:
         gate_failed=bool(getattr(session, "answer_gate_failed", False)),
         answer_review=_answer_review_dict(getattr(session, "answer_review", None)),
         rankings=[r.to_dict() for r in getattr(session, "rankings", [])],
+        kinded_searches=getattr(session, "kinded_searches", 0),
+        kind_fallback_added=getattr(session, "kind_fallback_added", 0),
     )
 
 

@@ -56,3 +56,22 @@ def test_fallback_adds_nothing_when_unfiltered_finds_nothing_new(monkeypatch, tm
     ex = planner.build_executor(conn, index=None, sets={}, critic=None, kind_fallback=True)
     res = ex("search", {"text": "x", "kind": "detector_object"})
     assert "OTHER kinds" not in res.note
+
+
+def test_the_fallback_counts_itself_so_armcheck_can_see_it(monkeypatch, tmp_path):
+    """Switched on but silent is the D-105 shape; the record must carry both
+    how many kinded searches happened and how many entities were appended."""
+    from hepcoveragekg.query import planner
+    import sqlite3
+    conn = sqlite3.connect(":memory:"); conn.row_factory = sqlite3.Row
+    conn.executescript("CREATE TABLE entity_canonical(entity_id TEXT, canonical_id TEXT);")
+    def fake_search(index, text, conn=None, kind=None, limit=60, pool=200):
+        return [_hit("a")] if kind else [_hit("a"), _hit("b", "event_region"), _hit("c", "observable")]
+    monkeypatch.setattr(retrieve, "search", fake_search)
+    session = planner.Session(question="q")
+    ex = planner.build_executor(conn, index=None, sets={}, critic=None, kind_fallback=True,
+                                on_fallback=planner._fallback_counter(session))
+    ex("search", {"text": "Higgs", "kind": "detector_object"})
+    ex("search", {"text": "Higgs"})                       # unkinded: not a chance
+    assert session.kinded_searches == 1
+    assert session.kind_fallback_added == 2
