@@ -1425,8 +1425,16 @@ def _paper_ranker(conn, session, rerank, answer_critic=None):
                 papers.append(str(pid))
         if len(papers) < 2:
             return result
+        # The ids of the rows being ranked, not only what the session already
+        # knows: graph.py adds a result's ids to `known_entity_ids` AFTER the
+        # executor returns, and this ranker runs inside it -- so on a
+        # facets-first run (gf-01, gf-02, gf-04 every time) the known set was
+        # empty, the evidence was empty, and every ranking had zero
+        # candidates and zero judge calls, on OpenRouter and on the cluster
+        # alike (D-133).
+        ids = set(session.known_entity_ids) | _collect_ids(result.rows, result.note)
         try:
-            evidence = AC.evidence_by_paper(conn, session.known_entity_ids, papers)
+            evidence = AC.evidence_by_paper(conn, ids, papers)
             ranking = AC.rank_papers(chat, question, evidence)
         except Exception as exc:  # noqa: BLE001 -- a ranker must not kill a run
             logger.warning("paper rerank failed, order unchanged: %s", exc)

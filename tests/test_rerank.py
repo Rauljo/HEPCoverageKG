@@ -289,3 +289,24 @@ def test_ranking_to_dict_keeps_per_paper_grades():
     d = r.to_dict()
     assert d["grades"] == {"a": 3, "b": 1}
     assert d["graded"] == 2
+
+
+def test_ranker_uses_ids_of_the_rows_it_ranks(monkeypatch):
+    """A facets-first run has no known ids yet; the rows' own ids must feed the judge."""
+    from hepcoveragekg.query import planner, answer_critic as AC
+    from types import SimpleNamespace
+    seen = {}
+    def fake_evidence(conn, entity_ids, papers=None):
+        seen["ids"] = set(entity_ids)
+        return {p: (["l"], ["q"]) for p in papers}
+    monkeypatch.setattr(AC, "evidence_by_paper", fake_evidence)
+    monkeypatch.setattr(AC, "rank_papers", lambda chat, q, ev: AC.Ranking(question=q, order=sorted(ev), grades={p: 2 for p in ev}))
+    monkeypatch.setattr(planner, "_rank_client", lambda: (None, "stub"))
+    session = SimpleNamespace(known_entity_ids=set(), rankings=[])
+    rank = planner._paper_ranker(conn=object(), session=session, rerank=True)
+    rows = [{"paper_id": "p1", "entity_ids": ["hepkg:object:a"]},
+            {"paper_id": "p2", "entity_ids": ["hepkg:object:b"]}]
+    result = SimpleNamespace(rows=rows, note="")
+    rank("q", result)
+    assert seen["ids"] >= {"hepkg:object:a", "hepkg:object:b"}
+    assert len(session.rankings) == 1 and session.rankings[0].grades
