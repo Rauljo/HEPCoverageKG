@@ -5963,3 +5963,38 @@ examples demonstrate predicate hops, the Cypher examples (mine) demonstrate
 id resolution. Conclusion for the write-up: the language is not the
 variable; the examples are, and a matched pair would be the fair test.
 
+## D-148 -- the typed+SQL ensemble on Gabriel's 9: union 0.684, intersection 0.440
+
+Both sides answer every question (typed side = the D-139 full stack, SQL side
+= the plain free-SQL control), 3 repeats, 27 records each, zero errors on the
+union and one 1500 s timeout on the intersection (gf-08). Record means:
+
+| arm | judged_f1 | named / record | gold / record | judged-wrong | outside judged set | recall (all gold) | precision, judged set | precision if outside counted wrong | empty answers |
+|---|---|---|---|---|---|---|---|---|---|
+| typed control (1914) | 0.435 | 7.1 | 3.4 | 1.4 | 2.3 | 0.29 | 0.71 | 0.48 | 4/27 |
+| free-SQL (85223) | 0.571 | 9.4 | 4.4 | 1.0 | 4.0 | 0.37 | 0.81 | 0.46 | 1/27 |
+| full typed stack (72812) | 0.562 | 14.7 | 5.6 | 2.7 | 6.4 | 0.48 | 0.68 | 0.38 | 0/27 |
+| **union** of stack and free-SQL (86750) | **0.684** | 22.8 | 8.1 | 4.7 | 9.9 | **0.69** | 0.63 | 0.36 | 0/27 |
+| **intersection** (86768) | 0.440 | 8.1 | 3.6 | 0.5 | 4.0 | 0.31 | **0.87** | 0.44 | 6/27 |
+
+Union: judged_f1 0.684, the highest figure of the project (+0.23 over the
+control, +0.11 over either part), and every question rises or holds:
+gf-01-condition 0.36 -> 0.92, gf-02 0.65 -> 0.95, gf-05 0.07 -> 0.54, gf-08
+0.11 -> 0.41, gf-07 0.38 -> 0.56. Why it works: the two systems find
+DIFFERENT gold -- of the 220 gold names in the run, 148 came from both, 48
+from the typed stack alone, 24 from free-SQL alone, and their lists agree only
+0.44 by Jaccard. The price is the list: 22.8 names per answer, of which 4.7
+Gabriel judged wrong and 9.9 nobody judged, so precision on the judged set is
+0.63 and would be 0.36 if every unjudged name were wrong. Intersection: what
+both name is right (0.87 precision on the judged set, 0.5 judged-wrong per
+answer) but it is short -- recall 0.31, six empty answers -- and lands at
+the control's judged_f1.
+
+Reading: the ensemble is a precision/recall dial with the two systems as its
+ends, and judged_f1 rewards the recall end because it does not see the
+unjudged names (D-072). For a coverage map, which asks "what have we not
+looked at", the union is the right end; for a literature answer the
+intersection is. The write-up should present the dial, not the 0.684 alone.
+Cost: about $0.90 for the two runs; median 442 s per union record (two full
+answers). Day's OpenRouter total: $3.83.
+

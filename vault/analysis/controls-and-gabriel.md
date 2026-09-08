@@ -176,6 +176,20 @@ ways (recall is over *all* his gold, 106 slots per 27 records):
 | free-SQL (85223) | 0.571 | 9.4 | 4.4 | 4.0 | 0.81 | 0.46 | 0.37 |
 | full typed stack (72812 / 73785) | 0.562 / 0.579 | 14.8 | 5.8 | 6.3 | 0.68 | 0.39 | 0.49 |
 
+Adding the two systems together (D-148: the ensemble names the union or the
+intersection of what the full stack and free-SQL each wrote):
+
+| arm | judged_f1 | named | gold | outside judged set | recall (all gold) | precision, judged set |
+|---|---|---|---|---|---|---|
+| union | **0.684** | 22.8 | 8.1 | 9.9 | **0.69** | 0.63 |
+| intersection | 0.440 | 8.1 | 3.6 | 4.0 | 0.31 | **0.87** |
+
+The two systems find different gold (their lists agree 0.44 by Jaccard; 48
+gold names came from the typed stack alone and 24 from free-SQL alone), so
+the union is the highest-recall answer the project has and the intersection
+the most precise; judged_f1 rewards the union because it does not count the
+unjudged names.
+
 (judged_f1 here is the record mean; the per-question mean quoted elsewhere
 is 0.452 for the control.) So on Gabriel's questions the free-SQL baseline and
 the best typed stack tie on the headline, by different routes: free-SQL is the
