@@ -5730,3 +5730,27 @@ from the named answer the papers the usable 32B ranking graded 0 (P(gold)
 (D-142), not the headline. Expected: the stack over-names here; the strike
 should recover precision without the recall it buys on the 9.
 
+## D-143 outcome -- --name-ids alone on the 164: the judged loss recovered, the over-naming begins here
+
+54272 (control + --name-ids, same code as 54261): 164 records in 2h56, one
+timeout, median 218 s. Paired on the 164:
+
+| | set_f1 (98) | named-only f1 / p / r (n) | fallback | essay-only | count (20) | Gabriel-10 judged | prints |
+|---|---|---|---|---|---|---|---|
+| ctrl-c 54261 | 0.257 | 0.286 / 0.270 / 0.370 (47) | 51/98 | 0.137 | 0.20 | 0.297 | 85% |
+| ctrl + name-ids 54272 | 0.217 | 0.211 / 0.175 / 0.348 (88) | 10/98 | 0.190 | 0.25 | 0.428 | 94% |
+| stack 54268 | 0.194 | 0.203 / 0.189 / 0.416 (84) | 14/98 | 0.174 | 0.30 | 0.422 | 92% |
+
+Reading: (1) asking for ids in the text recovers the whole D-117 loss on the
+Gabriel 10 (0.297 -> 0.428; D-125 saw 0.354 -> 0.455 on the older code) and
+gives the best essay-only set score of any cluster arm. (2) Its headline
+set_f1 is BELOW the control's only because the control is scored on the
+retrieval footprint for 51 of 98 answers (D-142). (3) On the answers that
+name papers, precision falls from 0.270 to 0.175 the moment the model is
+asked to write ids: the over-naming D-142 attributed to the stack starts with
+--name-ids; the rest of the stack then adds recall (0.348 -> 0.416) at about
+that precision. So the write-up's account is: ids-in-text is what makes the
+answer measurable at all, and it costs exact-set precision on small-truth
+questions; the retrieval mechanisms add recall on top; whether a shorter
+list can be had without losing recall is D-144's question.
+
