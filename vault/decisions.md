@@ -5406,3 +5406,32 @@ gf-04 lost 0.19, gf-07 and gf-08 lost precision. Fixed in 392e43f: coverage is
 judged on the rows' evidence labels, with hyphen-split, singularised tokens.
 enum3 (same config, fixed code, plus the D-133 ranker fix) is the arbiter.
 
+## D-134 -- wave 3: the two ranked jobs cancelled at 06:40; the stack jobs run slow
+
+At the 06:35 check, wave 3 (started 05:32, five jobs on one QwQ server) stood at
+26 / 21 / 22 / 10 / 11 of 164 records for ctrl-c / stack-a / stack-b / ranked-a /
+ranked-b. The ranked jobs needed ~16 h; the server (54250, 24 h limit) had 9.5 h
+left. Five jobs sharing the server also pushed the per-question time up (median
+184 s control, 345 s stack) and 600 s timeouts to 3-4 per job so far, 12-19%,
+each scored as zero -- a wave-2 job lost 0-2 of 164. Cancelled 54264 and 54265
+(scancel; their partial files stay in eval/runs on DIAS). What they measured --
+--ranked-answer, and --rerank on the search path only, on 7204b6d -- D-132
+already found not worth promoting. The three remaining jobs (54261-54263) are
+the wave: typed+critic control vs stack (kind-fallback, name-ids, max-rows 100,
+rerank, answer-gate), ETA ~11:00. Their rerank is on the 9B judge, usable on
+1/16 and 3/17 rankings so far, so it is close to a no-op there (D-129): the
+stack-vs-control gap on the 164 is kind-fallback + max-rows + name-ids + gate.
+
+## D-131 addendum 3 -- enum3 on the fixed code: over-firing gone, ranker now active on facets rows, net 0.475
+
+enum3 (392e43f: coverage on labels, ranker on the rows it ranks, 32B ranker):
+judged 0.475 (+0.024 vs control), reach 0.859, gold named 4.5; no ranking with
+zero candidates (was 4 of 9 questions), 21/35 usable. Enumeration fired on
+11/27 records, no longer on gf-01 / gf-01-condition (gf-01-condition 0.36 ->
+0.87, best of any arm). Two losses: gf-01 0.55 -> 0.36 exactly where facets-row
+reranking switched on (usable on all three records), and gf-02 lost two of three
+records to a 900 s timeout and a facet_entities-only exit -- the 32B ranker on
+57-candidate sets is slow. Cost $0.20 per 27-record run (measured from the
+OpenRouter usage counter). Running enum4 = enum3 without --rerank to isolate
+the facets-row ranker.
+
