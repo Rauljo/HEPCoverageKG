@@ -5918,3 +5918,20 @@ examples put in front of the model -- a prompt effect of about 0.1-0.15 that
 a matched pair of worked examples would close. Not pursued further tonight;
 free-both v2 (both2) measures the language choice on the corrected brief.
 
+## D-147 addendum 4 -- free-both v2: the brief changed Cypher's score, not the model's choice
+
+Run 20260908T165700-free-both-87473 (Gabriel's 9, 3 repeats, corrected
+brief): judged_f1 0.484 (v1 0.432; free-SQL 0.571; free-cypher v2 0.429).
+Query calls 25 SQL, 7 Cypher, 34 searches; errors 1 SQL, 2 Cypher. By record:
+22 SQL only, 5 Cypher only, none mixed; first language SQL on 22 of 27 --
+identical to v1's 22/27. Offered both languages over the same graph, the
+model chooses SQL four times in five, and the choice did not move when
+Cypher became more effective. The five Cypher-only records average 0.72 to
+the SQL-only records' 0.43, which is a selection effect (which questions it
+picked Cypher for), not a language effect; the language effect is the pair of
+single-language runs, 0.571 vs 0.429. Summary of the arm for the write-up:
+a free-query baseline over this graph is SQL by the model's own preference;
+Cypher is a valid alternative that needs the alias layer explained and
+matched worked examples to reach parity; offering both is worth nothing over
+SQL alone. Cost of the four runs: about $0.45.
+
