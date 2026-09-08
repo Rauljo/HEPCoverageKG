@@ -5754,3 +5754,30 @@ answer measurable at all, and it costs exact-set precision on small-truth
 questions; the retrieval mechanisms add recall on top; whether a shorter
 list can be had without losing recall is D-144's question.
 
+## D-144 outcome -- on small-truth questions the stack ties on set_f1 and doubles recall; the grade strike is rejected
+
+60 paired records per arm (30 questions x 2 repeats, OpenRouter, aceefd6):
+
+| arm | set_f1 | named-only f1 / p / r | fallback | ids named | struck | errors |
+|---|---|---|---|---|---|---|
+| control | 0.278 | 0.274 / 0.217 / 0.478 | 5/60 | 12.2 | -- | 0 |
+| full stack | 0.292 | 0.300 / 0.220 / 0.767 | 4/60 | 27.4 | -- | 1 |
+| stack + STRIKE_GRADE_MAX=0 | 0.227 | 0.235 / 0.172 / 0.645 | 4/59 | 23.4 | 130 | 2 |
+
+Paired deltas against the control: stack +0.013 (se 0.028); strike -0.053
+(se 0.026). Two conclusions. (1) With qwen3-32b as the answerer the stack does
+NOT lose precision on small-truth questions: recall 0.48 -> 0.77 at precision
+0.22 either way, and set_f1 only ties because F1 is precision-bound for both.
+The precision loss in D-142 (cluster, QwQ) is therefore that model's behaviour
+under --name-ids, not the stack's design -- and even there the essay-only
+score rose (D-143). (2) The grade strike REMOVED GOLD: precision fell with
+recall, so on these questions a grade 0 from the 32B ranker is not evidence
+against a paper -- the judge sees a paper's retrieved labels and quotes, which
+for a generated question's small, specific truth often do not contain the
+deciding condition. REJECTED as a mechanism; STRIKE_GRADE_MAX stays in the code
+as the recorded negative result (default off), like --subgoal-status (D-130).
+The over-naming problem on the cluster is open; the honest write-up line is
+that ids-in-text is what makes the answer scoreable at all, that it trades
+exact-set precision for recall on QwQ, and that a judge-based strike does not
+buy the precision back. Bench cost $0.9; day's OpenRouter total $3.06.
+
