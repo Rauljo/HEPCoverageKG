@@ -5147,3 +5147,23 @@ ranked_answer_asked / ranked_answer_shown; armcheck asserts asked against shown.
 On the OpenRouter lane the judge is llama-3.1-8b, whose rankings were unusable
 on nearly every record (D-124), so this arm cannot be read there; the cluster's
 Qwen3.5-9B judge is the first real test. Off by default; needs --rerank.
+
+## D-129 — the cluster's judge refuses the middle of the scale too; the graded rerank has been mostly inert everywhere
+
+Wave-1 rerank+ac (54255, Qwen3.5-9B as judge): 97 rankings, 25 usable (26%).
+Grade spread over 2,599 graded papers: 3 -> 794, 2 -> 45, 1 -> 144, 0 -> 1616.
+Middle-grade share 7%. llama-3.1-8b on OpenRouter: about 6%. D-113's
+threshold is 12%; the judges that ranked well used the middle: gpt-4.1-mini 37%,
+qwen3-32b 23%.
+
+So the D-113 result (F1 0.591 -> 0.654 offline) has never been realised live
+on either endpoint: the guard correctly refused three quarters of the
+rankings, and --ranked-answer (D-128) would have had nothing to show on the
+same three quarters. The mechanism is fine; the judge it is given is binary in
+a grader's prompt.
+
+Before spending cluster hours on D-128: change what the judge is asked for. A
+small model orders candidates better than it calibrates absolute grades
+(D-113 noted RankGPT-style listwise ordering is better calibrated). Test
+offline against Gabriel's 253 verdicts, pointwise grade vs listwise order, on
+llama-8b / qwen3-14b / qwen3-32b, for cents, and only then choose.
