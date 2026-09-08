@@ -5167,3 +5167,27 @@ small model orders candidates better than it calibrates absolute grades
 (D-113 noted RankGPT-style listwise ordering is better calibrated). Test
 offline against Gabriel's 253 verdicts, pointwise grade vs listwise order, on
 llama-8b / qwen3-14b / qwen3-32b, for cents, and only then choose.
+
+## D-125 addendum — per question on QwQ: class C transfers, and the controls are near-identical
+
+Wave 1, Gabriel's 9, f1 and gold-named/named:
+
+    question          ctrl-a        ctrl-b        --name-ids      --name-ids +ac
+    gf-01-condition   0.17  1/3     0.17  1/3     0.76  8/18      0.76  8/18
+    gf-04             0.71 10/10    0.71 10/10    0.76 11/11      0.76 11/11
+    gf-07             0.00  0/3     0.00  0/0     0.18  1/1       0.00  0/3
+    gf-08             err           0.08  1/2     0.15  2/2       0.08  1/1
+    gf-02             0.71  6/6     0.71  6/6     0.53  4/4       0.53  4/4
+    gf-01-met         0.40  1/23    0.40  1/23    0.29  1/25      0.40  1/23
+    gf-05             0.12  1/1     0.11  1/2     0.11  1/2       0.12  1/1
+    gf-01 / gf-03     unchanged across all four
+
+gf-01-condition is the same question --name-ids fixed on qwen3-32b (D-117,
+D-126), by the same amount. gf-05 does not move: that is retrieval (the kind
+filter), and the fallback was not in wave 1. Adding the answer-critic filter
+erases gf-07's gain, 1 -> 0 -- D-124 once more.
+
+The two controls are IDENTICAL on seven of nine questions, to the paper. QwQ
+at temperature 0 on the cluster is near-deterministic per question, which is
+why the 0.007 judged_f1 floor is real and not luck. The variance D-093 saw
+(0.113) belonged to the earlier answer-contract failure, not to the model.
