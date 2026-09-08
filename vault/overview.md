@@ -1,7 +1,19 @@
 # Overview — current state
 
 *Living document: always reflects the present. History lives in `decisions.md` and `logs/`.*
-*Last updated: 2026-08-07*
+*Last updated: 2026-09-08*
+
+> **State on 2026-09-08 (one week to submission).** The map of the system, its arms and what
+> has been measured is [`system-inventory.md`](system-inventory.md); read it before the sections
+> below, which describe how the graph was built. The evaluation has two lanes: DIAS (QwQ-32B,
+> 164 questions, waves 1-3) and OpenRouter (qwen3-32b, Gabriel's 9 questions x 3 repeats, ~$0.25 a
+> run). Findings that shape the write-up: the relevance critic is worth nothing on the 164
+> (D-133); arm differences were formatting until `answer()` was recovered from XML and ids
+> were asked for in the text (D-107, D-116, D-117); the losses split into retrieval, handoff
+> and truncation (D-118, D-135); the stack that moves them -- kind-fallback, max-rows 100,
+> answer-gate, enum-expand with a set cap, rerank on a 32B judge, the ranked answer -- reaches
+> 0.562 against a 0.452 control on the 9 (D-139), with gf-08 alone worth +-0.05 of any such
+> comparison (D-138). Today's log: [`logs/2026-09-08.md`](logs/2026-09-08.md).
 
 > **→ [`system.md`](system.md) (v1.8, 2026-08-07) is now the reference document for what gets built
 > next**: the query system and the agent layers on top of the graph, the evaluation design, the
