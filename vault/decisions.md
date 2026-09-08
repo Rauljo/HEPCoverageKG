@@ -5714,3 +5714,19 @@ answers into one number; report `set_f1` on named-only records and the
 code change needed to report it). Count questions: 0.30 vs 0.20 (n 20, four
 records), inside noise. Scorer: eval/analysis/score_wave3.py.
 
+## D-144 -- the small-truth bench: where the over-naming lives, tested there
+
+D-142's loss is on generated set questions whose truth holds 2-8 papers;
+Gabriel's 9 (8-24 gold) cannot show it. Bench: 30 such questions drawn from
+eval/questions/discriminating-2026-09-03.jsonl (77 eligible: shape set, exact
+truth, no universe, 2-8 papers, seed 20260908; truth sizes 2:1 3:9 4:4 5:6 6:6
+7:3 8:1), saved as eval/questions/smalltruth30.jsonl. Three arms on
+OpenRouter, 2 repeats, same code (aceefd6): control (critic only); the full
+stack (D-139 flags, ENUM_LIMIT=20, RANKED_TOP_N=40, RANKED_ASK_MIN_MISSING=3);
+the full stack with STRIKE_GRADE_MAX=0 -- the grade strike, which removes
+from the named answer the papers the usable 32B ranking graded 0 (P(gold)
+0.15, D-135), keeps ungraded papers, and never empties an answer. Runs
+79460 / 79472 / 79485. Read set_f1 named-only with the fallback rate
+(D-142), not the headline. Expected: the stack over-names here; the strike
+should recover precision without the recall it buys on the 9.
+
