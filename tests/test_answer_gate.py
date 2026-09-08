@@ -307,7 +307,9 @@ def _prose(last_content, reason="", cfg=None):
     state = {"session": session, "pending_calls": [],
              "last_content": last_content}
     assert G.after_plan(state) == "finish"
-    assert state.get("_prose_answer"), "the exit must be marked for `finish`"
+    # D-127: the flag is set by the `plan` node (a routing function's writes
+    # are discarded). Mirror what `plan` does for a prose reply after retrieval.
+    state["_prose_answer"] = (not state["pending_calls"]) and bool(session.steps)
     G.finish(state, cfg or {"configurable": {}})
     return session
 
@@ -346,3 +348,72 @@ def test_a_harvested_abstention_is_honoured():
                'reason="not_in_graph"/>')
     assert s.answerable is False and s.reason == "not_in_graph"
     assert not s.answer_gate_failed, "an abstention names nothing, correctly"
+
+
+# --------------------------------------------------------------------------
+# D-127: the prose exit through the REAL graph, not two functions on one dict
+# --------------------------------------------------------------------------
+
+def _prose_chat(rounds_of_calls):
+    """A chat that makes `rounds_of_calls` tool calls, then writes prose."""
+    from types import SimpleNamespace
+    import json as _json
+    n = {"i": 0}
+    def chat(messages, tools=None):
+        n["i"] += 1
+        if n["i"] <= rounds_of_calls:
+            call = SimpleNamespace(id=f"c{n['i']}", type="function",
+                                   function=SimpleNamespace(name="search", arguments=_json.dumps({"text": "b-jet"})))
+            msg = SimpleNamespace(content="searching", tool_calls=[call])
+        else:
+            msg = SimpleNamespace(content="Okay, let's tackle this step by step. The analyses use b-jets.",
+                                  tool_calls=None)
+        return SimpleNamespace(choices=[SimpleNamespace(message=msg)], usage=None)
+    return chat
+
+
+def _run_graph(chat, gate=True, max_rounds=6):
+    from hepcoveragekg.query import graph as G, templates
+    session = planner.Session(question="which analyses use b-jets?")
+    def execute(name, args):
+        return templates.QueryResult(shape="search", rows=[{"entity_id": "e1", "label": "b-jet", "kind": "k"}],
+                                     note="saved as set_1")
+    state = {"question": session.question, "messages": [{"role": "user", "content": session.question}],
+             "session": session, "round": 0, "max_rounds": max_rounds, "max_places": 8, "max_rows": 25}
+    cfg = {"configurable": {"chat": chat, "execute": execute, "tools": [], "contract": "v3",
+                            "answer_gate": gate}, "recursion_limit": 40}
+    G.build().invoke(state, config=cfg)
+    return session
+
+
+def test_the_prose_exit_is_serviced_through_the_real_graph():
+    """38 + 9 live prose exits had gate_kind set 0 times: after_plan's write
+    was discarded by LangGraph. Through the compiled graph, the gate must see
+    a prose answer that names no ids."""
+    s = _run_graph(_prose_chat(rounds_of_calls=1))
+    assert "without calling answer()" in s.stopped_because
+    assert s.answer_gate_kind == "silent", s.answer_gate_kind
+    assert s.answer_gate_failed
+    assert s.answer_syntax == "prose" or s.answer_syntax == "none"
+
+
+def test_a_gate_retry_at_the_last_round_keeps_the_first_answer():
+    """gf-04: retry at round 5 of 6 blanked the answer, hit max_rounds, scored
+    0.00 with reach 1.00. A weak answer must not become no answer."""
+    from types import SimpleNamespace
+    import json as _json
+    n = {"i": 0}
+    def chat(messages, tools=None):
+        n["i"] += 1
+        if n["i"] == 1:
+            call = SimpleNamespace(id="c1", type="function",
+                                   function=SimpleNamespace(name="search", arguments=_json.dumps({"text": "x"})))
+            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content="", tool_calls=[call]))], usage=None)
+        # then: an answer() call naming nothing, every time
+        call = SimpleNamespace(id=f"a{n['i']}", type="function",
+                               function=SimpleNamespace(name="answer", arguments=_json.dumps({"text": "They are: [list of papers].", "reason": "answered"})))
+        return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content="", tool_calls=[call]))], usage=None)
+    s = _run_graph(chat, gate=True, max_rounds=2)
+    assert s.answer, "the first answer must survive"
+    assert "[list of papers]" in s.answer
+    assert s.answer_gate_failed

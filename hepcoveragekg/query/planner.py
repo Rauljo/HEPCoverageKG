@@ -771,6 +771,10 @@ class Session:
     answer_syntax: str = ""
     answer_gate_retried: bool = False
     answer_gate_failed: bool = False
+    #: The answer as written before the gate asked again (D-127). Restored in
+    #: `finish` when the retry yields nothing, so a weak answer is not turned
+    #: into no answer.
+    answer_before_gate: str = ""
 
     # THE ANSWER CRITIC (D-106). The per-paper review, or None when the arm is
     # off. Kept whole rather than reduced to a count: which papers it dropped

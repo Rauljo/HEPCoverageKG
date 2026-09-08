@@ -5099,3 +5099,30 @@ questions lost ground with reach UP -- gf-07 0.38 -> 0.09, gf-04 0.67 -> 0.48
 the precision half of the handoff, and the filter that would address it
 strikes gold (D-124). The next mechanism has to raise answer precision without
 being allowed to delete a paper.
+
+## D-127 — the prose-exit service never ran: a routing function's writes are discarded
+
+`after_plan` set `state["_prose_answer"] = True` and `finish` read it. In
+LangGraph a conditional-edge function returns a route; its mutations to state
+are not merged. Measured on prose exits in two live runs -- 38 in the wave-1
+--name-ids arm, 9 in the OpenRouter stack -- `gate_kind` was set 0 times and
+`cited` 0 times, while `answer_syntax` (set unconditionally in `finish`) was
+set 9/9. `finish` ran; it saw the flag as False; it labelled every prose exit
+"tool_call" and skipped the harvest, the citation resolver, the gate and the
+critic. The service built for the path 60-78% of answers take did nothing on
+any of them. Its tests passed because they called `after_plan` and `finish` on
+one dict, where the write survives.
+
+Every gain reported tonight came from the answer() path alone.
+
+Fixed: the flag is set in the `plan` node, whose returned state persists;
+`after_plan` only routes. Test drives the compiled graph with a stub chat that
+writes prose after one search, and asserts the gate saw it.
+
+Also fixed from the same forensics: the gate's retry costs a round and blanked
+the answer; at round 5 of 6 it then hit max_rounds with nothing (gf-04: 0.00
+with reach 1.00). It now asks only with a round to spare, stashes the text, and
+`finish` restores it if the retry yields nothing -- a weak answer does not
+become no answer.
+
+Pushed before wave 3 starts, so ctrl-c and the stack arms share it.

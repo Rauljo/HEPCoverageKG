@@ -204,6 +204,14 @@ def plan(state: PlannerState, config=None) -> PlannerState:
     if len(calls) > state["max_places"]:
         logger.info(f"round {state['round']}: {len(calls)} calls "
                     f"capped to {state['max_places']}")
+    # SET HERE, NOT IN after_plan (D-127). `after_plan` is a routing function:
+    # LangGraph reads its return value and discards its state mutations, so
+    # the flag it set never reached `finish`. Measured on 38 + 9 prose exits
+    # across two live runs: gate_kind set 0 times, cited 0 times -- the whole
+    # prose-exit service (harvest, citations, gate, critic) was inert while
+    # its tests passed, because the tests called both functions on one dict.
+    # A node's returned state persists; this is a node.
+    state["_prose_answer"] = (not calls) and bool(session.steps)
     return state
 
 
@@ -510,8 +518,14 @@ def execute(state: PlannerState, config=None) -> PlannerState:
                 verdict = _ag.check(session.answer, session.answer_cited,
                                     session.answerable, claimed)
                 session.answer_gate_kind = verdict.kind
-                if not verdict.ok and not session.answer_gate_retried:
+                if (not verdict.ok and not session.answer_gate_retried
+                        and state["round"] < state["max_rounds"]):
+                    # A retry costs a round. At the last round it would blank
+                    # the answer and then hit max_rounds with nothing to show:
+                    # gf-04 scored 0.00 with reach 1.00 exactly that way. So
+                    # ask only with a round to spare, and keep the text.
                     session.answer_gate_retried = True
+                    session.answer_before_gate = session.answer
                     logger.info("answer gate: %s -- asking once", verdict.kind)
                     state["messages"].append({
                         "role": "tool", "tool_call_id": call["id"],
@@ -647,6 +661,13 @@ def finish(state: PlannerState, config=None) -> PlannerState:
     runtime = _runtime(config)
     session = state["session"]
 
+    if not (session.answer or "").strip() and getattr(session, "answer_before_gate", ""):
+        # The gate asked again and nothing came back (max_rounds, or the model
+        # abandoned the call). The first answer was weak, not absent.
+        session.answer = session.answer_before_gate
+        session.answer_gate_failed = True
+        session.stopped_because = session.stopped_because or "gate retry yielded nothing; first answer kept"
+
     # CLASSIFIED HERE, FOR EVERY EXIT. Setting it in the answer branch recorded
     # "tool_call" for runs that ENTERED that branch and then left through the
     # prose path anyway -- a gate retry or a refused citation both `continue`.
@@ -776,7 +797,7 @@ def after_plan(state: PlannerState) -> str:
     # `_reviewing` in state. So this exit is MARKED here and serviced in
     # `finish`, which does get config. Before D-116 it was serviced nowhere,
     # and it is where about 70% of answers leave.
-    state["_prose_answer"] = True
+    # `_prose_answer` is set by `plan`; a routing function's writes are lost.
     return "finish"
 
 
