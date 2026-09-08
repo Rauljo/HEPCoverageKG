@@ -5887,3 +5887,14 @@ teach the RESOLVES_TO shape first; rerun follows. Lesson for the write-up:
 the projection's alias layer is a genuine difference between the two query
 surfaces, and a Cypher agent has to be told about it.
 
+## D-147 addendum 2 -- free-both v1: offered both, the model writes SQL four times out of five
+
+Run 20260908T164354-free-both-87056 (Gabriel's 9, 3 repeats, old brief):
+judged_f1 0.432 (free-SQL 0.571, free-cypher 0.317). Query calls: 28 SQL,
+8 Cypher, 31 searches; one SQL error, no Cypher errors. By record: 19 used
+SQL only, 5 Cypher only, 3 both; the first query was SQL on 22 of 27. So the
+answer to "does it actually use Cypher when both are there" is: rarely, and
+when it did (with the v1 brief) it scored like free-cypher. Whether the
+corrected brief changes the choice or only the Cypher score is what the v2
+runs (cypher2, both2) measure.
+
