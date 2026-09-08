@@ -4979,3 +4979,26 @@ remains is the handoff -- truncation (B) and summarise/empty/phantom-cite (C)
 -- and widening the candidate set makes those worse, not better. The next arm
 is the stack: --kind-fallback --name-ids --max-rows 100 --rerank
 --answer-critic. A single-lever result here would under-read every lever.
+
+## D-123 — the fallback moved the loss, it did not remove it; the handoff is now the larger half
+
+The D-118 decomposition applied to the two OpenRouter runs (replayed against
+the DIAS DB, errors excluded):
+
+                    records  gold   named       reached-not-named   never-reached
+    control            26     294   102 (35%)        92 (31%)         100 (34%)
+    --kind-fallback    20     222    75 (34%)       106 (48%)          41 (18%)
+
+Sixteen points of gold moved from never-reached to reached-but-not-named. The
+named share did not move. Before the arm the two losses were equal; after it
+the handoff is nearly three times the retrieval loss.
+
+This is what "F1 flat" means here, and it is not a null result: the retrieval
+side of class A is fixed, and the answer stage was already the binding
+constraint -- widening the candidate set only made that visible. gf-08 in one
+row: reach 1.00, gold named 0.
+
+Consequence for the loop: no further retrieval lever is worth testing alone
+until the handoff moves. The stack (--kind-fallback --name-ids --max-rows 100
+--rerank --answer-critic) is running; its decomposition against this table is
+the next read.
