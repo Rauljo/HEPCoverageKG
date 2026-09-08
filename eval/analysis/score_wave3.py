@@ -12,8 +12,16 @@ def col(n,k,qs): return [R[n][q]["scores"][k] for q in qs if q in R[n] and R[n][
 def row(n,qs):
     e=sum(1 for q in qs if q in R[n] and R[n][q]["answer"].get("error"))
     parts=[f"{n:22s} n={len([q for q in qs if q in R[n]]):3d}"]
-    for k,lab in (("set_f1","set_f1"),("count_correct","count"),("judged_f1","judged9"),("retrieval_reach","reach"),("answer_names_papers","prints")):
+    for k,lab in (("set_f1","set_f1"),("count_correct","count"),("judged_f1","judged10"),("retrieval_reach","reach"),("answer_names_papers","prints")):
         v=col(n,k,qs); parts.append(f"{lab}={m(v):.3f}(n{len(v):3d})")
+    # D-142: set_f1 falls back to the retrieval footprint when the text names
+    # no paper. Report the named-only score, its precision/recall, and how
+    # often the fallback fired, so the two answers are not one number.
+    setq=[q for q in qs if q in R[n] and R[n][q]["scores"].get("set_f1") is not None]
+    named=[q for q in setq if R[n][q]["scores"].get("set_named_none")!=1.0]
+    if setq:
+        fb=len(setq)-len(named)
+        parts.append(f"named-only f1={m([R[n][q]['scores']['set_f1'] for q in named]):.3f} p={m([R[n][q]['scores']['set_precision'] for q in named]):.3f} r={m([R[n][q]['scores']['set_recall'] for q in named]):.3f} (n{len(named):3d}) fallback={fb}/{len(setq)} essay-only={m([R[n][q]['scores']['set_f1'] if q in named else 0.0 for q in setq]):.3f}")
     parts.append(f"errs={e}")
     print("  ".join(parts))
 ctrl=set.intersection(*(set(R[n]) for n,_ in ARMS[:5] if R[n]))
