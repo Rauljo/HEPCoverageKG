@@ -5344,3 +5344,20 @@ qwen3-32b listwise: p@1 0.78, F1@16 0.599, against pointwise 0.89 / 0.645.
 The absolute-grade form is the better instrument at every size tested; the
 format was never the lever. The ranker keeps pointwise grades and its own
 32B endpoint.
+
+## D-132 -- ranked-answer live (OpenRouter, 32B judge): the judge is fixed, the prompt barely fires
+
+Stack (kind-fallback, name-ids, max-rows 100, rerank, answer-gate) + `--ranked-answer`
+with `RANK_MODEL=qwen/qwen3-32b`, 3 repeats on Gabriel's 9 (run 20260908T034622-hepkg-58086):
+judged_f1 0.506 vs control 0.452 (+0.054), reach 0.692 -> 0.868 (+0.176), gold named
+3.5 -> 4.9. Rankings usable 20/37 (54%), grade spread 3:153 / 2:41 / 1:112 / 0:242 --
+the 32B produces the middle grades the 8B never did (D-129), so the ranker is
+now a real mechanism, not a coin toss. But the ranked-answer prompt asked on only
+5 of 27 records (shown 7), and the gain over stack+gate (0.492) is +0.014 -- inside
+the 0.297 record spread. gf-04 lost 0.10 while its reach rose 0.22: more candidates
+shown, fewer of the right ones named. Verdict: keep `--rerank` on the 32B (it feeds
+reach), keep `--ranked-answer` off the main stack until its trigger is redesigned --
+it fires when answer names < half of grade>=2 candidates, and with a usable ranker
+that condition is rarely met. Compare stack+enum 0.583 (D-131), which addresses the
+same handoff loss from the retrieval side and moves more.
+
