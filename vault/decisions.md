@@ -5559,3 +5559,12 @@ the path the ranked ask now covers (D-136). For the write-up: report gf-08
 with its spread, or exclude it from per-arm deltas on the 9 and say why.
 Cost of the six repeats: under $0.05.
 
+## D-136 addendum -- RANKED_ASK_MIN_MISSING=3 alone: asks 6 of 27, score unchanged
+
+Run 20260908T062115-hepkg-72448 (4148f84: loose trigger, prose exit NOT yet
+serviced): judged 0.524 vs ranked40's 0.530, reach 0.873, one 1200 s timeout
+on gf-01. Asked on 6 records (4 answer() exits, 2 prose exits that had been
+asked earlier in the run); 15 prose exits never reached the hook -- the same
+hole D-136 closed in 84d2e92. The trigger was not the ceiling; the exit was.
+The full-stack run (72812) on 84d2e92 is the test of both together.
+
