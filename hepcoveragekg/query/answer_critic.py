@@ -397,3 +397,40 @@ def rank_papers(chat: Callable, question: str, evidence: dict,
             "spread %s", ranking.spread.get(2, 0) + ranking.spread.get(1, 0),
             len(ranking.grades), 100 * MIN_MIDDLE_SHARE, ranking.spread)
     return ranking
+
+
+def ranked_candidates(rankings, top_n: int = 15) -> list:
+    """This run's ranked papers, best first, merged across `papers_of` calls.
+
+    THE ANSWER NEVER SAW THE RANKING (D-128). `rank_papers` reorders tool rows
+    at execute time; by the time the model writes its answer, rounds later, it
+    composes from memory with no ranked list and no instruction that one exists.
+    gf-05: reach 1.00, 19 papers named, 13 wrong. This is the list the answer
+    step is handed, so the ranking finally acts where the answer is decided.
+
+    Only USABLE rankings count (a judge that refused the middle grades is not a
+    ranking, D-113). A paper keeps its best grade across calls. Returns
+    [(paper_id, grade)], best first, at most `top_n`.
+    """
+    best: dict = {}
+    for r in rankings or []:
+        if not getattr(r, "usable", False):
+            continue
+        for pid in r.order:
+            g = r.grades.get(pid)
+            if g is None:
+                continue
+            if pid not in best or g > best[pid]:
+                best[pid] = g
+    out = sorted(best.items(), key=lambda kv: -kv[1])
+    return out[:top_n]
+
+
+RANKED_MESSAGE = (
+    "Before that answer stands: a judge graded the candidate papers this run "
+    "retrieved against the question (3 = the retrieved text shows it satisfies "
+    "the condition, 2 = very likely, 1 = related but does not satisfy it). Best "
+    "first:\n{listing}\n\nYour answer names {named} of the {top} papers graded "
+    "3 or 2. Rewrite it, naming every paper that satisfies the question -- keep "
+    "any you already named that belong, and write the arXiv ids into the text."
+)

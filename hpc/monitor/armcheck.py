@@ -86,6 +86,12 @@ MECHANISMS = {
         # every kinded search is a chance; zero appended over many is a no-op
         lambda a, r: a.get("kinded_searches", 0),
     ),
+    "ranked_answer": (
+        "ranked-answer",
+        lambda a: int(bool(a.get("ranked_answer_asked"))),
+        # a chance = an answer() reached with a usable ranking in hand
+        lambda a, r: int(bool(a.get("ranked_answer_shown"))),
+    ),
     "rerank": (
         "rerank",
         lambda a: sum(x.get("graded", 0) for x in a.get("rankings", [])),

@@ -775,6 +775,9 @@ class Session:
     #: `finish` when the retry yields nothing, so a weak answer is not turned
     #: into no answer.
     answer_before_gate: str = ""
+    #: The ranked answer (D-128): did it ask, and how many candidates it held.
+    ranked_answer_asked: bool = False
+    ranked_answer_shown: int = 0
 
     # THE ANSWER CRITIC (D-106). The per-paper review, or None when the arm is
     # off. Kept whole rather than reduced to a count: which papers it dropped
@@ -2214,7 +2217,8 @@ def _prepare(conn, index, question, max_rounds, max_places, max_rows,
              fewshot="", tool_examples=False, reviewer=False,
              state_objective=False, subgoals=False, subgoal_status=False,
              path_tool=False, answer_gate=False, answer_critic=False,
-             rerank=False, name_ids=False, kind_fallback=False):
+             rerank=False, name_ids=False, kind_fallback=False,
+             ranked_answer=False):
     """The state and runtime config a run needs. Shared by answer() and stream()."""
     session = Session(question=question)
     if chat is None:
@@ -2320,6 +2324,7 @@ def _prepare(conn, index, question, max_rounds, max_places, max_rows,
     # model already wrote -- so the only thing an arm buys is the retry round.
     runtime["rerank"] = bool(rerank)
     runtime["kind_fallback"] = bool(kind_fallback)
+    runtime["ranked_answer"] = bool(ranked_answer)
     runtime["answer_gate"] = bool(answer_gate)
 
     # THE ANSWER CRITIC (D-106). Uses the SEARCH critic's endpoint, because the
@@ -2396,6 +2401,7 @@ def stream(
     rerank: bool = False,
     name_ids: bool = False,
     kind_fallback: bool = False,
+    ranked_answer: bool = False,
 ):
     """Yield `(node_name, session)` after each node completes.
 
@@ -2413,7 +2419,8 @@ def stream(
                                       fewshot, tool_examples, reviewer,
                                       state_objective, subgoals, subgoal_status,
                                       path_tool, answer_gate, answer_critic,
-                                      rerank, name_ids, kind_fallback)
+                                      rerank, name_ids, kind_fallback,
+                                      ranked_answer)
     started = time.perf_counter()
     app = graph_module.build(checkpointer=checkpointer)
     for update in app.stream(state, config=config, stream_mode="updates"):
@@ -2454,6 +2461,7 @@ def answer(
     rerank: bool = False,
     name_ids: bool = False,
     kind_fallback: bool = False,
+    ranked_answer: bool = False,
 ) -> Session:
     """Answer one question, returning the answer and the whole trace.
 
@@ -2479,7 +2487,8 @@ def answer(
                                       fewshot, tool_examples, reviewer,
                                       state_objective, subgoals, subgoal_status,
                                       path_tool, answer_gate, answer_critic,
-                                      rerank, name_ids, kind_fallback)
+                                      rerank, name_ids, kind_fallback,
+                                      ranked_answer)
     graph_module.build(checkpointer=checkpointer).invoke(state, config=config)
 
     session.seconds = time.perf_counter() - started

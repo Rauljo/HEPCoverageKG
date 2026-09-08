@@ -109,6 +109,9 @@ class Answer:
     #: The kind fallback (D-119): kinded searches made, entities it appended.
     kinded_searches: int = 0
     kind_fallback_added: int = 0
+    #: The ranked answer (D-128).
+    ranked_answer_asked: bool = False
+    ranked_answer_shown: int = 0
 
     error: str = ""                  # a crash, recorded rather than raised
 
@@ -400,6 +403,8 @@ def from_session(session, conn=None) -> Answer:
         rankings=[r.to_dict() for r in getattr(session, "rankings", [])],
         kinded_searches=getattr(session, "kinded_searches", 0),
         kind_fallback_added=getattr(session, "kind_fallback_added", 0),
+        ranked_answer_asked=bool(getattr(session, "ranked_answer_asked", False)),
+        ranked_answer_shown=getattr(session, "ranked_answer_shown", 0),
     )
 
 

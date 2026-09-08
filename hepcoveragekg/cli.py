@@ -596,6 +596,7 @@ def _cmd_eval(args) -> int:
                 rerank=args.rerank,
                 name_ids=args.name_ids,
                 kind_fallback=args.kind_fallback,
+                ranked_answer=args.ranked_answer,
             )
         system = make_system()
     else:
@@ -846,6 +847,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_eval.add_argument("--tool-examples", action="store_true",
                         help="planner: attach one real worked call per tool, "
                              "mined from runs that answered correctly")
+    p_eval.add_argument("--ranked-answer", action="store_true",
+                        help="planner: at answer(), if the run's graded ranking "
+                             "holds candidates the answer does not name, show "
+                             "them best-first with grades and ask once. Needs "
+                             "--rerank. Never removes a paper (D-128)")
     p_eval.add_argument("--kind-fallback", action="store_true",
                         help="planner: when a search names a `kind`, also "
                              "search without it and append what other kinds "

@@ -542,6 +542,34 @@ def execute(state: PlannerState, config=None) -> PlannerState:
                     logger.warning("answer gate: still no ids after retry (%s)",
                                    verdict.kind)
 
+            # THE RANKED ANSWER (D-128, arm). The ranking reorders rows at
+            # execute time and the answer, written rounds later, never sees it.
+            # Once per run, with a round to spare, if the answer names fewer
+            # than half of the top graded candidates, show the list and ask.
+            # Nothing is removed; the text is stashed like the gate's.
+            if (runtime.get("ranked_answer") and session.rankings
+                    and not session.ranked_answer_asked
+                    and state["round"] < state["max_rounds"]):
+                from hepcoveragekg.query import answer_critic as AC
+                cands = AC.ranked_candidates(session.rankings)
+                strong = [p for p, g in cands if g >= 2]
+                named_now = set(re.findall(r"\b\d{4}\.\d{4,5}\b", session.answer or ""))
+                session.ranked_answer_shown = len(cands)
+                if strong and len(named_now & set(strong)) < len(strong) / 2:
+                    session.ranked_answer_asked = True
+                    session.answer_before_gate = session.answer
+                    listing = "\n".join(f"  {p}  grade {g}" for p, g in cands)
+                    state["messages"].append({
+                        "role": "tool", "tool_call_id": call["id"],
+                        "content": AC.RANKED_MESSAGE.format(
+                            listing=listing, named=len(named_now & set(strong)),
+                            top=len(strong))})
+                    logger.info("ranked answer: named %d of %d strong candidates -- asking once",
+                                len(named_now & set(strong)), len(strong))
+                    session.answer = ""
+                    session.stopped_because = ""
+                    continue
+
             # THE ANSWER CRITIC (D-106, arm). Judges each cited PAPER against
             # the question. It only ever narrows `answer_papers`, so it cannot
             # invent coverage, and it runs after the gate so it never judges a
