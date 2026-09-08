@@ -4949,3 +4949,33 @@ arm is the STACK, not another single lever:
 
 A retrieval fix that widens the candidate set raises the price of a weak
 answer stage; measuring it alone under-reads it.
+
+## D-119 outcome — the kind fallback fixes retrieval and moves F1 not at all
+
+qwen3-32b + llama-8b critic, Gabriel's 9 x 3 repeats, control vs
+--kind-fallback, same code, errors excluded (control 26/27, arm 20/27 -- seven
+600 s timeouts at that night's OpenRouter latency).
+
+    question          reach C -> A        f1 C -> A      gold named C -> A
+    gf-05 Higgs        0.21 -> 0.66       0.07 -> 0.16      0.7 -> 1.5
+    gf-08 ee/mumu      0.52 -> 1.00       0.11 -> 0.00      1.5 -> 0.0
+    gf-07 ttZ+CR       0.63 -> 0.85       0.38 -> 0.24      1.0 -> 1.5
+    gf-04 unfolding    0.65 -> 0.85       0.67 -> 0.67      9.3 -> 9.3
+    gf-03 HistFitter   0.80 -> 0.93       0.89 -> 0.89      4.0 -> 4.0
+    gf-01-condition    1.00 -> 1.00       0.36 -> 0.08      3.3 -> 0.5
+    ALL                0.692 -> 0.820     0.452 -> 0.462    3.5 -> 3.8
+    control spread                 0.305             0.297
+
+Reach +0.128, in line with the offline prediction (D-119 addendum 2). No
+question lost reach. judged_f1 +0.010: flat, inside noise.
+
+gf-08 is the finding in one row: reach 1.00, f1 0.00, gold named 0. The model
+now reaches all 24 papers and names none of them. On gf-01-condition the
+fallback appended 54 entities, the critic dropped the right ones (addendum 3),
+and the answer wrote "38 papers (e.g. ...)" with a phantom set name.
+
+CONCLUSION. Class A is fixed by this arm on the retrieval side. The loss that
+remains is the handoff -- truncation (B) and summarise/empty/phantom-cite (C)
+-- and widening the candidate set makes those worse, not better. The next arm
+is the stack: --kind-fallback --name-ids --max-rows 100 --rerank
+--answer-critic. A single-lever result here would under-read every lever.
