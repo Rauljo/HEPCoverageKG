@@ -5568,3 +5568,32 @@ asked earlier in the run); 15 prose exits never reached the hook -- the same
 hole D-136 closed in 84d2e92. The trigger was not the ceiling; the exit was.
 The full-stack run (72812) on 84d2e92 is the test of both together.
 
+## D-139 -- the full candidate stack: 0.562 on Gabriel's 9, +0.110 over control
+
+Run 20260908T063144-hepkg-72812 on 84d2e92, OpenRouter (qwen3-32b answerer,
+llama-8b search critic, qwen3-32b ranker), 3 repeats, 27 records, zero errors,
+median 328 s, $0.25. Flags: --kind-fallback --name-ids --max-rows 100
+--answer-gate --enum-expand (ENUM_LIMIT=20) --rerank --ranked-answer
+(RANKED_TOP_N=40, RANKED_ASK_MIN_MISSING=3, prose exit serviced).
+
+| | judged_f1 | precision | recall | reach | gold named / record |
+|---|---|---|---|---|---|
+| control (1914) | 0.452 | 0.63 | 0.43 | 0.692 | 3.5 |
+| full stack | 0.562 | 0.761 | 0.525 | 0.871 | 5.6 |
+
+Per question: gf-01-condition +0.53, gf-05 +0.34, gf-08 +0.24, gf-01-met +0.12;
+gf-07 -0.09, gf-02 -0.08; the rest flat. Best complete run of the night
+(enum1's 0.583 had 23 records and four errors). The ranked ask fired 7 times,
+all in the answer() branch; every prose exit either had no usable ranking or
+nothing strong unnamed -- the prose path is wired (its `shown` is computed)
+and simply found nothing, so the remaining ranked-answer hole is the judge's
+usable rate, not the exit. Replicate running (fullstack2); read the two
+together against the 0.297 record spread before calling it.
+
+Ladder of the night, same 27 records, OpenRouter, control 0.452:
+stack+gate 0.492 (D-126) -> +enum (search branch only) 0.583* -> +facets
+trigger 0.498 -> +coverage fix 0.475 -> no rerank 0.470 -> ENUM_LIMIT=20 0.485
+-> +rerank+ranked answer at 40: 0.530 -> +loose trigger 0.524 -> full stack
+0.562. (*23 records, 4 errors.) On the 164 (wave 2): the critic itself is
+worth nothing; the arms that move are all on retrieval reach or the handoff.
+
