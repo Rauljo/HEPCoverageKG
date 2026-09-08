@@ -91,6 +91,7 @@ class PlannerState(TypedDict, total=False):
     # calling `answer`. `finish` then applies what the answer branch would
     # have: harvested arguments, citations, the gate, the critic.
     _prose_answer: bool
+    _ranked_prose_ask: bool
 
 
 # --------------------------------------------------------------------------
@@ -213,7 +214,55 @@ def plan(state: PlannerState, config=None) -> PlannerState:
     # its tests passed, because the tests called both functions on one dict.
     # A node's returned state persists; this is a node.
     state["_prose_answer"] = (not calls) and bool(session.steps)
+    # THE RANKED ANSWER ON THE PROSE EXIT (D-135). 14 of 27 records in the
+    # RANKED_TOP_N=40 run left as prose and the hook in `execute` never ran.
+    # Decided here, where `runtime` is in hand; routed by `after_plan`;
+    # the message is written by the `ranked_ask` node, which loops to `plan`.
+    state["_ranked_prose_ask"] = False
+    if (state["_prose_answer"] and runtime.get("ranked_answer") and session.rankings
+            and not session.ranked_answer_asked
+            and state["round"] < state["max_rounds"]):
+        cands, strong, named_now, ask = _ranked_ask_plan(
+            session, state.get("last_content") or "")
+        session.ranked_answer_shown = len(cands)
+        if ask:
+            state["_ranked_prose_ask"] = True
+            state["_prose_answer"] = False
     return state
+
+
+def _ranked_ask_plan(session, text):
+    """What the ranked answer would show, and whether to ask (D-128, D-135).
+
+    Shared by the `answer` tool branch and the prose exit. `strong` is the
+    graded-3-or-2 candidates; RANKED_TOP_N caps the list shown;
+    RANKED_ASK_MIN_MISSING, when set, asks whenever at least that many strong
+    candidates are unnamed (the D-132 rule, fewer than half named, fired on 2
+    of 27 records once the cap was 40 -- the model names most of the page).
+    """
+    from hepcoveragekg.query import answer_critic as AC
+    try:
+        top_n = int(os.environ.get("RANKED_TOP_N", "15") or 15)
+    except ValueError:
+        top_n = 15
+    cands = AC.ranked_candidates(session.rankings, top_n=top_n)
+    strong = [p for p, g in cands if g >= 2]
+    named_now = set(re.findall(r"\b\d{4}\.\d{4,5}\b", text or ""))
+    missing = len(set(strong) - named_now)
+    try:
+        min_missing = int(os.environ.get("RANKED_ASK_MIN_MISSING", "") or 0)
+    except ValueError:
+        min_missing = 0
+    should_ask = (missing >= min_missing) if min_missing > 0 else (
+        len(named_now & set(strong)) < len(strong) / 2)
+    return cands, strong, named_now, bool(strong and should_ask)
+
+
+def _ranked_message(cands, strong, named_now):
+    from hepcoveragekg.query import answer_critic as AC
+    listing = "\n".join(f"  {p}  grade {g}" for p, g in cands)
+    return AC.RANKED_MESSAGE.format(listing=listing, named=len(named_now & set(strong)),
+                                    top=len(strong))
 
 
 def _papers_resolver(runtime):
@@ -551,36 +600,15 @@ def execute(state: PlannerState, config=None) -> PlannerState:
             if (runtime.get("ranked_answer") and session.rankings
                     and not session.ranked_answer_asked
                     and state["round"] < state["max_rounds"]):
-                from hepcoveragekg.query import answer_critic as AC
-                # RANKED_TOP_N: gf-08 has 24 gold papers and the model was
-                # shown 15 of 43-52 candidates, so the cap, not the trigger,
-                # was the ceiling (D-135). Default 15 keeps D-132 reproducible.
-                cands = AC.ranked_candidates(
-                    session.rankings, top_n=int(os.environ.get("RANKED_TOP_N", "15") or 15))
-                strong = [p for p, g in cands if g >= 2]
-                named_now = set(re.findall(r"\b\d{4}\.\d{4,5}\b", session.answer or ""))
+                cands, strong, named_now, should_ask = _ranked_ask_plan(
+                    session, session.answer or "")
                 session.ranked_answer_shown = len(cands)
-                # RANKED_ASK_MIN_MISSING: with the cap at 40 the ask fired on 2
-                # of 27 records -- the model names most of the page, so "fewer
-                # than half" rarely holds while gf-08 still leaves 42 graded
-                # gold unnamed (D-135). When set, ask whenever at least that
-                # many strong candidates are unnamed. Unset keeps D-132's rule.
-                missing = len(set(strong) - named_now)
-                try:
-                    min_missing = int(os.environ.get("RANKED_ASK_MIN_MISSING", "") or 0)
-                except ValueError:
-                    min_missing = 0
-                should_ask = (missing >= min_missing) if min_missing > 0 else (
-                    len(named_now & set(strong)) < len(strong) / 2)
-                if strong and should_ask:
+                if should_ask:
                     session.ranked_answer_asked = True
                     session.answer_before_gate = session.answer
-                    listing = "\n".join(f"  {p}  grade {g}" for p, g in cands)
                     state["messages"].append({
                         "role": "tool", "tool_call_id": call["id"],
-                        "content": AC.RANKED_MESSAGE.format(
-                            listing=listing, named=len(named_now & set(strong)),
-                            top=len(strong))})
+                        "content": _ranked_message(cands, strong, named_now)})
                     logger.info("ranked answer: named %d of %d strong candidates -- asking once",
                                 len(named_now & set(strong)), len(strong))
                     session.answer = ""
@@ -683,6 +711,25 @@ def nudge(state: PlannerState) -> PlannerState:
     session = state["session"]
     session.nudged = True
     state["messages"].append({"role": "user", "content": planner.NUDGE})
+    return state
+
+
+def ranked_ask(state: PlannerState) -> PlannerState:
+    """The model wrote its answer as prose and left graded candidates unnamed.
+
+    Show the ranked list once and ask for the answer again, as a user turn
+    (there is no tool call to reply to). The prose is stashed like the gate's
+    so a worse second answer cannot erase it (`finish` restores it).
+    """
+    session = state["session"]
+    text = (state.get("last_content") or "").strip()
+    cands, strong, named_now, _ = _ranked_ask_plan(session, text)
+    session.ranked_answer_asked = True
+    session.ranked_answer_shown = len(cands)
+    session.answer_before_gate = text
+    state["messages"].append({"role": "user", "content": _ranked_message(cands, strong, named_now)})
+    logger.info("ranked answer on a prose exit: named %d of %d strong candidates -- asking once",
+                len(named_now & set(strong)), len(strong))
     return state
 
 
@@ -818,6 +865,8 @@ def after_plan(state: PlannerState) -> str:
     # prevent -- so ask once, then accept and flag it.
     if not session.steps and not session.nudged:
         return "nudge"
+    if state.get("_ranked_prose_ask"):
+        return "ranked_ask"
 
     # THE OTHER WAY AN ANSWER GETS OUT, and until 2026-09-06 nothing checked
     # it. The model wrote prose and made no tool call, so `last_content`
@@ -884,15 +933,18 @@ def build(checkpointer=None):
     g.add_node("review", review)
     g.add_node("execute", execute)
     g.add_node("nudge", nudge)
+    g.add_node("ranked_ask", ranked_ask)
     g.add_node("finish", finish)
 
     g.add_edge(START, "plan")
     g.add_conditional_edges("plan", after_plan,
                             {"review": "review", "execute": "execute",
-                             "nudge": "nudge", "finish": "finish"})
+                             "nudge": "nudge", "ranked_ask": "ranked_ask",
+                             "finish": "finish"})
     g.add_conditional_edges("review", after_review,
                             {"plan": "plan", "execute": "execute"})
     g.add_edge("nudge", "plan")
+    g.add_edge("ranked_ask", "plan")
     g.add_conditional_edges("execute", after_execute, {"plan": "plan", "finish": "finish"})
     g.add_edge("finish", END)
 

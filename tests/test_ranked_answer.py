@@ -74,3 +74,58 @@ def test_ranked_top_n_env_reaches_the_hook(monkeypatch):
     import os
     monkeypatch.setenv("RANKED_TOP_N", "40")
     assert int(os.environ.get("RANKED_TOP_N", "15") or 15) == 40
+
+
+def test_the_prose_exit_gets_the_ranked_list_through_the_real_graph():
+    """14 of 27 records in the RANKED_TOP_N=40 run left as prose and the hook
+    in `execute` never ran (D-135). Through the compiled graph: prose that
+    misses the strong candidates is asked once, and the second answer wins."""
+    from types import SimpleNamespace
+    from hepcoveragekg.query import graph as G, templates
+    n = {"i": 0}
+    def chat(messages, tools=None):
+        n["i"] += 1
+        if n["i"] == 1:
+            call = SimpleNamespace(id="c1", type="function",
+                                   function=SimpleNamespace(name="search", arguments=json.dumps({"text": "x"})))
+            msg = SimpleNamespace(content="searching", tool_calls=[call])
+        elif n["i"] == 2:
+            msg = SimpleNamespace(content="The analyses are 2009.09999.", tool_calls=None)
+        else:
+            assert "grade 3" in messages[-1]["content"], "the ranked list was shown"
+            msg = SimpleNamespace(content="They are 2001.00001 and 2002.00002.", tool_calls=None)
+        return SimpleNamespace(choices=[SimpleNamespace(message=msg)], usage=None)
+    session = planner.Session(question="q")
+    session.rankings = [_rk({"2001.00001": 3, "2002.00002": 3, "2003.00003": 1})]
+    def execute(name, args):
+        return templates.QueryResult(shape="search", rows=[{"entity_id": "e1", "label": "x", "kind": "k"}], note="saved as set_1")
+    state = {"question": "q", "messages": [{"role": "user", "content": "q"}], "session": session,
+             "round": 0, "max_rounds": 6, "max_places": 8, "max_rows": 25}
+    cfg = {"configurable": {"chat": chat, "execute": execute, "tools": [], "contract": "v3",
+                            "ranked_answer": True}, "recursion_limit": 40}
+    G.build().invoke(state, config=cfg)
+    assert n["i"] == 3, "asked exactly once"
+    assert session.ranked_answer_asked and session.ranked_answer_shown == 3
+    assert "2001.00001" in session.answer and "2002.00002" in session.answer
+    assert session.answer_before_gate.startswith("The analyses"), "the first prose is stashed"
+
+
+def test_the_prose_exit_is_not_asked_when_the_arm_is_off():
+    from types import SimpleNamespace
+    from hepcoveragekg.query import graph as G, templates
+    n = {"i": 0}
+    def chat(messages, tools=None):
+        n["i"] += 1
+        if n["i"] == 1:
+            call = SimpleNamespace(id="c1", type="function",
+                                   function=SimpleNamespace(name="search", arguments=json.dumps({"text": "x"})))
+            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content="s", tool_calls=[call]))], usage=None)
+        return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content="The analyses are 2009.09999.", tool_calls=None))], usage=None)
+    session = planner.Session(question="q")
+    session.rankings = [_rk({"2001.00001": 3, "2002.00002": 3, "2003.00003": 1})]
+    def execute(name, args):
+        return templates.QueryResult(shape="search", rows=[{"entity_id": "e1", "label": "x", "kind": "k"}], note="")
+    state = {"question": "q", "messages": [{"role": "user", "content": "q"}], "session": session,
+             "round": 0, "max_rounds": 6, "max_places": 8, "max_rows": 25}
+    G.build().invoke(state, config={"configurable": {"chat": chat, "execute": execute, "tools": [], "contract": "v3"}, "recursion_limit": 40})
+    assert n["i"] == 2 and not session.ranked_answer_asked
