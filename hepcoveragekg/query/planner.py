@@ -1519,6 +1519,22 @@ def _enum_facets_note(conn, index, sets, question_text, covered_text, limit, on_
             f"to see their papers.")
 
 
+def _enum_tokens(text: str) -> set[str]:
+    """Words of `text`, hyphen-split and singularised, so that a question's
+    "b-tagged jets" meets a facet label's "$b$-tagged jet" (D-133 addendum:
+    token-exact matching made enumeration re-search every concept a facets
+    call had already covered, and poured 60-150 entities into the set)."""
+    out: set[str] = set()
+    for w in re.findall(r"[A-Za-z][A-Za-z\-]*", text):
+        for part in w.lower().split("-"):
+            if len(part) < 2:
+                continue
+            if len(part) > 3 and part.endswith("s") and not part.endswith("ss"):
+                part = part[:-1]
+            out.add(part)
+    return out
+
+
 def _covers(search_text: str, concept: str) -> bool:
     """Did the model's own search already name this concept?
 
@@ -1526,8 +1542,8 @@ def _covers(search_text: str, concept: str) -> bool:
     "method" as shared between "ABCD method" and "matrix method" and never
     searched the second -- the exact miss this mechanism exists to close.
     """
-    a = {w.lower() for w in re.findall(r"[A-Za-z][A-Za-z\-]+", search_text or "")}
-    b = {w.lower() for w in re.findall(r"[A-Za-z][A-Za-z\-]+", concept)} - _ENUM_STOP
+    a = _enum_tokens(search_text or "")
+    b = _enum_tokens(concept) - _ENUM_STOP
     specific = b - _ENUM_GENERIC
     key = specific or b
     return bool(key) and len(a & key) >= max(1, len(key) // 2)
@@ -1843,8 +1859,18 @@ def build_executor(conn, index, sets: Optional[dict] = None,
             # gf-02 is facets-first every time (D-131 outcome). Expand here.
             if enum_expand and question_text and not sets:
                 vals = values if isinstance(values, list) else [values]
+                # Coverage is judged on what the facet call actually matched
+                # (the rows' evidence labels), not on its codes: "BJet" does
+                # not read as "b-tagged jets", and enumeration re-searched
+                # every concept the facet had already found (D-133 addendum).
+                covered = [str(v) for v in vals]
+                for row in result.rows[:400]:
+                    if isinstance(row, dict):
+                        covered.extend(str(x) for x in (row.get("evidence_labels") or []))
+                        if row.get("matched"):
+                            covered.append(str(row["matched"]))
                 frag = _enum_facets_note(conn, index, sets, question_text,
-                                         " ".join(str(v) for v in vals), SEARCH_BREADTH, on_enum)
+                                         " ".join(covered), SEARCH_BREADTH, on_enum)
                 if frag:
                     result.note = (result.note or "") + frag
             return result

@@ -80,3 +80,17 @@ def test_a_facets_first_run_still_expands(monkeypatch):
     assert not any("abcd" in t.lower() for t in seen), "ABCD is covered by the facet value"
     assert "set_1" in sets and "saved as set_1" in res.note
     assert session.enum_concepts >= 2 and session.enum_added >= 2
+
+
+def test_covers_tolerates_hyphens_and_plurals():
+    from hepcoveragekg.query.planner import _covers
+    labels = "BJet MET $b$-tagged jet Missing transverse momentum ($E_T^{miss}$)"
+    assert _covers(labels, "b-tagged jets")
+    assert _covers(labels, "missing transverse momentum")
+    # the miss this mechanism exists to close must still fire
+    assert not _covers("ABCD method", "matrix method")
+
+
+def test_facet_codes_alone_do_not_cover():
+    from hepcoveragekg.query.planner import _covers
+    assert not _covers("BJet MET", "b-tagged jets")
