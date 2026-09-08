@@ -5837,3 +5837,35 @@ possible. The typed arms' contribution is recall on the questions whose
 concept is spread across labels, and the ability to be measured mechanism by
 mechanism. The critic's sign flips between lanes (analysis doc 1.6).
 
+## D-147 -- two new arms asked for on 2026-09-08 evening: Cypher as a query language, and a typed+SQL ensemble
+
+**Cypher.** The graph's Neo4j projection (kg/export.py, D-022: Paper,
+Occurrence and one-label-per-kind concept nodes; HAS_OCCURRENCE, RESOLVES_TO,
+MENTIONS, and the assertion predicates as relationship types) was re-exported
+from the current SQLite and re-imported into the local Neo4j `neo4j` database
+(the Aug-19 copy was stale; the user's `hepcoverage` database is untouched).
+The free-SQL control gained a read-only `cypher` tool (write clauses refused
+before the driver, READ session, 200-row and 15 s caps, node values rendered
+as property maps) and a `languages` setting: `free-sql` = ("sql",) as before,
+`free-cypher` = ("cypher",), `free-both` = both, with the schema brief,
+worked examples and prompt adapted per language and the language of every
+call recorded in the step (`tool` = sql | cypher). The question the user
+asked -- does the model actually reach for Cypher when both are offered --
+is answered by counting steps by tool in the free-both run. Credentials come
+from NEO4J_URI / NEO4J_USERNAME / NEO4J_PASSWORD in .env, never on a command
+line; with no password the tool returns a clear error and the arm records
+`neo4j: false`. Commit 1564f8d, tests in tests/test_cypher_tool.py. Runs wait
+on the password.
+
+**Ensemble.** `--system ensemble` answers every question twice -- the typed
+planner with whatever planner flags are on the command line (here the full
+D-139 stack) and the plain free-SQL control -- and names the union or the
+intersection of the arXiv ids the two sides wrote (ENSEMBLE_MODE). Both
+sides' steps and answer texts are kept in the record, tagged by side, so the
+agreement rate and each side's own score can be read back. Rationale D-146:
+free-SQL is the more precise system on Gabriel's 9 and the typed stack the
+higher-recall one, tied on judged_f1; the union should raise recall and the
+intersection precision, and the interesting number is whether either beats
+0.57. Runs 86750 (union) and 86768 (intersection), 3 repeats each, ~$0.45 a
+run. Commit 1564f8d, tests in tests/test_ensemble.py.
+
