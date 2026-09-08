@@ -5460,3 +5460,23 @@ entered a papers_of call. What would move it: (a) gf-08 -- the model has the
 list and does not write it, the D-128 prompt's case; (b) gf-02 / gf-08 --
 query formulation, D-121's finding, partly answered by enum-expand.
 
+## D-131 addendum 4 -- four live runs of enum-expand; the ranker isolated
+
+| run | code | rerank | judged | reach | errors | median s |
+|---|---|---|---|---|---|---|
+| enum1 (44660) | search-branch trigger only | on (8B, inert) | 0.583 (23 rec, 4 errors) | 0.818 | 4 | 188 |
+| enum2 (67385) | + facets-first trigger | on (32B, empty on facets) | 0.498 | 0.902 | 0 | 158 |
+| enum3 (70489) | + coverage on labels, ranker on facets rows | on (32B) | 0.475 | 0.859 | 1 | 274 |
+| enum4 (71158) | same as enum3 | off | 0.470 | 0.895 | 0 | 131 |
+
+Control 0.452, record spread 0.297. Verdicts: (1) enum-expand is worth about
++0.02 to +0.05 judged and +0.20 reach; the 0.583 of the first run was the
+outlier (23 records, four errors). (2) The facets-row ranker, isolated by
+enum3 vs enum4, moves nothing (+0.005) and doubles the median time -- as D-135
+predicted, a reorder is invisible when the model names the page. --rerank
+stays off the recommended stack. (3) The stable winner is gf-01-condition,
+0.36 -> 0.75 / 0.87 / 0.92 across the three facets-first runs; the stable
+losers are gf-04 (0.67 -> 0.48 / 0.61 / 0.35) and gf-07, where the enumeration
+set holds 140-176 entities after canonical expansion and papers_of on it fills
+100 rows the model then names. The next knob is the size of that set.
+
