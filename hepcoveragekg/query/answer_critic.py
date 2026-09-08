@@ -325,7 +325,10 @@ class Ranking:
                 "graded": len(self.grades), "ungraded": len(self.ungraded),
                 "spread": {str(k): v for k, v in self.spread.items()},
                 "usable": self.usable, "calls": self.calls,
-                "errors": self.errors, "seconds": round(self.seconds, 2)}
+                "errors": self.errors, "seconds": round(self.seconds, 2),
+                # Per-paper grades, so a run file can answer "was the gold
+                # paper in the top grade and still not named?" (D-132).
+                "grades": {str(k): int(v) for k, v in self.grades.items()}}
 
 
 def _parse_grades(raw: str, expected: set) -> dict:

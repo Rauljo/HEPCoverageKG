@@ -281,3 +281,11 @@ def test_the_ranker_uses_its_own_endpoint_when_given_one(monkeypatch):
     monkeypatch.setenv("RANK_API_KEY", "k")
     client, model = P._rank_client()
     assert model == "qwen/qwen3-32b" and client != "CRITIC"
+
+
+def test_ranking_to_dict_keeps_per_paper_grades():
+    from hepcoveragekg.query.answer_critic import Ranking
+    r = Ranking(question="q", order=["a", "b"], grades={"a": 3, "b": 1})
+    d = r.to_dict()
+    assert d["grades"] == {"a": 3, "b": 1}
+    assert d["graded"] == 2
