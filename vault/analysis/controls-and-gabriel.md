@@ -123,11 +123,25 @@ Z+jets and tt̄, nonresonant WW, top quark, triboson, WZ/Vγ/Vγ* multiboson, an
 ZZ" -- a correct answer that scores 0.00 mentioned because none of the stored
 labels appears whole, while free-SQL's answer to the same question, which is
 its chain of thought, scores 0.71 because it copies label strings from its
-rows. What survives the caveat: the typed planner finds these entities
-essentially always (0.97), and it paraphrases rather than lists; free-SQL
-tends to copy rows into the answer. Whether paraphrase is a loss depends on
-the reader; for a coverage map the entity ids are the answer and neither
-system writes those.
+rows. Re-scored with a fuzzy match (`mentioned_label_recall_fuzzy`, commit 0c2da4b:
+a label counts when at least half its specific content, weighted by token
+length, appears in the answer; generic words such as background, jets, boson
+carry no weight, one-letter tokens such as W and Z do):
+
+| arm | mentioned, strict | mentioned, fuzzy |
+|---|---|---|
+| typed, no critic a / b | 0.296 / 0.297 | 0.773 / 0.772 |
+| typed, critic a (w1) / ctrl-c (w3) | 0.368 / 0.350 | 0.778 / 0.807 |
+| typed + name-ids (w3) / typed stack (w3) | 0.280 / 0.285 | 0.673 / 0.673 |
+| free-SQL a / b | 0.500 / 0.541 | 0.751 / 0.812 |
+
+Read fairly, the two systems say the same share of the truth labels (0.77-0.81
+against 0.75-0.81); the strict numbers measured copying. Two things remain
+true: the typed planner's retrieval is complete (0.97 by id) and neither
+system writes the entity ids, which for a coverage map are the answer. And
+one new thing: the arms that ask for arXiv ids in the text (name-ids, the
+stack) say fewer of the labels (0.67) -- when the answer becomes a list of
+paper ids it stops describing what the paper contains.
 
 ### 1.5 Gabriel's questions inside the 164 (9; one repeat per job)
 
