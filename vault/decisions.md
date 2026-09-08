@@ -5509,3 +5509,23 @@ question alone. Recommendation for the stack: enum-expand with ENUM_LIMIT=20,
 no rerank. For the write-up: gf-08 (24 gold, 'list every search with parallel
 ee/mumu selections') needs its own repeats (>=5) before any per-arm claim.
 
+## D-136 -- the ranked answer reached 10 of 27 records; two coverage holes closed
+
+Counting the RANKED_TOP_N=40 run by exit and ranking state: 14 of 27 records
+left as prose and the ranked-answer hook, which lives in the `answer` tool
+branch, never ran; 12 had no usable ranking (facets-first, or a judge that
+refused the middle grades); the hook saw candidates on 10, asked on 2. The
+mechanism was measured while mostly absent -- the D-127 pattern again, one
+exit serviced and the other not.
+
+Fixes (4148f84, 84d2e92): (1) RANKED_ASK_MIN_MISSING asks whenever at least N
+strong candidates are unnamed (unset keeps the D-132 half-rule); (2) the
+prose exit is serviced: `plan` decides with the runtime in hand, `after_plan`
+routes to a `ranked_ask` node that shows the list as a user turn and loops to
+`plan`; the first prose is stashed like the gate's; one trigger helper serves
+both exits; two tests through the compiled graph. The unusable-ranking hole
+is the judge's (D-129, D-135) and stays open. Running: the full candidate
+stack -- kind-fallback, name-ids, max-rows 100, answer-gate, enum-expand with
+ENUM_LIMIT=20, rerank (32B), ranked answer at 40 with min-missing 3, prose
+exit serviced -- run 20260908T063144-hepkg-72812.
+
