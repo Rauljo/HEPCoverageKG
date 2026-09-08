@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import time
 from typing import Any, Callable, Optional, TypedDict
@@ -551,7 +552,11 @@ def execute(state: PlannerState, config=None) -> PlannerState:
                     and not session.ranked_answer_asked
                     and state["round"] < state["max_rounds"]):
                 from hepcoveragekg.query import answer_critic as AC
-                cands = AC.ranked_candidates(session.rankings)
+                # RANKED_TOP_N: gf-08 has 24 gold papers and the model was
+                # shown 15 of 43-52 candidates, so the cap, not the trigger,
+                # was the ceiling (D-135). Default 15 keeps D-132 reproducible.
+                cands = AC.ranked_candidates(
+                    session.rankings, top_n=int(os.environ.get("RANKED_TOP_N", "15") or 15))
                 strong = [p for p, g in cands if g >= 2]
                 named_now = set(re.findall(r"\b\d{4}\.\d{4,5}\b", session.answer or ""))
                 session.ranked_answer_shown = len(cands)

@@ -295,6 +295,8 @@ class PlannerSystem:
             # The ranker's judge, when it differs from the critic's (D-129).
             "env.RANK_MODEL": os.environ.get("RANK_MODEL", ""),
             "env.RANK_BASE_URL": os.environ.get("RANK_BASE_URL", ""),
+            # How many ranked candidates the ranked answer shows (D-135).
+            "env.RANKED_TOP_N": os.environ.get("RANKED_TOP_N", ""),
             **effective_config(planner.answer, planner_kwargs),
         }
 

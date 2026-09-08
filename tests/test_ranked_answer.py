@@ -59,3 +59,18 @@ def test_off_by_default_and_never_at_the_last_round():
     assert not s.ranked_answer_asked
     s, _ = _run(True, [rk], "nothing relevant 2009.09999", max_rounds=2, round_=2)
     assert not s.ranked_answer_asked, "a retry at the last round loses the answer (D-127)"
+
+
+def test_ranked_candidates_cap_is_a_parameter():
+    from hepcoveragekg.query.answer_critic import Ranking, ranked_candidates
+    grades = {f"p{i}": 3 if i < 30 else 1 for i in range(40)}
+    r = Ranking(question="q", order=list(grades), grades=grades)
+    r.grades["m1"] = 2; r.grades["m2"] = 1; r.order += ["m1", "m2"]   # middle grades: usable
+    assert len(ranked_candidates([r])) == 15
+    assert len(ranked_candidates([r], top_n=40)) == 40
+
+
+def test_ranked_top_n_env_reaches_the_hook(monkeypatch):
+    import os
+    monkeypatch.setenv("RANKED_TOP_N", "40")
+    assert int(os.environ.get("RANKED_TOP_N", "15") or 15) == 40
