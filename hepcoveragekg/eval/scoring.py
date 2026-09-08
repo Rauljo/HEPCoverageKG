@@ -449,7 +449,29 @@ def label_recall(q: Question, a: Answer) -> Optional[dict]:
         out["mentioned_label_recall"] = hits / len(labels)
         out["truncation_loss_labels"] = (
             out["retrieved_label_recall"] - out["mentioned_label_recall"])
+        # FUZZY (2026-09-08): the strict containment above scores a correct
+        # paraphrase 0 -- "Drell-Yan" against a stored "Drell-Yan background
+        # from ..." -- and rewards copying rows into the answer. A label counts
+        # here when at least 60% of its content words (4+ letters, stop words
+        # dropped) appear in the answer; a one-word label needs that word.
+        out["mentioned_label_recall_fuzzy"] = (
+            sum(1 for lbl in labels if _label_fuzzy_hit(lbl, text)) / len(labels))
     return out
+
+
+_LABEL_STOP = {"background", "backgrounds", "process", "processes", "region", "regions",
+               "object", "objects", "sample", "samples", "method", "methods", "with", "from",
+               "and", "the", "for", "that", "into", "using", "based", "level", "control",
+               "signal", "selection", "events", "event", "candidate", "candidates"}
+
+
+def _label_fuzzy_hit(label: str, normalised_answer: str) -> bool:
+    words = [w for w in _normalise_text(label).split() if len(w) >= 4 and w not in _LABEL_STOP]
+    if not words:                       # nothing specific to match on
+        return _normalise_text(label) in normalised_answer if len(_normalise_text(label)) >= 4 else False
+    have = set(normalised_answer.split())
+    hit = sum(1 for w in words if w in have)
+    return hit / len(words) >= 0.6
 
 
 def _normalise_text(text: str) -> str:
