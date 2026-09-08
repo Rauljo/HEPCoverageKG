@@ -597,6 +597,7 @@ def _cmd_eval(args) -> int:
                 name_ids=args.name_ids,
                 kind_fallback=args.kind_fallback,
                 ranked_answer=args.ranked_answer,
+                enum_expand=args.enum_expand,
             )
         system = make_system()
     else:
@@ -847,6 +848,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_eval.add_argument("--tool-examples", action="store_true",
                         help="planner: attach one real worked call per tool, "
                              "mined from runs that answered correctly")
+    p_eval.add_argument("--enum-expand", action="store_true",
+                        help="planner: on the first search, also search every "
+                             "concept the question itself enumerates that the "
+                             "search text does not cover. Offline: gf-02 8/11 "
+                             "-> 11/11, gf-01 4/8 -> 8/8 (D-131)")
     p_eval.add_argument("--ranked-answer", action="store_true",
                         help="planner: at answer(), if the run's graded ranking "
                              "holds candidates the answer does not name, show "

@@ -112,6 +112,9 @@ class Answer:
     #: The ranked answer (D-128).
     ranked_answer_asked: bool = False
     ranked_answer_shown: int = 0
+    #: Enumeration expansion (D-131).
+    enum_concepts: int = 0
+    enum_added: int = 0
 
     error: str = ""                  # a crash, recorded rather than raised
 
@@ -405,6 +408,8 @@ def from_session(session, conn=None) -> Answer:
         kind_fallback_added=getattr(session, "kind_fallback_added", 0),
         ranked_answer_asked=bool(getattr(session, "ranked_answer_asked", False)),
         ranked_answer_shown=getattr(session, "ranked_answer_shown", 0),
+        enum_concepts=getattr(session, "enum_concepts", 0),
+        enum_added=getattr(session, "enum_added", 0),
     )
 
 

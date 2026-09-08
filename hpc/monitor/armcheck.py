@@ -86,6 +86,11 @@ MECHANISMS = {
         # every kinded search is a chance; zero appended over many is a no-op
         lambda a, r: a.get("kinded_searches", 0),
     ),
+    "enum_expand": (
+        "enum-expand",
+        lambda a: a.get("enum_added", 0),
+        lambda a, r: a.get("enum_concepts", 0),
+    ),
     "ranked_answer": (
         "ranked-answer",
         lambda a: int(bool(a.get("ranked_answer_asked"))),

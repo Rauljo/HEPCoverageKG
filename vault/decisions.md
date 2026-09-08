@@ -5245,3 +5245,29 @@ beating noise on both axes) was on the pre-D-116 system.
 Retired from the stack. The multi-concept failure needs a mechanism that
 issues the searches the question already names, not one that asks the model
 to plan them.
+
+## D-131 — search the concepts the question already names (--enum-expand)
+
+gf-02 names three methods and the model faceted one; --subgoal-status asked
+the model to decompose and it still faceted one (D-130). The concepts are in
+the question text, separated by the question's own conjunctions. Splitting on
+', or' / ' or ' / ' and ' / commas -- dropping parentheticals (they restate)
+and a trailing "rather than ..." (it negates) -- yields them deterministically.
+
+Offline, searches the model typed plus the enumerated concepts, DIAS DB:
+
+    gf-02   8/11 -> 11/11      ['ABCD method', 'ABCD-style sideband', 'matrix method ...']
+    gf-01   4/8  ->  8/8       ['b-tagged jets', 'missing transverse momentum']
+    gf-04  17/18 -> 18/18      ['unfold ...', 'particle level', 'truth level']
+    no question lower
+
+Mechanism: once per run, on the first search, every enumerated concept the
+searched text does not cover is searched unfiltered and appended; the note
+tells the model which concepts were added; the critic judges the union.
+Coverage is token overlap on the concept's SPECIFIC words -- the first draft
+counted "method" as shared between "ABCD method" and "matrix method" and
+never searched the second. Counted as enum_concepts / enum_added; armcheck
+asserts added against concepts. Off by default. No LLM call.
+
+Where it cannot help: gf-05 enumerates nothing -- one concept the graph types
+several ways; that is D-119's territory.

@@ -789,6 +789,10 @@ class Session:
     #: the arm did nothing -- the D-105 shape, and armcheck asserts it.
     kind_fallback_added: int = 0
     kinded_searches: int = 0
+    #: Enumeration expansion (D-131): concepts the question named that the
+    #: first search did not cover, and entities appended for them.
+    enum_concepts: int = 0
+    enum_added: int = 0
     #: Every `papers_of` reordering this run made (D-113). A list, because a
     #: run calls `papers_of` more than once and each call is a separate
     #: judgement whose spread has to be readable -- an arm whose rankings were
@@ -1440,6 +1444,67 @@ def _paper_ranker(conn, session, rerank, answer_critic=None):
     return rank
 
 
+#: Words that carry no concept. Kept short on purpose: the point is to find the
+#: nouns the question enumerates, not to parse it.
+_ENUM_STOP = frozenset("""which analyses analysis use uses using that the a an or and their in as
+rather than of for to with is are event selection both have has whose they them it its
+estimate estimated report reports require requires""".split())
+
+
+def enumerated_concepts(question: str, limit: int = 4) -> list:
+    """The concepts a question ENUMERATES, split on its own conjunctions (D-131).
+
+    "estimate a background using an ABCD method, or an ABCD-style sideband or
+    matrix method over independent regions" names three methods; the model
+    faceted one (D-118, D-130). Decomposition by the model did not yield the
+    other two. Splitting the question on ', or' / ' or ' / ' and ' / commas
+    does, deterministically and for free. Parentheticals and a trailing
+    "rather than ..." clause are dropped: the first restate, the second negate.
+
+    Measured offline against Gabriel's gold, searches typed by the model plus
+    these: gf-02 8/11 -> 11/11, gf-01 4/8 -> 8/8, gf-04 17/18 -> 18/18, no
+    question lower.
+    """
+    t = re.sub(r"\(.*?\)", "", question or "")
+    t = re.sub(r"\b(rather than|instead of)\b.*$", "", t, flags=re.IGNORECASE)
+    out = []
+    for part in re.split(r",\s*or\s+|\s+or\s+|,\s+|\s+and\s+|\bor\b", t):
+        words = [w for w in re.findall(r"[A-Za-z][A-Za-z\-\+→>]*", part)
+                 if w.lower() not in _ENUM_STOP]
+        if 1 <= len(words) <= 5:
+            phrase = " ".join(words)
+            if len(phrase) > 3 and phrase not in out:
+                out.append(phrase)
+    return out[:limit]
+
+
+#: Nouns that name a KIND of thing, not a thing. "ABCD method" and "matrix
+#: method" share one; overlap on it alone must not count as coverage.
+_ENUM_GENERIC = frozenset("""method methods region regions level technique techniques
+framework background backgrounds selection candidate candidates system""".split())
+
+
+def _covers(search_text: str, concept: str) -> bool:
+    """Did the model's own search already name this concept?
+
+    Token overlap on the concept's SPECIFIC words. The first version counted
+    "method" as shared between "ABCD method" and "matrix method" and never
+    searched the second -- the exact miss this mechanism exists to close.
+    """
+    a = {w.lower() for w in re.findall(r"[A-Za-z][A-Za-z\-]+", search_text or "")}
+    b = {w.lower() for w in re.findall(r"[A-Za-z][A-Za-z\-]+", concept)} - _ENUM_STOP
+    specific = b - _ENUM_GENERIC
+    key = specific or b
+    return bool(key) and len(a & key) >= max(1, len(key) // 2)
+
+
+def _enum_counter(session):
+    def hook(concepts: int, added: int):
+        session.enum_concepts += int(concepts)
+        session.enum_added += int(added)
+    return hook
+
+
 def _fallback_counter(session):
     """Counts kinded searches and appended entities onto the session (D-119)."""
     def hook(added: int, kinded: bool = False):
@@ -1457,7 +1522,10 @@ def build_executor(conn, index, sets: Optional[dict] = None,
                    rank_papers: Optional[Callable] = None,
                    question_of: Optional[Callable] = None,
                    kind_fallback: bool = False,
-                   on_fallback: Optional[Callable] = None) -> Callable[[str, dict], Any]:
+                   on_fallback: Optional[Callable] = None,
+                   enum_expand: bool = False,
+                   question_text: str = "",
+                   on_enum: Optional[Callable] = None) -> Callable[[str, dict], Any]:
     """Bind the tools to this database, index and set of named results.
 
     Returned as a closure so the planner never holds a connection itself and
@@ -1575,6 +1643,28 @@ def build_executor(conn, index, sets: Optional[dict] = None,
                         on_fallback(fallback_added)
                     if critic:
                         review = critic(args["text"], hits, refresh=True)
+            # ENUMERATION EXPANSION (D-131, arm). The question names its own
+            # concepts; the model searches one of them. Once per run, on the
+            # first search, every enumerated concept the searched text does
+            # not cover is searched too (unfiltered) and appended. Free, and
+            # deterministic where model decomposition was not (D-130).
+            enum_added = 0
+            if enum_expand and question_text and not sets:
+                missing = [c for c in enumerated_concepts(question_text)
+                           if not _covers(args["text"], c)]
+                have = {h.entity_id for h in hits}
+                extra = []
+                for c in missing:
+                    for h in retrieve.search(index, c, conn=conn, kind=None, limit=limit):
+                        if h.entity_id not in have:
+                            have.add(h.entity_id); extra.append(h)
+                if extra:
+                    hits = list(hits) + extra
+                    enum_added = len(extra)
+                    if critic:
+                        review = critic(args["text"], hits, refresh=True)
+                if on_enum:
+                    on_enum(len(missing), enum_added)
             # `retrieve.concept` is `search` + `expand_canonical`, and the hits
             # are already in hand -- calling it here re-ran BM25 and the dense
             # encoder over the whole index a second time for every search, to
@@ -1597,6 +1687,10 @@ def build_executor(conn, index, sets: Optional[dict] = None,
             tagged = sum(1 for h in hits if h.facets)
             note = (f"saved as {name} ({len(ids)} entities, canonical clusters expanded). "
                     f"Pass {name} as object_set/entity_set -- do not retype the ids.")
+            if enum_added:
+                note += (f" The question also names {len(missing)} other concept(s) "
+                         f"({'; '.join(missing)}); {enum_added} more entities matching "
+                         f"those are included.")
             if fallback_added:
                 note += (f" kind={args.get('kind')!r} matched {len(hits) - fallback_added}; "
                          f"{fallback_added} more entities of OTHER kinds also match "
@@ -2218,7 +2312,7 @@ def _prepare(conn, index, question, max_rounds, max_places, max_rows,
              state_objective=False, subgoals=False, subgoal_status=False,
              path_tool=False, answer_gate=False, answer_critic=False,
              rerank=False, name_ids=False, kind_fallback=False,
-             ranked_answer=False):
+             ranked_answer=False, enum_expand=False):
     """The state and runtime config a run needs. Shared by answer() and stream()."""
     session = Session(question=question)
     if chat is None:
@@ -2271,7 +2365,10 @@ def _prepare(conn, index, question, max_rounds, max_places, max_rows,
                                                             answer_critic),
                                   question_of=lambda: question,
                                   kind_fallback=kind_fallback,
-                                  on_fallback=_fallback_counter(session)),
+                                  on_fallback=_fallback_counter(session),
+                                  enum_expand=enum_expand,
+                                  question_text=question,
+                                  on_enum=_enum_counter(session)),
         "tools": [{"type": "function", "function": spec}
                   for spec in tools_for(answer_contract, contract, simple_answer,
                                         path_tool, name_ids)],
@@ -2325,6 +2422,7 @@ def _prepare(conn, index, question, max_rounds, max_places, max_rows,
     runtime["rerank"] = bool(rerank)
     runtime["kind_fallback"] = bool(kind_fallback)
     runtime["ranked_answer"] = bool(ranked_answer)
+    runtime["enum_expand"] = bool(enum_expand)
     runtime["answer_gate"] = bool(answer_gate)
 
     # THE ANSWER CRITIC (D-106). Uses the SEARCH critic's endpoint, because the
@@ -2402,6 +2500,7 @@ def stream(
     name_ids: bool = False,
     kind_fallback: bool = False,
     ranked_answer: bool = False,
+    enum_expand: bool = False,
 ):
     """Yield `(node_name, session)` after each node completes.
 
@@ -2420,7 +2519,7 @@ def stream(
                                       state_objective, subgoals, subgoal_status,
                                       path_tool, answer_gate, answer_critic,
                                       rerank, name_ids, kind_fallback,
-                                      ranked_answer)
+                                      ranked_answer, enum_expand)
     started = time.perf_counter()
     app = graph_module.build(checkpointer=checkpointer)
     for update in app.stream(state, config=config, stream_mode="updates"):
@@ -2462,6 +2561,7 @@ def answer(
     name_ids: bool = False,
     kind_fallback: bool = False,
     ranked_answer: bool = False,
+    enum_expand: bool = False,
 ) -> Session:
     """Answer one question, returning the answer and the whole trace.
 
@@ -2488,7 +2588,7 @@ def answer(
                                       state_objective, subgoals, subgoal_status,
                                       path_tool, answer_gate, answer_critic,
                                       rerank, name_ids, kind_fallback,
-                                      ranked_answer)
+                                      ranked_answer, enum_expand)
     graph_module.build(checkpointer=checkpointer).invoke(state, config=config)
 
     session.seconds = time.perf_counter() - started
