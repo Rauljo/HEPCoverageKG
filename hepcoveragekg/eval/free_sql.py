@@ -177,15 +177,24 @@ RELATIONSHIPS
       relationship properties: assertion_id, family, status, support, qualifiers
 
 SHAPES THAT WORK
-  papers whose concept label matches:
-    MATCH (p:Paper)-[:MENTIONS]->(c) WHERE toLower(c.label) CONTAINS 'histfitter' RETURN DISTINCT p.arxiv_id
-  papers with a hop through a predicate (the object side resolves to a concept):
+  THE ONE RULE: ids from `search` are OCCURRENCE-level entity ids (Occurrence.entity_id). They are
+  usually NOT the id of the concept node -- aliases were merged, so 'hepkg:object:bjet' resolves to
+  the concept 'hepkg:object:b-jet'. Always go through the occurrence and RESOLVES_TO:
+    MATCH (o:Occurrence)-[:RESOLVES_TO]->(c) WHERE o.entity_id IN [ ...ids from search... ]
+    WITH DISTINCT c MATCH (p:Paper)-[:MENTIONS]->(c) RETURN DISTINCT p.arxiv_id
+  (this returns every paper that mentions any merged spelling; matching c.id directly misses most)
+  papers with a hop through a predicate (subject and object are occurrences of the SAME paper):
     MATCH (p:Paper)-[:HAS_OCCURRENCE]->(r:Occurrence)-[:result_uses_statistical_method]->(m:Occurrence)-[:RESOLVES_TO]->(c)
-    WHERE c.id IN ['hepkg:method:histfitter'] RETURN DISTINCT p.arxiv_id
-  papers mentioning two concepts (AND):
-    MATCH (p:Paper)-[:MENTIONS]->(a), (p)-[:MENTIONS]->(b) WHERE a.id IN [...] AND b.id IN [...] AND p.category='search' RETURN DISTINCT p.arxiv_id
-  counting: RETURN count(DISTINCT p.arxiv_id)
-Entity ids from `search` go straight into `c.id IN [...]`. Labels are free text: prefer ids from search, use CONTAINS on toLower(label) only to explore."""
+    WHERE c.id IN [ ...canonical ids, e.g. from a previous RESOLVES_TO... ] OR m.entity_id IN [ ...ids from search... ]
+    RETURN DISTINCT p.arxiv_id
+  papers mentioning two concepts (AND), after resolving each id list to concepts:
+    MATCH (o1:Occurrence)-[:RESOLVES_TO]->(a) WHERE o1.entity_id IN [...] WITH collect(DISTINCT a) AS A
+    MATCH (o2:Occurrence)-[:RESOLVES_TO]->(b) WHERE o2.entity_id IN [...] WITH A, collect(DISTINCT b) AS B
+    MATCH (p:Paper)-[:MENTIONS]->(a) WHERE a IN A WITH p, B MATCH (p)-[:MENTIONS]->(b) WHERE b IN B AND p.category='search'
+    RETURN DISTINCT p.arxiv_id
+  exploring by label text (labels are free text; both Occurrence and concept nodes carry `label`):
+    MATCH (p:Paper)-[:HAS_OCCURRENCE]->(o:Occurrence) WHERE toLower(o.label) CONTAINS 'b-tag' RETURN DISTINCT p.arxiv_id
+  counting: RETURN count(DISTINCT p.arxiv_id)"""
 
 
 _CYPHER_WRITE = re.compile(r"\b(CREATE|MERGE|DELETE|DETACH|SET|REMOVE|DROP|LOAD\s+CSV|CALL\s+(dbms|db\.create|apoc\.(create|load|export|periodic)))\b", re.I)
@@ -249,13 +258,14 @@ CYPHER_EXAMPLES = """
 WORKED EXAMPLES (Cypher)
 
 Q: Which analyses use the HistFitter framework?
-  search("HistFitter") -> hepkg:method:histfitter
-  cypher: MATCH (p:Paper)-[:MENTIONS]->(c) WHERE c.id IN ['hepkg:method:histfitter'] RETURN DISTINCT p.arxiv_id
+  search("HistFitter") -> hepkg:method:histfitter, hepkg:method:profile-likelihood-fit-histfitter
+  cypher: MATCH (o:Occurrence)-[:RESOLVES_TO]->(c) WHERE o.entity_id IN ['hepkg:method:histfitter','hepkg:method:profile-likelihood-fit-histfitter']
+          WITH DISTINCT c MATCH (p:Paper)-[:MENTIONS]->(c) RETURN DISTINCT p.arxiv_id
 
 Q: How many analyses estimate a W+jets background?
   search("W+jets background") -> ids
-  cypher: MATCH (p:Paper)-[:HAS_OCCURRENCE]->(r)-[:result_estimates_background]->(b)-[:RESOLVES_TO]->(c)
-          WHERE c.id IN [...] RETURN count(DISTINCT p.arxiv_id)
+  cypher: MATCH (p:Paper)-[:HAS_OCCURRENCE]->(r)-[:result_estimates_background]->(b:Occurrence)
+          WHERE b.entity_id IN [...] RETURN count(DISTINCT p.arxiv_id)
 """
 
 

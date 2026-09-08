@@ -5869,3 +5869,21 @@ intersection precision, and the interesting number is whether either beats
 0.57. Runs 86750 (union) and 86768 (intersection), 3 repeats each, ~$0.45 a
 run. Commit 1564f8d, tests in tests/test_ensemble.py.
 
+## D-147 addendum -- free-cypher v1: valid Cypher, 0.317, and the reason was my schema brief
+
+Run 20260908T164338-free-cypher-87038 (Gabriel's 9, 3 repeats): judged_f1
+0.317 vs free-SQL 0.571 on the same lane; 31 Cypher calls, ZERO query errors,
+52 searches; gf-01 and gf-01-condition at 0.00 where free-SQL scored 0.54 and
+0.76. The model writes Cypher fine. What it was told was wrong: the brief's
+shapes matched `c.id IN [ids from search]` on the canonical concept nodes,
+but search returns occurrence-level entity ids, and after alias merging most
+are not canonical ids -- 'hepkg:object:bjet' resolves to 'hepkg:object:b-jet'.
+Measured on gf-01-condition's 12 search ids: 10 exist as canonical nodes,
+20 as occurrences; papers via MENTIONS on the raw ids = 8, via
+HAS_OCCURRENCE.entity_id = 15, via RESOLVES_TO then MENTIONS = 45 -- the
+same 44 free-SQL's LIKE reaches. SQL never meets this because
+entity_occurrence keeps the raw ids. The brief and the worked examples now
+teach the RESOLVES_TO shape first; rerun follows. Lesson for the write-up:
+the projection's alias layer is a genuine difference between the two query
+surfaces, and a Cypher agent has to be told about it.
+
