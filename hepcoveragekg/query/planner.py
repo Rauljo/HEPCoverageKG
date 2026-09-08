@@ -1484,6 +1484,33 @@ _ENUM_GENERIC = frozenset("""method methods region regions level technique techn
 framework background backgrounds selection candidate candidates system""".split())
 
 
+def _enum_facets_note(conn, index, sets, question_text, covered_text, limit, on_enum):
+    """Enumeration expansion when the FIRST retrieval was `facets` (D-131 fix).
+
+    gf-02's first move is a facet filter, so the search-branch trigger never
+    fired on it. Here the uncovered concepts are searched, canonical-expanded,
+    saved as a set the model can pass to papers_of, and named in the note.
+    Returns the note fragment, or "" when nothing was added.
+    """
+    from hepcoveragekg.query import retrieve, templates   # lazy, like build_executor's
+    missing = [c for c in enumerated_concepts(question_text) if not _covers(covered_text, c)]
+    have: set = set(); hits = []
+    for c in missing:
+        for h in retrieve.search(index, c, conn=conn, kind=None, limit=limit):
+            if h.entity_id not in have:
+                have.add(h.entity_id); hits.append(h)
+    if on_enum:
+        on_enum(len(missing), len(hits))
+    if not hits:
+        return ""
+    name = f"set_{len(sets) + 1}"
+    sets[name] = templates.expand_canonical(conn, [h.entity_id for h in hits])
+    return (f" The question also names {len(missing)} other concept(s) ({'; '.join(missing)}); "
+            f"{len(hits)} entities matching those were retrieved and saved as {name} "
+            f"({len(sets[name])} after canonical expansion) -- pass {name} to papers_of "
+            f"to see their papers.")
+
+
 def _covers(search_text: str, concept: str) -> bool:
     """Did the model's own search already name this concept?
 
@@ -1804,6 +1831,14 @@ def build_executor(conn, index, sets: Optional[dict] = None,
             # is cut at max_rows like everything else; rank its paper rows too.
             if rank_papers is not None and result.rows and len(result.rows) > 1:
                 result = rank_papers(question_of(), result)
+            # A facets-first run never reaches the search-branch expansion, and
+            # gf-02 is facets-first every time (D-131 outcome). Expand here.
+            if enum_expand and question_text and not sets:
+                vals = values if isinstance(values, list) else [values]
+                frag = _enum_facets_note(conn, index, sets, question_text,
+                                         " ".join(str(v) for v in vals), SEARCH_BREADTH, on_enum)
+                if frag:
+                    result.note = (result.note or "") + frag
             return result
         if tool == "facet_entities":
             value = args.get("value")

@@ -5315,3 +5315,32 @@ different, easier task). So the ranker gets its own client: RANK_MODEL /
 RANK_BASE_URL / RANK_API_KEY, falling back to the critic's when unset. On the
 cluster that means the ranker calls hosted qwen3-32b (~$0.02 per 253 papers)
 while everything else stays local.
+
+## D-131 outcome — best arm of the night, and it fired on five records
+
+stack + --enum-expand vs control (qwen3-32b, 9 x 3, 23/27 clean):
+
+    judged_f1   0.452 -> 0.583   (+0.131)      vs stack+gate 0.492 -> 0.583 (+0.091)
+    reach       0.692 -> 0.818   (+0.126)      vs stack+gate flat
+    gold named  3.5   -> 5.1
+
+    gf-01-condition 0.36 -> 0.90   gf-05 0.07 -> 0.31   gf-08 0.11 -> 0.41
+    gf-04 0.67 -> 0.71 (reach 0.65 -> 0.78, gold named 9.3 -> 12.0)
+
+The counters: enum_concepts / enum_added fired on 5 of 23 records -- gf-04
+(3 concepts, 127 entities), gf-07, gf-08 x2, gf-01-met -- and on gf-02, the
+question it was built for, ZERO of three. gf-02's first move is `facets`, and
+the trigger sits in the search branch; a run that never searches never
+expands. The +0.091 over stack+gate is therefore mostly the five records where
+it fired (gf-04 0.48 -> 0.71 is the clean one) plus per-record spread.
+
+Fix: trigger on the first RETRIEVAL call of any kind. On a facets-first run,
+search each enumerated concept the facet values do not cover, save the hits
+as a set, and tell the model it exists. Then re-measure.
+
+## D-129 addendum — the 32B confirms it: pointwise beats listwise even where the judge can rank
+
+qwen3-32b listwise: p@1 0.78, F1@16 0.599, against pointwise 0.89 / 0.645.
+The absolute-grade form is the better instrument at every size tested; the
+format was never the lever. The ranker keeps pointwise grades and its own
+32B endpoint.
