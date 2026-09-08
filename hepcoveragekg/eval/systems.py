@@ -297,6 +297,8 @@ class PlannerSystem:
             "env.RANK_BASE_URL": os.environ.get("RANK_BASE_URL", ""),
             # How many ranked candidates the ranked answer shows (D-135).
             "env.RANKED_TOP_N": os.environ.get("RANKED_TOP_N", ""),
+            # Hits per enumerated concept (D-131 addendum 4).
+            "env.ENUM_LIMIT": os.environ.get("ENUM_LIMIT", ""),
             **effective_config(planner.answer, planner_kwargs),
         }
 

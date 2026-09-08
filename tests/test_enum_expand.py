@@ -94,3 +94,13 @@ def test_covers_tolerates_hyphens_and_plurals():
 def test_facet_codes_alone_do_not_cover():
     from hepcoveragekg.query.planner import _covers
     assert not _covers("BJet MET", "b-tagged jets")
+
+
+def test_enum_limit_env_overrides_default(monkeypatch):
+    from hepcoveragekg.query.planner import _enum_limit
+    monkeypatch.delenv("ENUM_LIMIT", raising=False)
+    assert _enum_limit(60) == 60
+    monkeypatch.setenv("ENUM_LIMIT", "20")
+    assert _enum_limit(60) == 20
+    monkeypatch.setenv("ENUM_LIMIT", "junk")
+    assert _enum_limit(60) == 60

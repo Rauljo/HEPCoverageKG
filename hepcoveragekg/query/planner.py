@@ -1519,6 +1519,18 @@ def _enum_facets_note(conn, index, sets, question_text, covered_text, limit, on_
             f"to see their papers.")
 
 
+def _enum_limit(default: int) -> int:
+    """Hits per enumerated concept. ENUM_LIMIT overrides SEARCH_BREADTH here:
+    at 60 per concept, canonical expansion grew the set to 140-176 entities on
+    gf-04 and gf-07 and papers_of on it filled 100 rows the model then named
+    (D-131 addendum 4). Recorded in the run config."""
+    raw = os.environ.get("ENUM_LIMIT", "")
+    try:
+        return int(raw) if raw else default
+    except ValueError:
+        return default
+
+
 def _enum_tokens(text: str) -> set[str]:
     """Words of `text`, hyphen-split and singularised, so that a question's
     "b-tagged jets" meets a facet label's "$b$-tagged jet" (D-133 addendum:
@@ -1706,7 +1718,8 @@ def build_executor(conn, index, sets: Optional[dict] = None,
                 have = {h.entity_id for h in hits}
                 extra = []
                 for c in missing:
-                    for h in retrieve.search(index, c, conn=conn, kind=None, limit=limit):
+                    for h in retrieve.search(index, c, conn=conn, kind=None,
+                                             limit=_enum_limit(limit)):
                         if h.entity_id not in have:
                             have.add(h.entity_id); extra.append(h)
                 if extra:
@@ -1870,7 +1883,7 @@ def build_executor(conn, index, sets: Optional[dict] = None,
                         if row.get("matched"):
                             covered.append(str(row["matched"]))
                 frag = _enum_facets_note(conn, index, sets, question_text,
-                                         " ".join(covered), SEARCH_BREADTH, on_enum)
+                                         " ".join(covered), _enum_limit(SEARCH_BREADTH), on_enum)
                 if frag:
                     result.note = (result.note or "") + frag
             return result
