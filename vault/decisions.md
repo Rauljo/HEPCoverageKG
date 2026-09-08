@@ -5622,3 +5622,15 @@ per-question mean). The gap is about four standard errors. This is the
 number for the write-up on Gabriel's 9, with the caveat that gf-08 alone
 carries a 0.14 spread (D-138). Night's OpenRouter spend since 05:50: $1.18.
 
+## D-140 -- a 235B ranker: same score, same usable rate, twice the price
+
+Full stack with RANK_MODEL=qwen/qwen3-235b-a22b (run 20260908T075408-hepkg-74576):
+judged 0.564, reach 0.849, gold named 5.6, precision 0.731, zero errors, $0.43.
+The 32B runs of the identical stack: 0.562 / 0.579. Usable rankings 31/41
+(235B) vs 28/41 and 26/33 (32B); on facets-first records 14/23 vs 10/19 and
+12/18; grade spread 3:343 / 2:131 / 1:136 / 0:160 -- more middle grades, same
+outcome. The ranked answer asked 5 times (32B: 8 and 2). So the judge is not
+the ranked answer's ceiling either (after the exit, D-136, and the cap,
+D-135): the mechanism now asks where it can, and what it can add is bounded
+by what reached a ranked call at all. Keep the 32B. Night's spend: $1.69.
+
