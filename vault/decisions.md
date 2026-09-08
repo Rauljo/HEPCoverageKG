@@ -5546,3 +5546,16 @@ answer-gate, enum-expand capped). Started 07:38; the model_served guard first
 refused a submission that had inherited the 72B name from .env (job 54266,
 FAILED in 0 s), exactly what it exists for. Deadline: server 54250 dies 15:58.
 
+## D-138 -- gf-08 measured six times on one configuration: mean 0.16, spread 0.14
+
+gf-08 ('list every search with parallel ee/mumu selections', 24 gold) on the
+recommended stack (enum5 configuration, no rerank), six repeats, one run
+(20260908T062759-hepkg-72605): judged 0.42 / 0.21 / 0.08 / 0.00 / 0.08 / 0.20,
+mean 0.164, pstdev 0.136. Reach 0.42-0.88 every time; what varies is how
+many papers the model writes down -- 2 to 16 -- so the question fails at the
+handoff, not at retrieval (D-135), and its 3-repeat mean moves any 27-record
+arm comparison by about +-0.05 on its own. The 0.42 record was a prose exit,
+the path the ranked ask now covers (D-136). For the write-up: report gf-08
+with its spread, or exclude it from per-arm deltas on the 9 and say why.
+Cost of the six repeats: under $0.05.
+
