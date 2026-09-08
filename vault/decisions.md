@@ -5681,3 +5681,36 @@ the text, on set_f1 (98), count (20) and the Gabriel 10 -- D-141's 0.442 ->
 0.372 was on the 9 only. Runs beside 54268 (stack, 119/164 at launch); both
 must end before the server's 15:58 limit: ~2.5 h and ~1 h respectively.
 
+## D-142 -- the stack on the 164 (54268): wins count and the Gabriel 10, loses set_f1 -- and set_f1 is two metrics
+
+54268 (kind-fallback, name-ids, max-rows 100, answer-gate, enum-expand with
+ENUM_LIMIT=20; critic on the 9B; 2486245 code): 164 records in 4h15, median
+366 s, 4 records lost to QwQ's 32k context window (D-137 addendum 2). Paired
+on the 164 with 54261 (same code, control):
+
+| | set_f1 (n98) | count (n20) | judged, Gabriel 10 | reach | prints ids |
+|---|---|---|---|---|---|
+| ctrl-c 54261 | 0.257 | 0.20 | 0.297 | 0.975 | 85% |
+| stack 54268 | 0.194 | 0.30 | 0.422 | 0.977 | 92% |
+| wave-1 ctrl-a / no-critic-a | 0.219 / 0.207 | 0.15 / 0.30 | 0.354 / 0.426 | 0.96 / 0.97 | 80 / 88% |
+
+Paired set_f1 delta stack - ctrl-c: -0.063, se 0.024 (n 98). But `set_f1`
+scores the ids in the text and, when the text names none, FALLS BACK to the
+retrieval footprint (`a.papers`, ~40 papers) -- the "library shelf" its own
+docstring warns about. The control names nothing on 51 of the 98 and is scored
+on the footprint there: precision 0.14, recall 0.91, f1 0.230, which props its
+0.257. The stack names ids on 84 of 98. Where an arm names ids: ctrl-c f1
+0.286 (p 0.270, r 0.370, n 47); stack f1 0.203 (p 0.189, r 0.416, n 84) --
+the stack names 21 ids per set answer against truth sets of 2-8 papers, so
+it trades precision for recall on the generated questions exactly as it
+does on Gabriel's (D-139: precision 0.76 there, because those gold sets hold
+8-24). With footprint records scored 0 ("essay only"): ctrl-c 0.137, ctrl-a
+0.123, stack 0.174. The finding is two-sided and both halves go in the
+write-up: (1) mechanisms tuned on large gold sets over-name on small-truth
+questions -- a cap on named ids proportional to evidence, or the
+count-vs-set shape, is the next mechanism; (2) set_f1's fallback mixes two
+answers into one number; report `set_f1` on named-only records and the
+`set_named_none` rate side by side (the scorer already emits the flag; no
+code change needed to report it). Count questions: 0.30 vs 0.20 (n 20, four
+records), inside noise. Scorer: eval/analysis/score_wave3.py.
+
