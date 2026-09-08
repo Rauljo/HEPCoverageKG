@@ -462,16 +462,23 @@ def label_recall(q: Question, a: Answer) -> Optional[dict]:
 _LABEL_STOP = {"background", "backgrounds", "process", "processes", "region", "regions",
                "object", "objects", "sample", "samples", "method", "methods", "with", "from",
                "and", "the", "for", "that", "into", "using", "based", "level", "control",
-               "signal", "selection", "events", "event", "candidate", "candidates"}
+               "signal", "selection", "events", "event", "candidate", "candidates",
+               "jet", "jets", "boson", "bosons", "production", "decay", "decays"}
 
 
 def _label_fuzzy_hit(label: str, normalised_answer: str) -> bool:
-    words = [w for w in _normalise_text(label).split() if len(w) >= 4 and w not in _LABEL_STOP]
-    if not words:                       # nothing specific to match on
-        return _normalise_text(label) in normalised_answer if len(_normalise_text(label)) >= 4 else False
+    """At least half the label's specific content, by character weight, is in
+    the answer. Generic corpus words (background, jets, boson ...) carry no
+    weight; one-letter tokens such as W and Z do, because "W+jets" and
+    "Z+jets" differ only there. Numbers are ignored."""
+    words = [w for w in _normalise_text(label).split()
+             if w not in _LABEL_STOP and not w.isdigit()]
+    if not words:
+        return False
     have = set(normalised_answer.split())
-    hit = sum(1 for w in words if w in have)
-    return hit / len(words) >= 0.6
+    total = sum(len(w) for w in words)
+    hit = sum(len(w) for w in words if w in have)
+    return hit / total >= 0.5
 
 
 def _normalise_text(text: str) -> str:
