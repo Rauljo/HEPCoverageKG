@@ -6019,3 +6019,38 @@ selection edges, and the honest write-up line is that the graph records
 fix does not exist; an extraction pass that turns region labels into
 requirement edges would.
 
+## D-150 -- what is wrong with the graph: it records mentions densely and usage sparsely
+
+Measured on the DIAS database (60 papers): 6,047 entity occurrences, 14,188
+assertions, 771 event regions, 1,055 `region_requires_object` edges, 302
+`region_vetoes_object` edges. Of the regions whose own LABEL names MET
+(16), exactly 1 has a requirement edge to a MET object; of those whose label
+names b-jets (28), 23 do. Edges per entity by kind: result 26.7,
+detector_object 14.0, channel 6.2, event_region 5.1, bsm_model 4.9, generator
+4.8, sample 3.1, background 3.0, physics_process 1.6, observable 1.4,
+systematic_uncertainty 1.3, statistical_method 1.25.
+
+So the graph has two layers of unequal quality. The mention layer (which
+entities appear on which paper, with labels and aliases) is complete enough
+that retrieval reach is 0.97-0.98 on the generated questions and 0.7-0.9 on
+Gabriel's. The relation layer (how the paper uses the entity: requires it in a
+selection, normalises a background with a region, unfolds a distribution,
+reconstructs a candidate) is extracted unevenly: rich for results, objects,
+regions and channels, one edge or fewer per entity for methods, systematics,
+observables and processes, and for some relations not extracted at all (no
+"region normalises background" predicate; MET requirements in 1 of 16 labelled
+regions). Every hard Gabriel question is a question about the relation layer:
+gf-01 (requires, not mentions; D-149), gf-05 (reconstructs as an object, held
+as process/channel labels), gf-07 (CR normalises background, no edge), gf-04
+(unfolding, quote-only or absent), gf-03 (HistFitter, quote-only). The
+generated questions are questions about the mention layer and one dense
+predicate, which is why free-SQL answers them well and why the agents'
+"co-occurrence" habit passes there and fails on Gabriel's.
+
+Consequence for the write-up: the query systems are not the bottleneck on the
+supervisor's questions; the extraction of usage relations is. The next
+version of the graph needs (a) requirement and veto edges derived from region
+labels and selection cuts (MET > X GeV is a requirement), (b) a
+region-normalises-background relation, (c) "reconstructs candidate" as an
+object-level relation. None of that is query-time work.
+
