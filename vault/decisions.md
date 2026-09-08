@@ -5898,3 +5898,23 @@ when it did (with the v1 brief) it scored like free-cypher. Whether the
 corrected brief changes the choice or only the Cypher score is what the v2
 runs (cypher2, both2) measure.
 
+## D-147 addendum 3 -- free-cypher v2 on the corrected brief: 0.429; the rest of the gap is predicate choice
+
+Run 20260908T165649-free-cypher-87462 (Gabriel's 9, 3 repeats): judged_f1
+0.429 (v1 0.317; free-SQL 0.571 on the same lane), 33 Cypher calls, 2 errors,
+25 of the 33 use the RESOLVES_TO shape the brief now teaches. gf-01-condition
+0.00 -> 0.92 with all 11 gold named -- the alias-layer fix did what the
+measurement said it would. Still behind SQL on gf-01-met (0.18 vs 0.80),
+gf-02 (0.65 vs 0.87), gf-07 and gf-08 (~0). On gf-01-met the traces show the
+remaining difference: the SQL agent hops `region_requires_object` to the MET
+ids (14-22 papers, both gold inside), the Cypher agent hops
+`object_has_selection|region_has_selection` (1 row) or resolves unrelated
+final-state ids. Both briefs list the same predicates; the SQL worked
+examples happen to demonstrate that hop and the Cypher ones do not. So the
+honest statement is: given the same graph, a model writes valid Cypher as
+readily as SQL, the Neo4j projection's alias layer must be explained to it,
+and after that the two query surfaces differ by which relationships the
+examples put in front of the model -- a prompt effect of about 0.1-0.15 that
+a matched pair of worked examples would close. Not pursued further tonight;
+free-both v2 (both2) measures the language choice on the corrected brief.
+
