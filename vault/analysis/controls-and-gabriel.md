@@ -139,15 +139,27 @@ beats the critic run. Single repeats on nine questions; the OpenRouter lane
 Wave 1 (critic on) against wave 2 (critic off), paired on the 164: set_f1
 0.234 vs 0.215 with a repeat floor of 0.030; count 0.15 vs 0.30; Gabriel-10
 judged 0.354/0.361 vs 0.426/0.363. Nothing the critic does on the 164 is
-outside noise except making counts worse (D-133, corrected by D-141). Its
-per-question effect on Gabriel's set is in section 2 (gf-01-condition).
+outside noise except making counts worse (D-133, corrected by D-141).
+
+On Gabriel's 9 the sign depends on the lane. On the cluster (QwQ, one repeat
+per job) the no-critic control scores 0.473 / 0.403 against the critic's
+0.354 / 0.361. On OpenRouter (qwen3-32b, 3 repeats) the no-critic control
+scores 0.383 against the critic's 0.452, with *higher* reach (0.78 vs 0.69)
+and fewer gold named (3.2 vs 3.5 per record). The replay of the no-critic run
+shows the mechanism: on gf-05 it reaches all 16 gold papers and names 1; on
+gf-01-condition it reaches 11 and names 0. Without the critic the page is
+longer and the model lists less of it. So the critic's only measurable value
+is as a page-shortener that helps the handoff on one model and hurts it on
+another (section 2, gf-01-condition and gf-08 for the QwQ side); as a
+relevance judgement it moves nothing. Both differences are inside the
+per-record spread (0.30) for their n.
 
 ### 1.7 Gabriel's 9 on the OpenRouter lane (qwen3-32b, 3 repeats, 27 records)
 
 | arm | judged_f1 | reach | gold named / record | notes |
 |---|---|---|---|---|
 | typed, critic (runs 1914 + 63766, 6 repeats) | 0.452 (1914) | 0.69 | 3.5 | the control every mechanism was measured against |
-| typed, no critic (run 84932) | *pending* | | | |
+| typed, no critic (run 84932) | 0.383 | 0.78 | 3.2 | reach up (+0.08), naming down: the critic's value on this lane is a shorter page the model then lists (see 2, gf-05) |
 | free-SQL (run 85223) | *pending* | | | the earlier free-SQL run (28311, 2026-09-02) predates the current gold file -- gf-04 has no judged score in it -- and is not used for numbers |
 
 ## 2. Gabriel's nine questions, one by one
@@ -173,6 +185,7 @@ typed no-critic QwQ = 54257/54258; free-SQL QwQ = 54259/54260; typed critic QwQ
 | control | judged_f1 | named | gold | FP | outside |
 |---|---|---|---|---|---|
 | typed+critic OR (6) | 0.53 | 17.3 | 5.7 | 7.7 | 4.0 |
+| typed no-critic OR (3) | 0.48 | 13.0 | 4.7 | 5.7 | 2.7 |
 | free-SQL OR (3) | 0.51 | 15.0 | 5.3 | 7.7 | 2.0 |
 | typed no-critic QwQ (2) | 0.27 | 9.0 | 3.0 | 4.0 | 2.0 |
 | typed critic QwQ (2) | 0.55 | 18.0 | 6.0 | 8.0 | 4.0 |
@@ -194,6 +207,7 @@ the paper category. One QwQ free-SQL repeat named nothing.
 | control | judged_f1 | named | gold | FP | outside |
 |---|---|---|---|---|---|
 | typed+critic OR (6) | 0.45 | 7.2 | 2.8 | 0.7 | 3.7 |
+| typed no-critic OR (3) | 0.25 | 8.0 | 2.7 | 0.7 | 4.7 |
 | free-SQL OR (3) | 0.44 | 21.3 | 4.7 | 1.3 | 15.3 |
 | typed no-critic QwQ (2) | 0.76 | 18.0 | 8.0 | 2.0 | 8.0 |
 | typed critic QwQ (2) | 0.17 | 3.0 | 1.0 | 0.0 | 2.0 |
@@ -214,6 +228,7 @@ spot to over-listing is most visible.
 | control | judged_f1 | named | gold | FP | outside |
 |---|---|---|---|---|---|
 | typed+critic OR (6) | 0.29 | 12.3 | 0.5 | 0.5 | 11.3 |
+| typed no-critic OR (3) | 0.31 | 20.0 | 1.0 | 2.7 | 16.3 |
 | free-SQL OR (3) | 0.46 | 31.7 | 2.0 | 3.7 | 26.0 |
 | typed no-critic QwQ (2) | 0.00 | 1.0 | 0.0 | 0.0 | 1.0 |
 | typed critic QwQ (2) | 0.40 | 23.0 | 1.0 | 1.0 | 21.0 |
@@ -233,6 +248,7 @@ about the metric.
 | control | judged_f1 | named | gold | FP | outside |
 |---|---|---|---|---|---|
 | typed+critic OR (6) | 0.65 | 5.8 | 5.7 | 0.0 | 0.2 |
+| typed no-critic OR (3) | 0.31 | 2.0 | 2.0 | 0.0 | 0.0 |
 | free-SQL OR (3) | 0.92 | 12.7 | 9.7 | 0.3 | 2.7 |
 | typed no-critic QwQ (2) | 0.71 | 6.0 | 6.0 | 0.0 | 0.0 |
 | typed critic QwQ (2) | 0.71 | 6.0 | 6.0 | 0.0 | 0.0 |
@@ -254,6 +270,7 @@ system's gf-02 from 0.65 to 0.77 once it fired on facets-first runs.
 | control | judged_f1 | named | gold | FP | outside |
 |---|---|---|---|---|---|
 | typed+critic OR (6) | 0.89 | 8.0 | 4.0 | 0.0 | 4.0 |
+| typed no-critic OR (3) | 0.74 | 4.0 | 3.0 | 0.0 | 1.0 |
 | free-SQL OR (3) | 0.89 | 5.0 | 4.0 | 0.0 | 1.0 |
 | typed no-critic QwQ (2) | 0.89 | 4.0 | 4.0 | 0.0 | 0.0 |
 | typed critic QwQ (2) | 0.89 | 8.0 | 4.0 | 0.0 | 4.0 |
@@ -270,6 +287,7 @@ not change reach (D-121). The QwQ free-SQL run wrote a wrong query (10 named,
 | control | judged_f1 | named | gold | FP | outside |
 |---|---|---|---|---|---|
 | typed+critic OR (6) | 0.67 | 9.8 | 9.3 | 0.2 | 0.3 |
+| typed no-critic OR (3) | 0.57 | 12.7 | 8.0 | 2.0 | 2.7 |
 | free-SQL OR (3) | n/a (older gold) | 11.7 | 9.3 | 0.7 | 1.7 |
 | typed no-critic QwQ (2) | 0.71 | 10.0 | 10.0 | 0.0 | 0.0 |
 | typed critic QwQ (2) | 0.71 | 10.0 | 10.0 | 0.0 | 0.0 |
@@ -288,6 +306,7 @@ reachable by any query. Both systems reach it.
 | control | judged_f1 | named | gold | FP | outside |
 |---|---|---|---|---|---|
 | typed+critic OR (6) | 0.07 | 2.0 | 0.7 | 1.3 | 0.0 |
+| typed no-critic OR (3) | 0.32 | 6.3 | 3.7 | 2.0 | 0.7 |
 | free-SQL OR (3) | 0.11 | 2.7 | 1.0 | 1.0 | 0.7 |
 | typed no-critic QwQ (2) | 0.16 | 2.0 | 1.5 | 0.5 | 0.0 |
 | typed critic QwQ (2) | 0.11 | 1.5 | 1.0 | 0.5 | 0.0 |
@@ -313,6 +332,7 @@ semantic condition.
 | control | judged_f1 | named | gold | FP | outside |
 |---|---|---|---|---|---|
 | typed+critic OR (6) | 0.21 | 1.7 | 0.5 | 1.2 | 0.0 |
+| typed no-critic OR (3) | 0.29 | 1.0 | 1.0 | 0.0 | 0.0 |
 | free-SQL OR (3) | 0.43 | 3.7 | 2.7 | 1.0 | 0.0 |
 | typed no-critic QwQ (2) | 0.00 | 1.5 | 0.0 | 0.5 | 1.0 |
 | typed critic QwQ (2) | 0.00 | 1.5 | 0.0 | 0.0 | 1.5 |
@@ -339,6 +359,7 @@ bucket: the gold enters through `subjects_of` and never meets `papers_of`.
 | control | judged_f1 | named | gold | FP | outside |
 |---|---|---|---|---|---|
 | typed+critic OR (6) | 0.08 | 1.8 | 1.0 | 0.7 | 0.2 |
+| typed no-critic OR (3) | 0.16 | 4.3 | 2.7 | 1.3 | 0.3 |
 | free-SQL OR (3) | 0.10 | 0.7 | 0.7 | 0.0 | 0.0 |
 | typed no-critic QwQ (2) | 0.44 | 23.5 | 9.0 | 8.0 | 6.5 |
 | typed critic QwQ (2) | 0.04 | 1.0 | 0.5 | 0.0 | 0.5 |
