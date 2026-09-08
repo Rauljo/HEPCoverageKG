@@ -117,6 +117,148 @@ SQL_TOOL = {
 }
 
 
+CYPHER_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "cypher",
+        "description": (
+            "Run one read-only Cypher query (MATCH ... RETURN) against the Neo4j "
+            "projection of the SAME knowledge graph and get rows back. At most "
+            f"{MAX_ROWS} rows; add your own LIMIT for less. Errors come back "
+            "verbatim so you can fix the query."),
+        "parameters": {
+            "type": "object",
+            "properties": {"query": {"type": "string", "description": "one Cypher read query"}},
+            "required": ["query"],
+        },
+    },
+}
+
+_KIND_LABELS = {
+    "detector_object": "DetectorObject", "systematic_uncertainty": "Systematic",
+    "physics_process": "Process", "statistical_method": "StatMethod",
+    "background_method": "BackgroundMethod", "event_region": "Region",
+    "model_parameter": "ModelParameter", "object_definition": "ObjectDefinition",
+    "selection_requirement": "Selection", "collision_system": "CollisionSystem",
+    "result_quantity": "ResultQuantity", "bsm_model": "BSMModel",
+    "generator": "Generator", "background": "Background", "observable": "Observable",
+    "sample": "Sample", "channel": "Channel", "dataset": "Dataset",
+    "benchmark": "Benchmark", "result": "Result", "paper": "PaperNode",
+}
+
+
+def cypher_brief(conn) -> str:
+    """The Neo4j projection (kg/export.py) as the model must picture it.
+
+    Same graph, different shape: the SQLite `assertion` rows become typed
+    relationships between Occurrence nodes, `entity_occurrence` becomes
+    HAS_OCCURRENCE, and canonical concepts are nodes labelled by kind.
+    """
+    preds = [(r[0], r[1]) for r in conn.execute(
+        "SELECT predicate, COUNT(*) FROM assertion GROUP BY predicate ORDER BY 2 DESC LIMIT 24")]
+    n_paper = conn.execute("SELECT COUNT(*) FROM paper").fetchone()[0]
+    n_occ = conn.execute("SELECT COUNT(*) FROM entity_occurrence").fetchone()[0]
+    labels = ", ".join(sorted(set(_KIND_LABELS.values())))
+    return f"""GRAPH (Neo4j, database from the same SQLite; read with the `cypher` tool)
+
+NODES
+  (:Paper {{arxiv_id, title, category}})            {n_paper} papers. arxiv_id is the paper id, e.g. '2106.01676'. category is 'search' or 'measurement'.
+  (:Occurrence {{id, bundle_id, entity_id, kind, label}})   {n_occ} entity occurrences, one per (paper, entity). id = bundle_id + ':' + entity_id.
+  concept nodes, ONE label each by kind: {labels}
+      each has {{id, kind, label}}; id is the entity id, e.g. 'hepkg:method:abcd-method'; label is the human name.
+  (:LiteralValue {{id, value, type}})               numbers and strings that assertions point at.
+
+RELATIONSHIPS
+  (p:Paper)-[:HAS_OCCURRENCE]->(o:Occurrence)         the paper's occurrences
+  (o:Occurrence)-[:RESOLVES_TO]->(c)                  occurrence -> its canonical concept node (after alias merging)
+  (p:Paper)-[:MENTIONS]->(c)                          paper -> concept, directly (shortcut of the two above)
+  (o1:Occurrence)-[:PREDICATE]->(o2:Occurrence|LiteralValue)   an assertion inside one paper; the TYPE is the predicate:
+      {", ".join(f"{k}({v})" for k, v in preds)}
+      relationship properties: assertion_id, family, status, support, qualifiers
+
+SHAPES THAT WORK
+  papers whose concept label matches:
+    MATCH (p:Paper)-[:MENTIONS]->(c) WHERE toLower(c.label) CONTAINS 'histfitter' RETURN DISTINCT p.arxiv_id
+  papers with a hop through a predicate (the object side resolves to a concept):
+    MATCH (p:Paper)-[:HAS_OCCURRENCE]->(r:Occurrence)-[:result_uses_statistical_method]->(m:Occurrence)-[:RESOLVES_TO]->(c)
+    WHERE c.id IN ['hepkg:method:histfitter'] RETURN DISTINCT p.arxiv_id
+  papers mentioning two concepts (AND):
+    MATCH (p:Paper)-[:MENTIONS]->(a), (p)-[:MENTIONS]->(b) WHERE a.id IN [...] AND b.id IN [...] AND p.category='search' RETURN DISTINCT p.arxiv_id
+  counting: RETURN count(DISTINCT p.arxiv_id)
+Entity ids from `search` go straight into `c.id IN [...]`. Labels are free text: prefer ids from search, use CONTAINS on toLower(label) only to explore."""
+
+
+_CYPHER_WRITE = re.compile(r"\b(CREATE|MERGE|DELETE|DETACH|SET|REMOVE|DROP|LOAD\s+CSV|CALL\s+(dbms|db\.create|apoc\.(create|load|export|periodic)))\b", re.I)
+
+
+def run_cypher(driver, database: str, query: str, max_rows: int = MAX_ROWS,
+               seconds: float = STATEMENT_SECONDS) -> SqlResult:
+    """One read query against Neo4j, read-only session, row-capped, time-capped.
+    Node and relationship values are rendered as their property maps."""
+    text = (query or "").strip().rstrip(";")
+    if not text:
+        return SqlResult(error="empty query")
+    if _CYPHER_WRITE.search(text):
+        return SqlResult(error="read-only: MATCH/RETURN/WITH/UNWIND/CALL db.* only")
+    if driver is None:
+        return SqlResult(error="cypher is not available: no Neo4j connection "
+                               "(set NEO4J_PASSWORD in .env)")
+    try:
+        from neo4j import Query  # type: ignore
+        with driver.session(database=database, default_access_mode="READ") as sess:
+            res = sess.run(Query(text, timeout=seconds))
+            keys = list(res.keys())
+            rows: list[tuple] = []
+            for rec in res:
+                rows.append(tuple(_plain(v) for v in rec.values()))
+                if len(rows) > max_rows:
+                    break
+    except Exception as exc:                      # noqa: BLE001 -- verbatim to the model
+        return SqlResult(error=f"{type(exc).__name__}: {str(exc)[:400]}")
+    truncated = len(rows) > max_rows
+    return SqlResult(rows=rows[:max_rows], columns=keys, truncated=truncated)
+
+
+def _plain(v):
+    """Neo4j nodes/relationships/paths -> a compact string; scalars unchanged."""
+    if hasattr(v, "items") and hasattr(v, "labels"):        # Node
+        d = dict(v.items()); return ":".join(sorted(v.labels)) + " " + json.dumps(d, ensure_ascii=False)
+    if hasattr(v, "items") and hasattr(v, "type"):          # Relationship
+        return f"-[:{v.type}]->"
+    if isinstance(v, (list, tuple)):
+        return json.dumps([_plain(x) for x in v], ensure_ascii=False)
+    if isinstance(v, dict):
+        return json.dumps(v, ensure_ascii=False)
+    return v
+
+
+def neo4j_driver_from_env():
+    """A driver from NEO4J_URI / NEO4J_USERNAME / NEO4J_PASSWORD, or None.
+    The password is read from the environment (sourced .env) and never logged."""
+    import os
+    pw = os.environ.get("NEO4J_PASSWORD", "")
+    if not pw:
+        return None, os.environ.get("NEO4J_DATABASE", "neo4j")
+    from neo4j import GraphDatabase  # type: ignore
+    uri = os.environ.get("NEO4J_URI", "bolt://localhost:7687")
+    user = os.environ.get("NEO4J_USERNAME", os.environ.get("NEO4J_USER", "neo4j"))
+    return GraphDatabase.driver(uri, auth=(user, pw)), os.environ.get("NEO4J_DATABASE", "neo4j")
+
+
+CYPHER_EXAMPLES = """
+WORKED EXAMPLES (Cypher)
+
+Q: Which analyses use the HistFitter framework?
+  search("HistFitter") -> hepkg:method:histfitter
+  cypher: MATCH (p:Paper)-[:MENTIONS]->(c) WHERE c.id IN ['hepkg:method:histfitter'] RETURN DISTINCT p.arxiv_id
+
+Q: How many analyses estimate a W+jets background?
+  search("W+jets background") -> ids
+  cypher: MATCH (p:Paper)-[:HAS_OCCURRENCE]->(r)-[:result_estimates_background]->(b)-[:RESOLVES_TO]->(c)
+          WHERE c.id IN [...] RETURN count(DISTINCT p.arxiv_id)
+"""
+
+
 def schema_brief(conn) -> str:
     """The DDL, plus what the typed agent gets for free: how big things are and
     what the values look like.
@@ -450,14 +592,28 @@ class FreeSQLSystem:
                  index_values: bool = False, index_quotes: bool = False,
                  search_sets: bool = False,
                  concept_prompt: bool = False, subgoals: bool = False,
-                 subgoal_status: bool = False) -> None:
+                 subgoal_status: bool = False,
+                 languages: tuple = ("sql",)) -> None:
         self.name = name
         self._conn = conn
         self._index = index
+        # QUERY LANGUAGES. ("sql",) is the control as it always was;
+        # ("cypher",) queries the Neo4j projection of the same graph;
+        # ("sql", "cypher") offers both and records which one the model used.
+        self._languages = tuple(languages)
+        self._driver = None
+        self._database = "neo4j"
+        if "cypher" in self._languages:
+            self._driver, self._database = neo4j_driver_from_env()
         self._chat = chat
         self._max_rounds = max_rounds
         self._persist = persist
-        self._schema = schema_brief(conn)
+        briefs = []
+        if "sql" in self._languages:
+            briefs.append(schema_brief(conn))
+        if "cypher" in self._languages:
+            briefs.append(cypher_brief(conn))
+        self._schema = "\n\n".join(briefs)
         self._search_sets = bool(search_sets)
         # IMPLIED BY search_sets, because the shipped line ("find the entity_ids
         # ... then sql over them") flatly contradicts a queryable set table. The
@@ -475,7 +631,9 @@ class FreeSQLSystem:
             "max_rounds": max_rounds,
             "max_rows": MAX_ROWS,
             "statement_seconds": STATEMENT_SECONDS,
-            "tools": ["sql"] + (["search"] if index is not None else []),
+            "tools": list(self._languages) + (["search"] if index is not None else []),
+            "languages": list(self._languages),
+            "neo4j": bool(self._driver),
             "persist": bool(persist),
             "reviewer": bool(reviewer),
             "state_objective": bool(state_objective),
@@ -653,7 +811,22 @@ class FreeSQLSystem:
         # turning the arm off partway through.
         self._review_stats = {}
         self._drop_sets()
-        system = SYSTEM_PROMPT.format(schema=self._schema, examples=WORKED_EXAMPLES)
+        examples = WORKED_EXAMPLES
+        if self._languages == ("cypher",):
+            examples = CYPHER_EXAMPLES
+        elif "cypher" in self._languages:
+            examples = WORKED_EXAMPLES + CYPHER_EXAMPLES
+        system = SYSTEM_PROMPT.format(schema=self._schema, examples=examples)
+        if self._languages == ("cypher",):
+            system = system.replace("sql(query)    -- read anything, aggregate anything, join anything.",
+                                    "cypher(query) -- read anything, aggregate anything, traverse anything.")
+            system = system.replace("`sql`", "`cypher`")
+        elif "cypher" in self._languages:
+            system = system.replace(
+                "  sql(query)    -- read anything, aggregate anything, join anything.\n",
+                "  sql(query)    -- read anything, aggregate anything, join anything (SQLite).\n"
+                "  cypher(query) -- the SAME graph as a Neo4j property graph; use whichever "
+                "language fits the question. Both are always available.\n")
         if self._concept_prompt:
             # Replace the instruction that teaches the failure, rather than
             # appending a contradiction of it.
@@ -690,8 +863,9 @@ class FreeSQLSystem:
 
         try:
             for rounds in range(1, self._max_rounds + 1):
-                tools = ([SQL_TOOL, ANSWER_TOOL]
-                         + ([SEARCH_TOOL] if self._index is not None else []))
+                tools = ([SQL_TOOL] if "sql" in self._languages else []) \
+                    + ([CYPHER_TOOL] if "cypher" in self._languages else []) \
+                    + [ANSWER_TOOL] + ([SEARCH_TOOL] if self._index is not None else [])
                 # THE LAST ROUND IS FOR ANSWERING. The planner got this fix and
                 # this loop did not, which is why deepseek-v4-flash scored 0.000
                 # here while scoring 0.512 on the planner: 6 of 6 rounds on every
@@ -752,7 +926,7 @@ class FreeSQLSystem:
                 # is not a wrong hop, it is a wrong answer that looks right.
                 # A rejection does NOT consume a round: `rounds` only advances
                 # in the for-loop, so re-planning happens inside this iteration.
-                if self._reviewer and any(c.function.name == "sql" for c in tool_calls):
+                if self._reviewer and any(c.function.name in ("sql", "cypher") for c in tool_calls):
                     verdict = self._review(q.text, choice, tool_calls, steps)
                     if verdict is not None and not verdict.approved:
                         messages.append({
@@ -807,11 +981,18 @@ class FreeSQLSystem:
                                          "content": body[:6000]})
                         continue
                     query = args.get("query", "")
-                    result = run_sql(self._conn, query)
+                    lang = "cypher" if call.function.name == "cypher" else "sql"
+                    if lang not in self._languages:
+                        result = SqlResult(error=f"{lang} is not available in this arm; use "
+                                                 f"{' or '.join(self._languages)}")
+                    elif lang == "cypher":
+                        result = run_cypher(self._driver, self._database, query)
+                    else:
+                        result = run_sql(self._conn, query)
                     touched.update(papers_in(result))
                     entities.update(entities_in(result))
                     steps.append({
-                        "tool": "sql", "round": rounds, "args": {"query": query},
+                        "tool": lang, "round": rounds, "args": {"query": query},
                         "rows": len(result.rows), "error": result.error or None,
                         "truncated": result.truncated,
                         "preview": result.render()[:200],

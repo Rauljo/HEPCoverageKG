@@ -531,7 +531,9 @@ def _cmd_eval(args) -> int:
     if args.system == "stub":
         make_system = systems.StubSystem
         system = make_system()
-    elif args.system == "free-sql":
+    elif args.system in ("free-sql", "free-cypher", "free-both"):
+        languages = {"free-sql": ("sql",), "free-cypher": ("cypher",),
+                     "free-both": ("sql", "cypher")}[args.system]
         # The control. Same runner, same scorers, same model -- one tool that
         # takes SQL instead of nine typed ones. See eval/free_sql.py.
         from hepcoveragekg.query import retrieve, templates
@@ -559,7 +561,41 @@ def _cmd_eval(args) -> int:
                 search_sets=args.search_sets,
                 concept_prompt=args.concept_prompt,
                 subgoals=args.subgoals,
-                subgoal_status=args.subgoal_status)
+                subgoal_status=args.subgoal_status,
+                languages=languages, name=args.system)
+        system = make_system()
+    elif args.system == "ensemble":
+        # BOTH SYSTEMS ON EVERY QUESTION (D-146). The typed side takes every
+        # planner flag on this command line; the SQL side is the plain control.
+        from hepcoveragekg.query import retrieve, templates
+        from hepcoveragekg.eval import ensemble as _ens
+        conn = templates.read_only(args.db)
+        index = retrieve.build(
+            conn,
+            cache=retrieve.cache_path(args.index_values, args.index_quotes),
+            include_values=args.index_values,
+            include_quotes=args.index_quotes)
+        def make_system():
+            typed = systems.PlannerSystem(
+                templates.read_only(args.db), index, index_values=args.index_values,
+                index_quotes=args.index_quotes,
+                max_rounds=args.max_rounds, max_places=args.max_places,
+                max_rows=args.max_rows, minimal_prompt=args.minimal_prompt,
+                use_critic=args.critic, critic_seed=args.critic_seed,
+                answer_contract=args.answer_contract, contract=args.contract,
+                force_critic_set=args.force_critic_set, persist=args.persist,
+                push_further=args.push_further, simple_answer=args.simple_answer,
+                fewshot=_fewshot_block(args), tool_examples=args.tool_examples,
+                reviewer=args.reviewer, state_objective=args.state_objective,
+                subgoals=args.subgoals, subgoal_status=args.subgoal_status,
+                path_tool=args.path_tool, answer_gate=args.answer_gate,
+                answer_critic=args.answer_critic, rerank=args.rerank,
+                name_ids=args.name_ids, kind_fallback=args.kind_fallback,
+                ranked_answer=args.ranked_answer, enum_expand=args.enum_expand)
+            sql = free_sql.FreeSQLSystem(templates.read_only(args.db), index,
+                                         max_rounds=args.max_rounds,
+                                         persist=not args.no_persist)
+            return _ens.EnsembleSystem(typed, sql)
         system = make_system()
     elif args.system == "planner":
         from hepcoveragekg.query import retrieve, templates
@@ -750,7 +786,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_eval.add_argument("other", nargs="?",
                         help="compare: the second run file. score: the question file")
     p_eval.add_argument("--system", default="stub",
-                        help="stub (default, needs nothing), planner, or free-sql "
+                        help="stub (default, needs nothing), planner, free-sql, free-cypher, free-both, ensemble, or free-sql "
                              "-- the control: one SQL tool instead of the typed ones")
     p_eval.add_argument("--workers", type=int, default=1,
                         help="answer this many questions at once. The bottleneck "
