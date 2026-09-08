@@ -5781,3 +5781,34 @@ that ids-in-text is what makes the answer scoreable at all, that it trades
 exact-set precision for recall on QwQ, and that a judge-based strike does not
 buy the precision back. Bench cost $0.9; day's OpenRouter total $3.06.
 
+## D-145 -- CORRECTION to D-133: free-SQL names papers in 85% of its set answers, and on the generated 164 it is the best arm by exact-set F1
+
+D-133 said free-SQL's score was "a coin toss on whether it prints ids", from
+`answer_names_papers` reading 10-15%. That scorer read `named_ids`, a field
+the SYSTEM fills, and the free-SQL system never filled it. Read from the text
+(the rule `set_f1` uses; scorer fixed in the commit before this entry, with
+tests; run files unchanged), free-SQL names ids on 83 / 88 of its 98 set
+answers. Wave 2 and wave 3 on the 164, set records only:
+
+| arm | set_f1 | named-only f1 / p / r (n) | fallback | essay-only | count (20) |
+|---|---|---|---|---|---|
+| free-SQL a / b | 0.300 / 0.265 | 0.338 / 0.271 / 0.584 (83) ; 0.291 / 0.246 / 0.479 (88) | 15 / 10 of 98 | 0.286 / 0.261 | 0.25 / 0.45 |
+| typed control a (w1) | 0.219 | 0.237 / 0.222 / 0.375 (51) | 47/98 | 0.123 | 0.15 |
+| typed no-critic a (w2) | 0.207 | 0.211 / 0.187 / 0.354 (64) | 34/98 | 0.138 | 0.30 |
+| typed ctrl + name-ids (54272) | 0.217 | 0.211 / 0.175 / 0.348 (88) | 10/98 | 0.190 | 0.25 |
+| typed stack (54268) | 0.194 | 0.203 / 0.189 / 0.416 (84) | 14/98 | 0.174 | 0.30 |
+
+So on the generated set questions -- exact truth from SQL, 2-15 papers --
+the free-SQL baseline (one model, writes SQL against the same graph) beats
+every typed arm on named-only and essay-only F1, with the best precision
+(0.25-0.27) and recall comparable to the stack's. On Gabriel's questions
+(D-139, 8-24 gold, judged against his verdicts) the typed stack is the best
+arm and free-SQL's judged score on the 10 was 0.21 / 0.36 against the stack's
+0.42. The two question sources disagree about which system is better, and
+that disagreement is a result, not a nuisance: the generated questions are
+answerable by one well-formed query over the typed schema, which is what
+free-SQL does; Gabriel's questions need the surface-form and enumeration
+work the typed arms add. The write-up must present both, and D-133's
+"formatting coin toss" line is withdrawn. Every other conclusion of D-133
+(critic worth nothing on the 164) stands.
+
