@@ -602,7 +602,12 @@ def answer_form(q: Question, a: Answer) -> dict:
     """
     if q.shape != "set":
         return {}
-    named = float(getattr(a, "named_ids", 0))
+    # FROM THE TEXT, like `set_f1` (D-145). `named_ids` is a field the system
+    # fills, and free-SQL never filled it: its print rate read 10-15% while the
+    # ids were in 85% of its set answers. The scorer must not depend on which
+    # system wrote the record.
+    named = float(max(len(_arxiv_ids_in(getattr(a, "text", "") or "")),
+                      int(getattr(a, "named_ids", 0) or 0)))
     return {
         "named_ids": named,
         # THE HEADLINE. 1.0 when the written answer names at least one paper.
