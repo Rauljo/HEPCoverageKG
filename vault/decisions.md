@@ -5071,3 +5071,31 @@ the price of the filter, not of the rerank.
 nameids-ac (0.471) is the top number and carries the same reach cost; rerank+ac
 sits with it. On this code --rerank could not run without the filter (D-124);
 the decoupled ranker is in wave 3.
+
+## D-126 — the corrected stack converts: named 35% -> 44%, never-reached 34% -> 13%
+
+--kind-fallback --name-ids --max-rows 100 --rerank --answer-gate (the filter
+out, D-124), qwen3-32b + llama-8b critic, Gabriel's 9 x 3, same control.
+18 of 27 records clean; the other nine errored (read below).
+
+    judged_f1   0.452 -> 0.492   (+0.040; per-record spread 0.297)
+    reach       0.692 -> 0.836   (+0.144)
+    gold named  3.5   -> 4.9 per record
+
+    decomposition        named   reached-not-named   never-reached
+    control               35%          31%               34%
+    fallback alone        34%          48%               18%
+    stack + filter        32%          50%               18%
+    stack + gate          44%          43%               13%
+
+The first arm where "named" moves. gf-01-condition 0.36 -> 0.92 (11 gold
+named), gf-05 0.07 -> 0.40 (reach 1.00, 6 gold named), gf-08 0.11 -> 0.42.
+Every lever in the stack has a named failure it fixes (D-118), and this is
+what they do together that none did alone.
+
+What remains: reached-not-named at 43% is still the largest bucket, and two
+questions lost ground with reach UP -- gf-07 0.38 -> 0.09, gf-04 0.67 -> 0.48
+-- the model naming wrong papers from a wider, correctly-reached set. That is
+the precision half of the handoff, and the filter that would address it
+strikes gold (D-124). The next mechanism has to raise answer precision without
+being allowed to delete a paper.
