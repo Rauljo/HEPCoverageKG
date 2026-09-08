@@ -5671,3 +5671,13 @@ on the same questions; set_f1 0.189 vs 0.258 -- naming 15 ids per set answer
 (8 of 95 answers id-less) buys judged recall on the 9 and costs exact-set
 precision on the generated questions. Final numbers when 54268 ends (~12:20).
 
+## D-143 -- 54272: the merged control plus --name-ids on the 164, to price D-117 on the full set
+
+Launched 11:21 on d0229ec (same planner code as 2486245): typed + critic
+control with --name-ids and nothing else, WORKERS=4, --timeout 900,
+LLM_TIMEOUT=600, config afc55d677883. Pairs with 54261 (same code, no
+--name-ids) to give the cost of recovering answer() without asking for ids in
+the text, on set_f1 (98), count (20) and the Gabriel 10 -- D-141's 0.442 ->
+0.372 was on the 9 only. Runs beside 54268 (stack, 119/164 at launch); both
+must end before the server's 15:58 limit: ~2.5 h and ~1 h respectively.
+
