@@ -5495,3 +5495,17 @@ the 0.297 record spread. Next: RANKED_ASK_MIN_MISSING (ask when at least N
 strong candidates are unnamed; unset keeps this rule), run with N=3.
 Spend: $0.36 for enum4 + ranked40 + most of enum5.
 
+## D-131 addendum 5 -- ENUM_LIMIT=20: the set cap fixes gf-04 and gf-07; gf-08 is the variance engine
+
+enum5 (9247349, stack without rerank + enum-expand, ENUM_LIMIT=20, run
+20260908T060641-hepkg-72076): judged 0.485 (+0.033 vs control; enum4 at limit
+60 was 0.470), reach 0.847, zero errors, median 159 s. Where the cap acts it
+does what D-131 addendum 4 predicted: gf-04 0.35 -> 0.68 with set_1 158 -> 54
+entities, gf-07 0.19 -> 0.39 (143 -> 104). The overall gain is eaten by gf-08,
+which named zero gold on all three records (enum4: 5.3 per record) -- the same
+model, prompt and set size produce 0.00 / 0.21 / 0.34 / 0.49 on gf-08 across
+the night's runs, so any 27-record comparison moves by +-0.05 on that
+question alone. Recommendation for the stack: enum-expand with ENUM_LIMIT=20,
+no rerank. For the write-up: gf-08 (24 gold, 'list every search with parallel
+ee/mumu selections') needs its own repeats (>=5) before any per-arm claim.
+
