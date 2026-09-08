@@ -16,7 +16,9 @@
 > comparison (D-138). On the 164 the stack wins count and the Gabriel-10 judged score and
 > ties or loses set_f1 depending on whether the control's footprint fallback is counted (D-142,
 > D-143); on small-truth generated questions with qwen3-32b it doubles recall at equal precision
-> and a judge-based strike removes gold (D-144). Today's log: [`logs/2026-09-08.md`](logs/2026-09-08.md).
+> and a judge-based strike removes gold (D-144). The first results section is drafted from
+> [`analysis/controls-and-gabriel.md`](analysis/controls-and-gabriel.md): the controls by question type
+> and Gabriel's nine questions one by one. Today's log: [`logs/2026-09-08.md`](logs/2026-09-08.md).
 
 > **→ [`system.md`](system.md) (v1.8, 2026-08-07) is now the reference document for what gets built
 > next**: the query system and the agent layers on top of the graph, the evaluation design, the
