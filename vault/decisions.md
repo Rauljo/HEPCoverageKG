@@ -5435,3 +5435,28 @@ records to a 900 s timeout and a facet_entities-only exit -- the 32B ranker on
 OpenRouter usage counter). Running enum4 = enum3 without --rerank to isolate
 the facets-row ranker.
 
+## D-135 -- loss decomposition by ranker grade (enum3, 27 records, 318 gold slots)
+
+With per-paper grades in the run file (1c7a2b7) the D-118 classes can be
+counted against the judge's own view:
+
+| bucket | gold slots | share |
+|---|---|---|
+| named correctly | 117 | 37% |
+| graded by the ranker, not named (handoff) | 86 | 27% |
+| reached by some tool, never graded, not named | 44 | 14% |
+| never reached (retrieval) | 71 | 22% |
+
+The 32B judge is informative -- P(gold) 0.49 / 0.37 / 0.27 / 0.15 at grades
+3 / 2 / 1 / 0 -- but it is generous at the top (340 papers at grade 3, half
+gold), and on facets-first questions it grades nearly every row 3 (gf-01-met:
+1 gold, 60 non-gold at grade 3), because every facet row already matches the
+facet. Reordering is then invisible: the model names 87% of grade-3 non-gold
+rows and 70% of grade-3 gold rows -- it names the page, in whatever order.
+Per question the handoff loss is gf-08 (42 of 72 gold graded and not named;
+3 named) and gf-04 (16); the retrieval loss is gf-02 (17 never reached) and
+gf-08 (27); gf-07 loses 16 gold that reached via subjects_of/describe and never
+entered a papers_of call. What would move it: (a) gf-08 -- the model has the
+list and does not write it, the D-128 prompt's case; (b) gf-02 / gf-08 --
+query formulation, D-121's finding, partly answered by enum-expand.
+
