@@ -777,6 +777,11 @@ class Session:
     # and why is the measurement, and a keep-rate alone hides a judge that is
     # defaulting (D-105).
     answer_review: Any = None
+    #: How many entities the kind fallback appended, summed over this run's
+    #: searches (D-119). Zero with the arm on and kinded searches made means
+    #: the arm did nothing -- the D-105 shape, and armcheck asserts it.
+    kind_fallback_added: int = 0
+    kinded_searches: int = 0
     #: Every `papers_of` reordering this run made (D-113). A list, because a
     #: run calls `papers_of` more than once and each call is a separate
     #: judgement whose spread has to be readable -- an arm whose rankings were
@@ -1308,8 +1313,44 @@ def _collect_ids(rows: list[dict], note: str) -> set[str]:
     """Entity ids a result handed back, from its rows and its note."""
     found = {str(r[k]) for r in rows for k in _ID_COLUMNS
              if isinstance(r, dict) and r.get(k)}
+    # A row may carry a LIST of ids (facets: every entity that earned the tag).
+    found |= {str(e) for r in rows if isinstance(r, dict)
+              for e in (r.get("entity_ids") or []) if e}
     found |= set(re.findall(r"hepkg:[a-z_]+:[A-Za-z0-9_.\-]+", note or ""))
     return found
+
+
+#: Rung -> sort key. Rows without a verdict sort after `broader` and before
+#: `unrelated`: an unjudged candidate is unknown, a judged-unrelated one is not.
+_RUNG_ORDER = {"exact": 0, "broader": 1, None: 2, "unrelated": 3}
+
+
+def order_by_rung(rows: list, kept: Optional[set] = None) -> None:
+    """Stable in-place sort of entity rows by relevance, best first.
+
+    Two signals, both free. `bears_on` is the critic's rung and rides on search
+    rows. `kept` is the union of every `*_kept` set this run has built: an
+    entity the critic already judged relevant for THIS question, when it
+    surfaces again from `subjects_of` or `describe` with no verdict of its
+    own, is not an unknown -- it is a known-relevant. gf-08's 224-row
+    `subjects_of` result had no rungs at all; this is what orders it.
+
+    A no-op when neither signal applies. Stable, so retrieval order (itself a
+    weak ranking) breaks ties.
+    """
+    kept = kept or set()
+    def key(r):
+        if not isinstance(r, dict):
+            return 2
+        if "bears_on" in r:
+            return _RUNG_ORDER.get(r["bears_on"], 2)
+        if kept and r.get("entity_id") in kept:
+            return 1                         # known-relevant, ranks with `broader`
+        return 2
+    if not any(isinstance(r, dict) and ("bears_on" in r or (kept and r.get("entity_id") in kept))
+               for r in rows):
+        return
+    rows.sort(key=key)
 
 
 def _render_rows(rows: list[dict], max_rows: int) -> str:
@@ -1329,15 +1370,20 @@ def _render_rows(rows: list[dict], max_rows: int) -> str:
     return "\n".join(lines)
 
 
-def _paper_ranker(conn, session, rerank, answer_critic):
+def _paper_ranker(conn, session, rerank, answer_critic=None):
     """Reorder a `papers_of` result best-first, or None when the arm is off.
 
-    Needs the graded judge, so it is only built when BOTH --rerank and
-    --answer-critic are on: the rung-level reordering above is free and always
-    applies under --rerank; this one costs a judging pass per call and is the
-    thing being measured.
+    DECOUPLED FROM THE FILTER (D-124). This used to require --answer-critic as
+    well, because both use the same judge client -- so the ranker could not be
+    had without the filter. The live stack showed why that matters: the filter
+    struck seven gold papers in sixteen drops ("uses b-tagged jet veto", which
+    the prompt itself says counts as using), while the ranker only ever
+    reorders and cannot lose a paper. --rerank now builds its own judge;
+    --answer-critic remains the filter and is a separate decision.
+
+    `answer_critic` is accepted and ignored, so existing callers do not move.
     """
-    if not (rerank and answer_critic):
+    if not rerank:
         return None
     from hepcoveragekg.query import answer_critic as AC
 
@@ -1387,13 +1433,24 @@ def _paper_ranker(conn, session, rerank, answer_critic):
     return rank
 
 
+def _fallback_counter(session):
+    """Counts kinded searches and appended entities onto the session (D-119)."""
+    def hook(added: int, kinded: bool = False):
+        if kinded:
+            session.kinded_searches += 1
+        session.kind_fallback_added += int(added)
+    return hook
+
+
 def build_executor(conn, index, sets: Optional[dict] = None,
                    critic: Optional[Callable] = None,
                    answer_contract: bool = False,
                    force_critic_set: bool = False,
                    rerank: bool = False,
                    rank_papers: Optional[Callable] = None,
-                   question_of: Optional[Callable] = None) -> Callable[[str, dict], Any]:
+                   question_of: Optional[Callable] = None,
+                   kind_fallback: bool = False,
+                   on_fallback: Optional[Callable] = None) -> Callable[[str, dict], Any]:
     """Bind the tools to this database, index and set of named results.
 
     Returned as a closure so the planner never holds a connection itself and
@@ -1484,6 +1541,33 @@ def build_executor(conn, index, sets: Optional[dict] = None,
                 review = critic(args["text"], hits, refresh=True)
                 widened += 1
 
+            # THE KIND FALLBACK (D-119, arm). A `kind` narrows the search to one
+            # entity type, and whether that helps depends on how the GRAPH typed
+            # the concept, which the model cannot see. Replayed against the DIAS
+            # DB on Gabriel's questions: "Higgs" with kind=detector_object
+            # reaches 2 of 16 gold papers, without it 13 -- the candidate
+            # entities are typed event_region, physics_process, observable, and
+            # only 9 of 200-odd are detector_object. Yet the same filter HELPS
+            # gf-08 (+2) and gf-01 (+3). So neither keep nor drop: keep the
+            # kinded hits first, append the unfiltered ones, and let the critic
+            # judge the union. Measured offline over the five live kinded
+            # searches: 61 -> 74 of 79 gold papers reached, at one extra local
+            # search and zero LLM calls.
+            fallback_added = 0
+            if args.get("kind") and on_fallback:
+                on_fallback(0, kinded=True)          # a kinded search happened
+            if kind_fallback and args.get("kind"):
+                have = {h.entity_id for h in hits}
+                extra = [h for h in retrieve.search(index, args["text"], conn=conn,
+                                                    kind=None, limit=limit)
+                         if h.entity_id not in have]
+                if extra:
+                    hits = list(hits) + extra
+                    fallback_added = len(extra)
+                    if on_fallback:
+                        on_fallback(fallback_added)
+                    if critic:
+                        review = critic(args["text"], hits, refresh=True)
             # `retrieve.concept` is `search` + `expand_canonical`, and the hits
             # are already in hand -- calling it here re-ran BM25 and the dense
             # encoder over the whole index a second time for every search, to
@@ -1506,6 +1590,11 @@ def build_executor(conn, index, sets: Optional[dict] = None,
             tagged = sum(1 for h in hits if h.facets)
             note = (f"saved as {name} ({len(ids)} entities, canonical clusters expanded). "
                     f"Pass {name} as object_set/entity_set -- do not retype the ids.")
+            if fallback_added:
+                note += (f" kind={args.get('kind')!r} matched {len(hits) - fallback_added}; "
+                         f"{fallback_added} more entities of OTHER kinds also match "
+                         f"'{args['text']}' and are included -- the graph types this "
+                         f"concept several ways.")
             if tagged:
                 note += (f" {tagged}/{len(hits)} hits carry facet tags; those keys are"
                          " what the `facets` tool takes.")
@@ -1580,9 +1669,14 @@ def build_executor(conn, index, sets: Optional[dict] = None,
             return result
         if tool == "contents_of":
             papers = args.get("paper_ids") or args.get("paper_id") or []
+            # Same truncation, same fix as papers_of: contents_of rows carry a
+            # paper_id and are cut at max_rows in retrieval order.
             if isinstance(papers, str):
                 papers = [papers]
-            return templates.contents_of(conn, papers, args.get("predicate"))
+            result = templates.contents_of(conn, papers, args.get("predicate"))
+            if rank_papers is not None and result.rows and len(result.rows) > 1:
+                result = rank_papers(question_of(), result)
+            return result
         if tool == "facets":
             values = args.get("values") or args.get("value") or []
             if isinstance(values, str):
@@ -1605,6 +1699,10 @@ def build_executor(conn, index, sets: Optional[dict] = None,
                     summary = critic_mod.facet_summary(reading)
                     if summary:
                         result.note = f"{result.note} {summary}".strip()
+            # facets found 79 of Gabriel's gold papers to search's 52 (D-118) and
+            # is cut at max_rows like everything else; rank its paper rows too.
+            if rank_papers is not None and result.rows and len(result.rows) > 1:
+                result = rank_papers(question_of(), result)
             return result
         if tool == "facet_entities":
             value = args.get("value")
@@ -2112,7 +2210,7 @@ def _prepare(conn, index, question, max_rounds, max_places, max_rows,
              fewshot="", tool_examples=False, reviewer=False,
              state_objective=False, subgoals=False, subgoal_status=False,
              path_tool=False, answer_gate=False, answer_critic=False,
-             rerank=False, name_ids=False):
+             rerank=False, name_ids=False, kind_fallback=False):
     """The state and runtime config a run needs. Shared by answer() and stream()."""
     session = Session(question=question)
     if chat is None:
@@ -2163,7 +2261,9 @@ def _prepare(conn, index, question, max_rounds, max_places, max_rows,
                                   rerank=rerank,
                                   rank_papers=_paper_ranker(conn, session, rerank,
                                                             answer_critic),
-                                  question_of=lambda: question),
+                                  question_of=lambda: question,
+                                  kind_fallback=kind_fallback,
+                                  on_fallback=_fallback_counter(session)),
         "tools": [{"type": "function", "function": spec}
                   for spec in tools_for(answer_contract, contract, simple_answer,
                                         path_tool, name_ids)],
@@ -2215,6 +2315,7 @@ def _prepare(conn, index, question, max_rounds, max_places, max_rows,
     # THE ANSWER GATE (D-107). Costs no call at all -- it reads the answer the
     # model already wrote -- so the only thing an arm buys is the retry round.
     runtime["rerank"] = bool(rerank)
+    runtime["kind_fallback"] = bool(kind_fallback)
     runtime["answer_gate"] = bool(answer_gate)
 
     # THE ANSWER CRITIC (D-106). Uses the SEARCH critic's endpoint, because the
@@ -2290,6 +2391,7 @@ def stream(
     answer_critic: bool = False,
     rerank: bool = False,
     name_ids: bool = False,
+    kind_fallback: bool = False,
 ):
     """Yield `(node_name, session)` after each node completes.
 
@@ -2307,7 +2409,7 @@ def stream(
                                       fewshot, tool_examples, reviewer,
                                       state_objective, subgoals, subgoal_status,
                                       path_tool, answer_gate, answer_critic,
-                                      rerank, name_ids)
+                                      rerank, name_ids, kind_fallback)
     started = time.perf_counter()
     app = graph_module.build(checkpointer=checkpointer)
     for update in app.stream(state, config=config, stream_mode="updates"):
@@ -2347,6 +2449,7 @@ def answer(
     answer_critic: bool = False,
     rerank: bool = False,
     name_ids: bool = False,
+    kind_fallback: bool = False,
 ) -> Session:
     """Answer one question, returning the answer and the whole trace.
 
@@ -2372,7 +2475,7 @@ def answer(
                                       fewshot, tool_examples, reviewer,
                                       state_objective, subgoals, subgoal_status,
                                       path_tool, answer_gate, answer_critic,
-                                      rerank, name_ids)
+                                      rerank, name_ids, kind_fallback)
     graph_module.build(checkpointer=checkpointer).invoke(state, config=config)
 
     session.seconds = time.perf_counter() - started

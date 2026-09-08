@@ -80,6 +80,12 @@ MECHANISMS = {
         lambda a: (a.get("answer_review") or {}).get("candidates", 0),
         lambda a, r: int(bool(a.get("named_ids") or a.get("cited"))),
     ),
+    "kind_fallback": (
+        "kind-fallback",
+        lambda a: a.get("kind_fallback_added", 0),
+        # every kinded search is a chance; zero appended over many is a no-op
+        lambda a, r: a.get("kinded_searches", 0),
+    ),
     "rerank": (
         "rerank",
         lambda a: sum(x.get("graded", 0) for x in a.get("rankings", [])),

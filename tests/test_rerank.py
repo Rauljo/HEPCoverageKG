@@ -156,14 +156,17 @@ def test_the_spread_travels_in_the_record():
 # the wiring: papers_of is where the truncation happens
 # --------------------------------------------------------------------------
 
-def test_the_paper_ranker_is_off_unless_both_flags_are_on():
-    """The rung reordering is free and always applies under --rerank; the
-    graded pass costs a call per `papers_of` and is the thing being measured."""
+def test_the_paper_ranker_needs_only_rerank(monkeypatch):
+    """D-124: the ranker used to require --answer-critic too, so it could not be
+    had without the filter -- and the filter struck 7 gold papers in 16 drops
+    on the live stack. The ranker only reorders and cannot lose a paper."""
     from hepcoveragekg.query import planner
 
     assert planner._paper_ranker(None, None, False, False) is None
-    assert planner._paper_ranker(None, None, True, False) is None
-    assert planner._paper_ranker(None, None, False, True) is None
+    assert planner._paper_ranker(None, None, False, True) is None, "the filter alone does not rank"
+    monkeypatch.setattr(planner, "_critic_client", lambda: (object(), "m"))
+    monkeypatch.setattr(planner, "completion_cap", lambda m: 100)
+    assert planner._paper_ranker(None, planner.Session(question="q"), True, False) is not None
 
 
 def test_an_unusable_ranking_is_not_applied():
@@ -203,3 +206,65 @@ def test_a_usable_ranking_reorders_without_losing_rows():
     result.rows.sort(key=lambda r: rank_of.get(str(r.get("paper_id")), 10 ** 6))
     assert [r["paper_id"] for r in result.rows] == ranking.order
     assert len(result.rows) == len(papers), "ranking must not remove a row"
+
+
+# --------------------------------------------------------------------------
+# the cut is at the render site, so the order is decided there (D-118 class B)
+# --------------------------------------------------------------------------
+
+def test_order_by_rung_puts_exact_first_and_unrelated_last():
+    from hepcoveragekg.query import planner as P
+    rows = [{"entity_id": "u", "bears_on": "unrelated"},
+            {"entity_id": "b", "bears_on": "broader"},
+            {"entity_id": "n"},                          # unjudged
+            {"entity_id": "e", "bears_on": "exact"}]
+    P.order_by_rung(rows)
+    assert [r["entity_id"] for r in rows] == ["e", "b", "n", "u"]
+
+
+def test_order_by_rung_is_stable_and_a_noop_without_verdicts():
+    from hepcoveragekg.query import planner as P
+    rows = [{"entity_id": "c"}, {"entity_id": "a"}, {"entity_id": "b"}]
+    P.order_by_rung(rows)
+    assert [r["entity_id"] for r in rows] == ["c", "a", "b"], "retrieval order kept"
+    rows = [{"entity_id": "x", "bears_on": "exact"}, {"entity_id": "y", "bears_on": "exact"}]
+    P.order_by_rung(rows)
+    assert [r["entity_id"] for r in rows] == ["x", "y"], "ties keep retrieval order"
+
+
+def test_the_render_site_reorders_only_under_rerank():
+    """An exact hit past the window must be shown; an unrelated one inside it
+    must not push it out. Membership unchanged either way."""
+    import json
+    from hepcoveragekg.query import graph as G, planner, templates
+    rows = [{"entity_id": f"u{i}", "label": f"u{i}", "kind": "k", "bears_on": "unrelated"} for i in range(3)] \
+         + [{"entity_id": "gold", "label": "gold", "kind": "k", "bears_on": "exact"}]
+    def execute(name, args): return templates.QueryResult(shape="search", rows=list(rows))
+    for rerank in (False, True):
+        session = planner.Session(question="q")
+        state = {"session": session, "messages": [], "round": 1, "max_rounds": 6,
+                 "max_places": 8, "max_rows": 2, "last_content": "",
+                 "pending_calls": [{"id": "1", "name": "search",
+                                    "arguments": json.dumps({"text": "q"})}]}
+        G.execute(state, {"configurable": {"execute": execute, "tools": [], "chat": None,
+                                           "contract": "v3", "rerank": rerank}})
+        shown = state["messages"][-1]["content"]
+        assert ("gold" in shown) == rerank, f"rerank={rerank}: window={shown[:120]!r}"
+
+
+def test_kept_entities_rank_ahead_when_rows_carry_no_verdict():
+    """subjects_of rows have no rung. An entity the critic already kept for this
+    question is known-relevant, not unknown (gf-08: 224 rows, no rungs)."""
+    from hepcoveragekg.query import planner as P
+    rows = [{"entity_id": "stranger"}, {"entity_id": "kept_one"}, {"entity_id": "other"}]
+    P.order_by_rung(rows, kept={"kept_one"})
+    assert [r["entity_id"] for r in rows] == ["kept_one", "stranger", "other"]
+
+
+def test_a_verdict_on_the_row_beats_the_kept_signal():
+    from hepcoveragekg.query import planner as P
+    rows = [{"entity_id": "kept_but_unrelated", "bears_on": "unrelated"},
+            {"entity_id": "kept_no_verdict"},
+            {"entity_id": "exact", "bears_on": "exact"}]
+    P.order_by_rung(rows, kept={"kept_but_unrelated", "kept_no_verdict"})
+    assert [r["entity_id"] for r in rows] == ["exact", "kept_no_verdict", "kept_but_unrelated"]

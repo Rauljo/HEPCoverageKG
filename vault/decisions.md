@@ -4732,3 +4732,314 @@ THE ORDER MATTERS. The harvest is a parser: it costs nothing, cannot regress,
 and works whatever the model does. The prompt is a behaviour change that has to
 be measured and can be undone by the next model. So the harvest is the floor
 and the prompt is the arm, not the other way round.
+
+## D-118 — Gabriel's questions, replayed: retrieval and the handoff lose the same amount
+
+Wave-1 controls (54251/54252), every tool call replayed against the DIAS
+database because stored previews were empty (see the instrumentation branch).
+188 gold instances over 9 questions x 2 controls, one errored record excluded.
+
+    named correctly                    59   31%
+    reached, not named (handoff)       67   36%
+    in the graph, never reached        62   33%
+    not in the graph                    0
+
+D-104's "retrieval is at 0.96, the whole loss is the handoff" was measured on
+synthetic questions whose gold comes from the graph. On the physicist's
+questions retrieval misses a third -- and of those 62 misses, 44 sit on papers
+that CARRY an entity with the concept. The graph has it; search does not find
+it. 10 are in a quote but no entity; 8 are absent.
+
+By tool, gold papers reached: facets 79, search 52, subjects_of 38, papers_of 7.
+facets found more gold than search and was invisible to every reach metric.
+
+PER QUESTION -- the failure is different each time, which is the finding:
+
+  gf-05  Higgs candidate     reach 2/16. 13 of 14 misses carry `H->bb candidate`,
+                             `Diphoton system (H→γγ candidate)`, `Large-R jet
+                             (H→bḇ candidate)`. Question says Higgs, labels say H,
+                             in four notations. D-087 on a real question.
+  gf-08  ee OR mumu          reach 24/24, named 1. subjects_of returned 201 and
+                             224 rows; the model saw 25. Pure truncation.
+  gf-07  ttZ + CR            reach 8/10, named 0 (or 3 wrong). search 27,
+                             subjects_of 52 rows. Truncation + wrong picks.
+  gf-01-condition / -met     reach 11/11 and 3/3, named 1 each, no step over 25
+                             rows. "18 analyses use b-tagged jets" plus three
+                             examples. Summarise-instead-of-list.
+  gf-02  ABCD/sideband/matrix reach 6/11, named 6 -- perfect handoff. All 5
+                             misses are `Matrix method ...` labels. The model
+                             searched ABCD; the question named three concepts.
+  gf-04  unfolding           reach 10/18, named 10 -- perfect handoff. Misses:
+                             3 concept-absent, 3 quote-only (TUnfold in text),
+                             2 entity-present. Mostly a graph gap.
+  gf-03  HistFitter          reach 4/5, named 4. One quote-only miss.
+  gf-01  b-jets AND MET,     reach 7/8, named 6, EIGHT false positives -- and all
+         searches            eight are category=search, like the true positives.
+                             The facet tags are on all 14; Gabriel says 8 do not
+                             REQUIRE both in the selection. Tag ≠ selection
+                             (D-099, now located). No query arm fixes this.
+
+TWO CONSEQUENCES. The handoff loss is not universal: gf-02 and gf-04 hand off
+perfectly, gf-08 loses 23/24, and the difference is whether the result fit in
+25 rows. "The handoff" is really TRUNCATION, a much narrower claim. And every
+arm now has a named failure:
+
+    surface-form miss, entity present   44   encoder / aliases / multi-search
+    truncation at 25 rows               31   rerank, papers_from, max_rows
+    summarise instead of list           12   --name-ids, gate
+    quote-only extraction gap           10   --index-quotes
+    tag ≠ selection (FP)                 8   graph precision, not a query fix
+
+## D-119 — the kind filter starves some questions and feeds others; fall back, don't choose
+
+Found by the offline retrieval bench (report 1, 2026-09-08). Replayed against
+the DIAS DB, "Higgs" with `kind=detector_object` -- as the model typed it --
+reaches 2 of gf-05's 16 gold papers; the same query without the kind reaches
+13. The Higgs-candidate entities on those papers are typed event_region (38),
+physics_process (39), observable (38), result (29): only 9 are detector_object.
+The model's guess was reasonable; the graph typed the concept differently, and
+the model cannot see that.
+
+But the SAME filter helps elsewhere: gf-08 +2, gf-01 +3. Over the five distinct
+kinded searches in the controls, with-kind reaches 61 of 79 gold papers,
+without 71. So neither policy is right.
+
+`--kind-fallback`: run the kinded search, then the unfiltered one, append what
+is new, tell the model how many entities of other kinds matched, hand the union
+to the critic. Predicted offline, before building: 61 -> 74 of 79 (+13), gf-05
+2 -> 13, one extra local search per kinded query, zero LLM calls.
+
+An arm, default off: wave 2 must stay comparable with wave 1. To be confirmed
+live on Gabriel's questions via OpenRouter before promotion.
+
+## D-120 — decide the order where the cut is, and on every tool that found the gold
+
+D-118 replayed which tool actually reached Gabriel's gold papers: facets 79,
+search 52, subjects_of 38, papers_of 7. The rerank hook (D-113) covered
+papers_of only -- the tool that found the fewest.
+
+The cut is one place for every tool: `_render_rows` at `max_rows=25`, and rows
+arrive in retrieval order. Search rows already carry the critic's rung as
+`bears_on`; with 60 hits and a 25-row window an `exact` hit ranked 40th by
+BM25 is dropped while an `unrelated` one ranked 3rd is shown to the model.
+
+Under `--rerank` now: entity rows are stable-sorted by rung at the render site
+(exact, broader, unjudged, unrelated -- retrieval order breaks ties), and the
+graded paper ranker also runs on `facets` and `contents_of` results, not only
+`papers_of`. Membership, counts and sets are unchanged; only which side of the
+window a row lands on. Off by default; `--max-rows` is now a knob so the
+window itself can be an axis.
+
+Still uncovered: `subjects_of` rows are entities with no critic verdict (the
+critic runs only on search). gf-08's 224-row truncation was there. Options are
+a rung by paper overlap with the kept set, or the graded judge on labels; not
+built until the cheaper levers (`--max-rows`, rung ordering) are measured.
+
+## D-121 — on Gabriel's questions the index is not the bottleneck; every retrieval miss is in the query
+
+Offline bench, no LLM, concept queries, limit 60, DIAS database, 2x2 over the
+index variants:
+
+    index                  gold reached   of the 31 papers never reached live
+    values=0 quotes=0        105/106              30/31
+    values=1 quotes=0        105/106              30/31
+    values=0 quotes=1        105/106              30/31
+    values=1 quotes=1        104/106              30/31
+
+`--index-values` and `--index-quotes` change nothing here. The 10 misses D-118
+called "quote-only" were quote-only FOR THE KEYWORD; the papers themselves are
+reachable through other entities they carry. D-085's 31% (values) was a real
+effect on a different question set and stands; it does not transfer to these.
+
+With D-119 this closes classes A and D together: the surface forms are there,
+the retriever finds them, and the 62 "in the graph, never reached" gold papers
+are lost between the question and the search call --
+
+    the `kind` filter starving a query          gf-05   13    --kind-fallback
+    one facet where the question named three    gf-02    5    multi-concept search
+    the model typing one concept, not the set   (as-typed 88% vs concept 99%)
+
+"What is missing for retrieval to be perfect" on these questions is therefore
+not coverage or embeddings: it is that the agent issues one narrow query where
+the question implies several broad ones. Query formulation, not the index.
+
+## D-122 — class B predicted offline: the window is the lever, ordering cannot be judged without the critic
+
+Every wave-1 control step whose result exceeded 25 rows and contained gold,
+replayed against the DIAS DB. Gold papers VISIBLE to the model (inside the
+first `max_rows` rows), summed over those steps:
+
+    max_rows        25      50     100     250
+    visible         81      94     101     108   of 108
+
+    gf-08 subjects_of (202 rows, 20 gold):   3 ->  8 -> 13 -> 20
+    gf-07 subjects_of ( 52 rows,  8 gold):   3 ->  7 ->  8 ->  8
+
+`--max-rows 100` recovers 20 of the 27 gold papers the 25-row window hides;
+250 recovers all. The window is the cheapest lever in the project and was not
+a knob until today.
+
+Rung/kept ORDERING showed no effect in this replay -- and that is not evidence
+against it. The replay ran with `critic=None`, so no `*_kept` set exists and
+the kept-signal had nothing to act on; and on `search` rows all gold was
+already inside the window (8/8, 24/24), so no ordering can add. D-113's offline
+result (F1 0.591 -> 0.654) stands; whether the live mechanism realises it can
+only be measured live, with the critic on.
+
+Order of live tests on the OpenRouter lane, cheapest first: `--max-rows 50` and
+`100` on gf-08/gf-07; then `--rerank` on top; then `--subgoals` on gf-02.
+
+## D-119 addendum — the same three collapses on a second model
+
+OpenRouter control, qwen3-32b + llama-3.1-8b critic, Gabriel's 9 x 3 repeats
+(run 20260907T233950-hepkg-1914), the comparison target for --kind-fallback:
+
+    question          gold   f1    reach   named-gold/named   kinds the model typed
+    gf-05 Higgs cand.   16  0.07   0.21        0.7 / 2.3      detector_object x3, physics_process x1
+    gf-08 ee OR mumu    24  0.11   0.52        1.5 / 3.0      detector_object, channel, selection_requirement
+    gf-02 ABCD/matrix   11  0.65   0.48        5.3 / 5.3      (facets, one value)
+    gf-03 HistFitter     5  0.89   0.80        4.0 / 8.0
+    gf-04 unfolding     18  0.67   0.65        9.3 /10.3
+
+Same shape as QwQ on the cluster (D-118): gf-05 collapses on the kind filter,
+gf-08 on truncation, gf-02 hands off perfectly at half the reach. The classes
+are properties of the question-to-query step, not of the answering model --
+which is what makes them fixable by mechanism rather than by model choice.
+Typed judged_f1 0.435 +/- 0.086 over 27 records; the noise floor to beat.
+
+## D-119 addendum 2 — confirmed firing live, and the gain on the searches actually issued
+
+The in-flight OpenRouter fallback arm (20260908T002432-hepkg-9786) predates
+the counter, so it was verified by replay: its gf-03 search ("HistFitter",
+kind=statistical_method) gives set_1 = 11 with the fallback off and 77 with it
+on (56 appended); the live record shows 77. It fired.
+
+Replaying the run's own kinded searches against the DIAS DB, fallback off -> on:
+
+    gf-03  HistFitter      statistical_method   4/5   -> 5/5    +56 entities
+    gf-05  Higgs boson     detector_object      5/16  -> 13/16  +57
+    gf-04  unfolding       statistical_method   14/18 -> 18/18  +42
+
+Three of three searches gain, two reach every gold paper. The cost is ~50
+extra entities per kinded search for the critic to judge -- which is what the
+critic is for.
+
+## D-119 addendum 3 — the critic brakes the fallback's extras; the loss that remains is the answer stage
+
+Interim on the live fallback arm (12/27 records): reach 0.706 -> 0.824 overall,
+gf-05 0.21 -> 0.81, gf-04 0.65 -> 1.00; judged_f1 flat (-0.025, inside the
+control's 0.292 spread). gf-01-condition fell 0.36 -> 0.08 with reach held at
+1.00, so it was read closely:
+
+  repeat 1  facets objects=BJet, 38 papers, critic kept 38/38. Answer: "The
+            graph explicitly lists 38 papers (e.g., 2001.06899, 2004.04545,
+            2009.04363, etc.)" and <papers_from>facets_result_38</papers_from>
+            -- a set name that does not exist. Prose exit, 5 ids named. 0.17.
+  repeat 2  search "b-jet" kind=detector_object, 83 rows (60 kinded + fallback).
+            Critic kept 47, dropped 36 -- non_b_tagged_jet, jet_r04,
+            hadronic-jet: every drop correct. Answer text EMPTY. 0.00.
+  repeat 3  errored.
+
+The fallback did what it should and the critic did what it is for. What
+remains is class C -- summarise-with-examples, a phantom set name, an empty
+answer -- and those are `--name-ids` / gate territory. So the next OpenRouter
+arm is the STACK, not another single lever:
+
+    --kind-fallback --name-ids --max-rows 100 --rerank
+
+A retrieval fix that widens the candidate set raises the price of a weak
+answer stage; measuring it alone under-reads it.
+
+## D-119 outcome — the kind fallback fixes retrieval and moves F1 not at all
+
+qwen3-32b + llama-8b critic, Gabriel's 9 x 3 repeats, control vs
+--kind-fallback, same code, errors excluded (control 26/27, arm 20/27 -- seven
+600 s timeouts at that night's OpenRouter latency).
+
+    question          reach C -> A        f1 C -> A      gold named C -> A
+    gf-05 Higgs        0.21 -> 0.66       0.07 -> 0.16      0.7 -> 1.5
+    gf-08 ee/mumu      0.52 -> 1.00       0.11 -> 0.00      1.5 -> 0.0
+    gf-07 ttZ+CR       0.63 -> 0.85       0.38 -> 0.24      1.0 -> 1.5
+    gf-04 unfolding    0.65 -> 0.85       0.67 -> 0.67      9.3 -> 9.3
+    gf-03 HistFitter   0.80 -> 0.93       0.89 -> 0.89      4.0 -> 4.0
+    gf-01-condition    1.00 -> 1.00       0.36 -> 0.08      3.3 -> 0.5
+    ALL                0.692 -> 0.820     0.452 -> 0.462    3.5 -> 3.8
+    control spread                 0.305             0.297
+
+Reach +0.128, in line with the offline prediction (D-119 addendum 2). No
+question lost reach. judged_f1 +0.010: flat, inside noise.
+
+gf-08 is the finding in one row: reach 1.00, f1 0.00, gold named 0. The model
+now reaches all 24 papers and names none of them. On gf-01-condition the
+fallback appended 54 entities, the critic dropped the right ones (addendum 3),
+and the answer wrote "38 papers (e.g. ...)" with a phantom set name.
+
+CONCLUSION. Class A is fixed by this arm on the retrieval side. The loss that
+remains is the handoff -- truncation (B) and summarise/empty/phantom-cite (C)
+-- and widening the candidate set makes those worse, not better. The next arm
+is the stack: --kind-fallback --name-ids --max-rows 100 --rerank
+--answer-critic. A single-lever result here would under-read every lever.
+
+## D-123 — the fallback moved the loss, it did not remove it; the handoff is now the larger half
+
+The D-118 decomposition applied to the two OpenRouter runs (replayed against
+the DIAS DB, errors excluded):
+
+                    records  gold   named       reached-not-named   never-reached
+    control            26     294   102 (35%)        92 (31%)         100 (34%)
+    --kind-fallback    20     222    75 (34%)       106 (48%)          41 (18%)
+
+Sixteen points of gold moved from never-reached to reached-but-not-named. The
+named share did not move. Before the arm the two losses were equal; after it
+the handoff is nearly three times the retrieval loss.
+
+This is what "F1 flat" means here, and it is not a null result: the retrieval
+side of class A is fixed, and the answer stage was already the binding
+constraint -- widening the candidate set only made that visible. gf-08 in one
+row: reach 1.00, gold named 0.
+
+Consequence for the loop: no further retrieval lever is worth testing alone
+until the handoff moves. The stack (--kind-fallback --name-ids --max-rows 100
+--rerank --answer-critic) is running; its decomposition against this table is
+the next read.
+
+## D-124 — the stack is not additive: the answer-critic filter strikes gold, the graded ranker is inert on an 8B judge
+
+--kind-fallback --name-ids --max-rows 100 --rerank --answer-critic, 9 x 3 on
+OpenRouter, 27/27 clean, against the same control: judged_f1 0.452 -> 0.417
+(inside the 0.297 spread), reach 0.692 -> 0.760. Decomposition: named 32%,
+reached-not-named 50%, never-reached 18% -- the fallback's gain, and no more.
+
+Per question it redistributes, and the record says why for each:
+
+  --name-ids WORKS. gf-01-condition 0.36 -> 0.77; gold named 3.3 -> 8.3 across
+  repeats (8, 6, 11). gf-01-met 0.32 -> 0.52. Class C, fixed where it applies.
+
+  THE ANSWER-CRITIC FILTER STRIKES GOLD. Of 16 papers it dropped across the
+  records read, 7 were gold. Its stated reasons: "uses b-tagged jet veto" (the
+  prompt itself says a veto counts as using), "no ABCD method mentioned" on a
+  paper Gabriel marked yes, "regularized unfolding without correction",
+  "employs ABCD reweighting technique, not sideband". D-112 said the filter
+  loses to doing nothing; this is it doing so live on the questions that matter.
+  gf-02 0.65 -> 0.37, gf-03 0.89 -> 0.59, gf-04 0.67 -> 0.53.
+
+  THE GRADED RANKER WAS INERT. `usable=False` on nearly every ranking: the
+  OpenRouter judge is llama-3.1-8b, which D-113 measured as refusing the middle
+  grades (14 of 253), and the guard correctly declined to apply its order. Only
+  the free rung ordering acted. On the cluster the judge is Qwen3.5-9B; this
+  says nothing about that.
+
+  THE GATE WAS MISSING. The stack omitted --answer-gate; one gf-03 repeat
+  called answer() naming nothing and scored 0.00 with reach 1.00.
+
+  PATH VARIANCE dominates gf-05: reach 0.29 here vs 0.66 with the fallback
+  alone, because in two of three repeats the model faceted and never issued a
+  kinded search (kinded=0, nothing to fall back from). Same mechanism, a
+  different route chosen by the model.
+
+DECISIONS. --rerank and --answer-critic were coupled in code (the ranker needed
+the filter's flag to build its judge); decoupled, so the ranker -- which only
+reorders and cannot lose a paper -- can run without the filter. Next arm:
+--kind-fallback --name-ids --max-rows 100 --rerank --answer-gate. The filter
+is out of the stack and stays out until a judge that does not strike gold is
+measured against Gabriel's verdicts.

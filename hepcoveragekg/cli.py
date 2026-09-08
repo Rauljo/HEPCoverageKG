@@ -574,6 +574,7 @@ def _cmd_eval(args) -> int:
                 templates.read_only(args.db), index, index_values=args.index_values,
                 index_quotes=args.index_quotes,
                 max_rounds=args.max_rounds, max_places=args.max_places,
+                max_rows=args.max_rows,
                 minimal_prompt=args.minimal_prompt,
                 use_critic=args.critic,
                 critic_seed=args.critic_seed,
@@ -594,6 +595,7 @@ def _cmd_eval(args) -> int:
                 answer_critic=args.answer_critic,
                 rerank=args.rerank,
                 name_ids=args.name_ids,
+                kind_fallback=args.kind_fallback,
             )
         system = make_system()
     else:
@@ -758,6 +760,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_eval.add_argument("--repeats", type=int, default=1,
                         help="run each question N times; 3+ before comparing anything (S-52)")
     p_eval.add_argument("--max-rounds", type=int, default=6)
+    p_eval.add_argument("--max-rows", type=int, default=25,
+                        help="planner: how many rows of each tool result the "
+                             "model reads (default 25). gf-08's subjects_of "
+                             "returned 224 rows; the model saw 25 and named 1 of "
+                             "24 gold papers. The single truncation site, and "
+                             "until now not a knob (D-118 class B)")
     p_eval.add_argument("--max-places", type=int, default=8)
     p_eval.add_argument("--minimal-prompt", action="store_true",
                         help="planner: the reduced PURPOSE variant -- an ablation axis")
@@ -838,6 +846,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_eval.add_argument("--tool-examples", action="store_true",
                         help="planner: attach one real worked call per tool, "
                              "mined from runs that answered correctly")
+    p_eval.add_argument("--kind-fallback", action="store_true",
+                        help="planner: when a search names a `kind`, also "
+                             "search without it and append what other kinds "
+                             "match. Offline on Gabriel's questions: 61 -> 74 "
+                             "of 79 gold papers reached; gf-05 2 -> 13 (D-119)")
     p_eval.add_argument("--name-ids", action="store_true",
                         help="planner: ask the answer to WRITE the arXiv ids "
                              "into `text`. v3 currently says the opposite -- "

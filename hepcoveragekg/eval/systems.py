@@ -106,6 +106,9 @@ class Answer:
     # all refused as unusable is a no-op at double the price, and that has to be
     # readable in the run rather than guessed at from a score that did not move.
     rankings: list = field(default_factory=list)
+    #: The kind fallback (D-119): kinded searches made, entities it appended.
+    kinded_searches: int = 0
+    kind_fallback_added: int = 0
 
     error: str = ""                  # a crash, recorded rather than raised
 
@@ -339,8 +342,14 @@ def from_session(session, conn=None) -> Answer:
         answered=bool(session.answerable),
         papers=cited_papers or _papers_of(conn, entity_ids),
         value=getattr(session, "answer_value", None),
+        # `preview` TRAVELS. It was recorded on the Session (graph.py sets
+        # body[:200]) and dropped here, so no run file could say what any tool
+        # returned; diagnosing Gabriel's questions on 2026-09-08 needed a full
+        # replay against the DIAS database because 406 stored steps carried
+        # 406 empty previews.
         steps=[{"round": s.round, "tool": s.tool, "args": s.args, "rows": s.rows,
                 "error": s.error, "seconds": round(s.seconds, 3),
+                "preview": s.preview,
                 **({"redirected_from": s.redirected_from} if s.redirected_from else {})}
                for s in session.steps],
         sets={k: list(v) for k, v in session.sets.items()},
@@ -389,6 +398,8 @@ def from_session(session, conn=None) -> Answer:
         gate_failed=bool(getattr(session, "answer_gate_failed", False)),
         answer_review=_answer_review_dict(getattr(session, "answer_review", None)),
         rankings=[r.to_dict() for r in getattr(session, "rankings", [])],
+        kinded_searches=getattr(session, "kinded_searches", 0),
+        kind_fallback_added=getattr(session, "kind_fallback_added", 0),
     )
 
 

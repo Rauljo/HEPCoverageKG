@@ -570,6 +570,16 @@ def execute(state: PlannerState, config=None) -> PlannerState:
             session.evidence_ids.extend(getattr(result, "evidence_ids", []) or [])
             session.seen_values |= planner._values_in(result.rows)
             session.known_entity_ids |= planner._collect_ids(result.rows, result.note)
+            if runtime.get("rerank"):
+                # THE CUT IS HERE, so the order has to be decided here (D-113,
+                # D-118 class B). Search rows carry the critic's rung as
+                # `bears_on` and arrive in retrieval order: with 60 hits and a
+                # 25-row window, an `exact` hit ranked 40th by BM25 is cut and
+                # an `unrelated` one ranked 3rd is shown. A stable sort by rung
+                # changes only which side of the window a row lands on --
+                # membership, counts and sets are untouched.
+                planner.order_by_rung(result.rows, kept={
+                    e for k, v in session.sets.items() if k.endswith("_kept") for e in v})
             body = planner._render_rows(result.rows, state["max_rows"])
             if result.note:
                 body += f"\n[{result.note}]"

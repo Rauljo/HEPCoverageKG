@@ -588,6 +588,15 @@ def facets(conn, field: str, values: str | list[str], mode: str = "all",
                 t["label"] for t in trail if t["paper_id"] == row["paper_id"]
             ]
 
+    # THE TRAIL'S ENTITY IDS GO ON THE ROW. They were computed and used only
+    # to decorate labels, so `_collect_ids` -- which reads `entity_id` -- saw
+    # nothing, `known_entity_ids` stayed empty, and every downstream reader of
+    # it (retrieval_reach, evidence_by_paper, the answer-critic) was blind to
+    # any answer found through a facet filter. gf-04 scored judged_f1 0.71
+    # with retrieval_reach 0.00: right about papers it had "never reached".
+    for row in rows:
+        row["entity_ids"] = sorted({t["entity_id"] for t in trail
+                                    if t["paper_id"] == row["paper_id"] and t.get("entity_id")})
     result = QueryResult(shape="facets", rows=rows, sql=sql, params=params)
     notes = [f"{len(rows)} paper(s), {field} {mode} {wanted}"]
 
