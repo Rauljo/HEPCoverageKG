@@ -5126,3 +5126,24 @@ with reach 1.00). It now asks only with a round to spare, stashes the text, and
 become no answer.
 
 Pushed before wave 3 starts, so ctrl-c and the stack arms share it.
+
+## D-128 — hand the ranking to the step that decides the answer (--ranked-answer)
+
+The stack's remaining loss is precision at the answer: gf-05 on stack+gate
+reached 1.00 and named 19 papers, 13 of them wrong. The ranking that could
+have prevented that reorders tool rows at EXECUTE time; the answer is written
+rounds later from memory, with no ranked list and no instruction that one
+exists. The graded judge's output was computed and then not consulted at the
+one point it matters.
+
+Mechanism: once per run, with a round to spare (D-127), if the answer names
+fewer than half of the candidates graded 3 or 2, the model is shown this run's
+ranked papers best-first with their grades and asked to name from them. Only
+usable rankings count (D-113: a judge that refused the middle grades is not a
+ranking). Nothing is removed -- the filter that removes struck gold (D-124) --
+and the text is stashed and restored if nothing comes back. Recorded as
+ranked_answer_asked / ranked_answer_shown; armcheck asserts asked against shown.
+
+On the OpenRouter lane the judge is llama-3.1-8b, whose rankings were unusable
+on nearly every record (D-124), so this arm cannot be read there; the cluster's
+Qwen3.5-9B judge is the first real test. Off by default; needs --rerank.
