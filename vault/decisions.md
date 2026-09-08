@@ -4888,3 +4888,21 @@ only be measured live, with the critic on.
 
 Order of live tests on the OpenRouter lane, cheapest first: `--max-rows 50` and
 `100` on gf-08/gf-07; then `--rerank` on top; then `--subgoals` on gf-02.
+
+## D-119 addendum — the same three collapses on a second model
+
+OpenRouter control, qwen3-32b + llama-3.1-8b critic, Gabriel's 9 x 3 repeats
+(run 20260907T233950-hepkg-1914), the comparison target for --kind-fallback:
+
+    question          gold   f1    reach   named-gold/named   kinds the model typed
+    gf-05 Higgs cand.   16  0.07   0.21        0.7 / 2.3      detector_object x3, physics_process x1
+    gf-08 ee OR mumu    24  0.11   0.52        1.5 / 3.0      detector_object, channel, selection_requirement
+    gf-02 ABCD/matrix   11  0.65   0.48        5.3 / 5.3      (facets, one value)
+    gf-03 HistFitter     5  0.89   0.80        4.0 / 8.0
+    gf-04 unfolding     18  0.67   0.65        9.3 /10.3
+
+Same shape as QwQ on the cluster (D-118): gf-05 collapses on the kind filter,
+gf-08 on truncation, gf-02 hands off perfectly at half the reach. The classes
+are properties of the question-to-query step, not of the answering model --
+which is what makes them fixable by mechanism rather than by model choice.
+Typed judged_f1 0.435 +/- 0.086 over 27 records; the noise floor to beat.
