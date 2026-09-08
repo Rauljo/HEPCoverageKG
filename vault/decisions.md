@@ -5762,10 +5762,10 @@ list can be had without losing recall is D-144's question.
 |---|---|---|---|---|---|---|
 | control | 0.278 | 0.274 / 0.217 / 0.478 | 5/60 | 12.2 | -- | 0 |
 | full stack | 0.292 | 0.300 / 0.220 / 0.767 | 4/60 | 27.4 | -- | 1 |
-| stack + STRIKE_GRADE_MAX=0 | 0.227 | 0.235 / 0.172 / 0.645 | 4/59 | 23.4 | 130 | 2 |
+| stack + STRIKE_GRADE_MAX=0 | 0.229 | 0.238 / 0.173 / 0.649 | 4/60 | 23.4 | 131 | 2 |
 
-Paired deltas against the control: stack +0.013 (se 0.028); strike -0.053
-(se 0.026). Two conclusions. (1) With qwen3-32b as the answerer the stack does
+Paired deltas against the control: stack +0.013 (se 0.028); strike -0.050
+(se 0.025). Two conclusions. (1) With qwen3-32b as the answerer the stack does
 NOT lose precision on small-truth questions: recall 0.48 -> 0.77 at precision
 0.22 either way, and set_f1 only ties because F1 is precision-bound for both.
 The precision loss in D-142 (cluster, QwQ) is therefore that model's behaviour
