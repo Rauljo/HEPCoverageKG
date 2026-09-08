@@ -5191,3 +5191,20 @@ The two controls are IDENTICAL on seven of nine questions, to the paper. QwQ
 at temperature 0 on the cluster is near-deterministic per question, which is
 why the 0.007 judged_f1 floor is real and not luck. The variance D-093 saw
 (0.113) belonged to the earlier answer-contract failure, not to the model.
+
+## D-127 addendum — how much the inert prose path cost: little, on the arms that name ids
+
+Replaying the harvest and the gate over the prose exits that ran without them:
+
+    run                       prose exits  text already had ids  resolvable papers_from  gate would fire
+    OR stack+gate (D-126)          9               8                      0                    1
+    wave-1 --name-ids (D-125)     38              34                      2                    4
+
+--name-ids makes the prose exits carry ids, so the scorer already read them;
+the service would have added two citations and four flags. The gains in D-125
+and D-126 stand as reported. D-127 is a correctness fix whose effect lands on
+arms WITHOUT --name-ids -- the controls, where prose exits name nothing -- and
+that is where it will show, if anywhere: as a slightly stronger control.
+
+Consequence: the planned re-run of the stack on D-127 code is not worth the
+lane. The lane goes to D-128 once the judge format is settled (D-129).
