@@ -5529,3 +5529,20 @@ stack -- kind-fallback, name-ids, max-rows 100, answer-gate, enum-expand with
 ENUM_LIMIT=20, rerank (32B), ranked answer at 40 with min-missing 3, prose
 exit serviced -- run 20260908T063144-hepkg-72812.
 
+## D-137 -- wave-3 stack jobs replaced: the 600 s timeout was scoring the stack, not the stack
+
+At 07:35 the two stack jobs (54262/54263, 2 workers each) stood at 37 of 164
+with 15-17 errors each and 10 of their last 20 records timed out at 600 s;
+the control (54261) was at 71 with none in its last 20. The stack's records
+are long on QwQ (median 345 s vs 184 s: 100 rows, a second kinded search, a
+gate retry) and the 9B rerank adds judge calls that D-129 showed to be a
+no-op. Half-timed-out records score zero, so those jobs measured the timeout.
+Cancelled both; pulled 2486245 (84d2e92 code) to DIAS -- safe for the running
+control, which had imported every module it uses hours earlier -- and
+submitted ONE replacement, 54267: same ARM and judge, WORKERS=4,
+--timeout 1500, --rerank dropped, --enum-expand added with ENUM_LIMIT=20, i.e.
+the night's recommended stack (kind-fallback, name-ids, max-rows 100,
+answer-gate, enum-expand capped). Started 07:38; the model_served guard first
+refused a submission that had inherited the 72B name from .env (job 54266,
+FAILED in 0 s), exactly what it exists for. Deadline: server 54250 dies 15:58.
+
