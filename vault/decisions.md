@@ -5043,3 +5043,31 @@ reorders and cannot lose a paper -- can run without the filter. Next arm:
 --kind-fallback --name-ids --max-rows 100 --rerank --answer-gate. The filter
 is out of the stack and stays out until a judge that does not strike gold is
 measured against Gabriel's verdicts.
+
+## D-125 — wave 1 on the fixed code: --name-ids clears the noise floor by fourteen times
+
+QwQ-32B on the cluster, 164 questions, critic on, six arms, same code (D-116
+recovery in; the instrumentation branch not yet merged when these ran).
+
+    ctrl-a          0.354    0.219    0.964     80%      3       60%
+    ctrl-b          0.361    0.249    0.969     85%      1       65%
+    nameids         0.455    0.229    0.973     94%      6       76%
+    acritic         0.430    0.206    0.745     90%      5       77%
+    rerank+ac       0.362    0.230    0.769     87%      3       72%
+    nameids-ac      0.471    0.216    0.767     94%      2       78%
+
+    noise floor |ctrl-a - ctrl-b|:  judged_f1 0.007   set_f1 0.030
+
+--name-ids: judged_f1 +0.10 over a 0.007 floor; print rate 80-85% -> 94%;
+answer() reached 60-65% -> 76%. The first arm in the project to clear its
+noise floor decisively on the cluster. set_f1 does not move (inside 0.030): the
+gain is on the physicist's questions, where the lists are long -- class C is a
+Gabriel-question phenomenon, which is why the synthetic set could not see it.
+
+--answer-critic: judged +0.07, and retrieval_reach 0.964 -> 0.745. The filter
+strikes papers out of the answer; D-124 saw it strike gold. The reach cost is
+the price of the filter, not of the rerank.
+
+nameids-ac (0.471) is the top number and carries the same reach cost; rerank+ac
+sits with it. On this code --rerank could not run without the filter (D-124);
+the decoupled ranker is in wave 3.
