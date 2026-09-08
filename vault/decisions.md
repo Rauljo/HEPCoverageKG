@@ -5634,3 +5634,15 @@ the ranked answer's ceiling either (after the exit, D-136, and the cap,
 D-135): the mechanism now asks where it can, and what it can add is bounded
 by what reached a ranked call at all. Keep the 32B. Night's spend: $1.69.
 
+## D-137 addendum 2 -- 54268 at 115 records: clean except for the context window
+
+11:12: 115 of 164, median 274 s, no timeouts. Three records (2.6%) failed
+with HTTP 400 from vLLM: "maximum context length is 32768 tokens ... prompt
+contains at least 28769 input tokens" -- the 100-row arm's tool results
+accumulate past QwQ's window on the server (max_model_len 32768) and the
+record scores zero. OpenRouter's qwen3-32b has a larger window, so the 9-question
+lane never showed it. This is a cost of --max-rows 100 on the cluster that
+belongs in the write-up next to its gain (D-120/D-122), and the fix is a
+context budget that trims the oldest tool results before the call (not built;
+see ideas). Enumeration fired on 12 of 115 records, kinded searches on 65.
+
