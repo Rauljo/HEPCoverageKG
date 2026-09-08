@@ -5935,3 +5935,31 @@ Cypher is a valid alternative that needs the alias layer explained and
 matched worked examples to reach parity; offering both is worth nothing over
 SQL alone. Cost of the four runs: about $0.45.
 
+## D-147 addendum 5 -- how the model uses Cypher: a different strategy, fewer errors, not worse Cypher
+
+Every query in the two single-language runs classified by what it asks
+(free-SQL 85223: 47 queries; free-cypher v2 87462: 33):
+
+| | SQL | Cypher |
+|---|---|---|
+| predicate hop (an assertion type) | 23 (49%) | 8 (24%) |
+| label pattern (LIKE / CONTAINS) | 17 (36%) | 0 |
+| id lookup (search ids -> papers) | 10 | 26 (79%; 25 via RESOLVES_TO) |
+| two-set AND | 8 | 6 |
+| queries / searches per record | 1.7 / 1.2 | 1.2 / 1.4 |
+| query errors | 7 | 2 |
+
+The Cypher agent writes fewer broken queries than the SQL agent. It asks a
+different question of the graph: resolve the search hits to concepts, list
+the papers mentioning them, answer -- one query. The SQL agent walks
+predicates and probes labels with LIKE. Per question this accounts for the
+whole gap: same strategy, same score (gf-03 0.89 / 0.80, gf-04 0.65 / 0.69,
+gf-05 0.18 / 0.18); SQL hops or LIKEs where Cypher looked up ids, SQL wins
+(gf-01-met 4 hops vs 1: 0.80 / 0.18; gf-02 3 vs 1: 0.87 / 0.65; gf-08 5 LIKEs
+vs 0: 0.12 / 0.00); and where the corrected brief put the resolve-first shape
+in front of the model, Cypher wins (gf-01-condition 0.92 / 0.76). The
+strategy is induced by the worked examples each brief shows -- the SQL
+examples demonstrate predicate hops, the Cypher examples (mine) demonstrate
+id resolution. Conclusion for the write-up: the language is not the
+variable; the examples are, and a matched pair would be the fair test.
+
