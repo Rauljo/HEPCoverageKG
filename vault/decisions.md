@@ -6118,3 +6118,40 @@ mechanisms of the week map onto A (kind fallback, enumeration expansion) and
 B (name-ids, max-rows, answer gate, ranked answer); nothing built touches C,
 which is the honest limit to state.
 
+## D-153 -- name-ids and the critic by question type on the 164 (the material for the prompt and critic sections)
+
+Cluster, QwQ. Wave-1 control 54251/54252 and its name-ids arm 54253 (old
+code); wave-2 no-critic 54257/54258; merged-code control 54261 and 54272
+(control + name-ids). Set questions read named-only (P / R), fallback rate,
+essay-only, ids per answer.
+
+Name-ids (54261 -> 54272, same code):
+- retrieval (84): fallback 46/84 -> 9/84; essay-only 0.116 -> 0.170; ids per
+  answer 4.2 -> 33.8; named-only F1 0.255 -> 0.190 (P 0.24 -> 0.15, R 0.32 ->
+  0.34). The prompt makes the model write a list on nearly every answer, and
+  the list is the retrieval footprint: eight times as many ids, no more of
+  them right. Wave 1 shows the same (7.8 -> 30.5 ids, essay 0.132 -> 0.208,
+  named-only 0.247 -> 0.230).
+- concept-set (14): fallback 5 -> 1; essay 0.268 -> 0.309; named-only 0.416
+  -> 0.332; ids 7.1 -> 27.1.
+- count (20): 0.20 -> 0.25 exact; closeness 0.34 -> 0.30.
+- per-paper (36): fuzzy label recall 0.81 -> 0.67 (wave 1: 0.79 -> 0.70). An
+  answer that becomes a list of arXiv ids stops describing the paper.
+- Gabriel 9 (single repeats): 0.330 -> 0.476; named 4.8 -> 10.1, gold 3.0 ->
+  4.3, outside the judged set 0.9 -> 4.0. Wave 1: 0.397 -> 0.469.
+So: name-ids converts silent answers into lists and lifts the judged score
+on the expert's questions, and it costs exact-set precision and label
+description on the generated set. It is a formatting change with a real
+trade-off, not a free gain.
+
+Critic (wave 1 on vs wave 2 off, old code, both 168 answers per type):
+- retrieval: named-only 0.247 vs 0.202 (P 0.23 vs 0.18, R 0.38 vs 0.32);
+  fallback 78 vs 58 of 168; essay-only 0.132 both.
+- concept-set: named-only 0.288 vs 0.422; essay 0.206 vs 0.271 (n 28).
+- count: exact 0.15 vs 0.30; closeness 0.30 vs 0.36.
+- per-paper: fuzzy 0.79 vs 0.77; retrieved 0.97 both.
+- Gabriel 9: 0.397 vs 0.438 (18 single-repeat answers each).
+Where the critic is on, the model names papers less often and slightly more
+precisely; counts are worse; nothing else moves beyond the floors. Its
+visible effect is on the page's length, not on which papers are right.
+
