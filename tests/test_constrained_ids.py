@@ -60,3 +60,12 @@ def test_bare_client_is_tolerated(monkeypatch):
     monkeypatch.setattr(planner, "_client", lambda: cl)
     s = _session(); G._constrained_ids({"conn": _conn()}, s)
     assert s.constrained_ids == ["2001.00001"]
+
+
+def test_gated_by_question_shape(monkeypatch):
+    monkeypatch.setenv("CONSTRAINED_IDS", "1"); monkeypatch.setenv("LLM_MODEL_NAME", "m")
+    cl = _Client('{"papers": ["2001.00001"]}')
+    monkeypatch.setattr(planner, "_client", lambda: (cl, "m"))
+    for shape, expect in (("count", 0), ("labels", 0), ("papers", 1), ("", 1)):
+        s = _session(); G._constrained_ids({"conn": _conn(), "question_shape": shape}, s)
+        assert len(s.constrained_ids) == expect, shape

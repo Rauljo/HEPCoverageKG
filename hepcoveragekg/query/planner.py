@@ -2427,7 +2427,8 @@ def _prepare(conn, index, question, max_rounds, max_places, max_rows,
              state_objective=False, subgoals=False, subgoal_status=False,
              path_tool=False, answer_gate=False, answer_critic=False,
              rerank=False, name_ids=False, kind_fallback=False,
-             ranked_answer=False, enum_expand=False):
+             ranked_answer=False, enum_expand=False,
+             question_shape=""):
     """The state and runtime config a run needs. Shared by answer() and stream()."""
     session = Session(question=question)
     if chat is None:
@@ -2538,6 +2539,10 @@ def _prepare(conn, index, question, max_rounds, max_places, max_rows,
     runtime["kind_fallback"] = bool(kind_fallback)
     runtime["ranked_answer"] = bool(ranked_answer)
     runtime["enum_expand"] = bool(enum_expand)
+    # The question's shape when the caller knows it ("papers" = a set of
+    # papers; "count"; "labels"; "" = unknown). Answer-side mechanisms that
+    # only make sense for a paper set gate on it (routing by shape).
+    runtime["question_shape"] = question_shape or ""
     runtime["answer_gate"] = bool(answer_gate)
 
     # THE ANSWER CRITIC (D-106). Uses the SEARCH critic's endpoint, because the
@@ -2616,6 +2621,7 @@ def stream(
     kind_fallback: bool = False,
     ranked_answer: bool = False,
     enum_expand: bool = False,
+    question_shape: str = "",
 ):
     """Yield `(node_name, session)` after each node completes.
 
@@ -2634,7 +2640,8 @@ def stream(
                                       state_objective, subgoals, subgoal_status,
                                       path_tool, answer_gate, answer_critic,
                                       rerank, name_ids, kind_fallback,
-                                      ranked_answer, enum_expand)
+                                      ranked_answer, enum_expand,
+                                      question_shape=question_shape)
     started = time.perf_counter()
     app = graph_module.build(checkpointer=checkpointer)
     for update in app.stream(state, config=config, stream_mode="updates"):
@@ -2677,6 +2684,7 @@ def answer(
     kind_fallback: bool = False,
     ranked_answer: bool = False,
     enum_expand: bool = False,
+    question_shape: str = "",
 ) -> Session:
     """Answer one question, returning the answer and the whole trace.
 
@@ -2703,7 +2711,8 @@ def answer(
                                       state_objective, subgoals, subgoal_status,
                                       path_tool, answer_gate, answer_critic,
                                       rerank, name_ids, kind_fallback,
-                                      ranked_answer, enum_expand)
+                                      ranked_answer, enum_expand,
+                                      question_shape=question_shape)
     graph_module.build(checkpointer=checkpointer).invoke(state, config=config)
 
     session.seconds = time.perf_counter() - started

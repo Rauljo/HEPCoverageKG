@@ -315,7 +315,11 @@ class PlannerSystem:
 
         started = time.time()
         try:
-            session = planner.answer(self._conn, self._index, q.text, **self._kwargs)
+            truth_kind = getattr(getattr(q, "truth", None), "kind", "") or ""
+            shape = ("papers" if q.shape == "set" and truth_kind in ("set", "subset")
+                     else (q.shape or ""))
+            session = planner.answer(self._conn, self._index, q.text,
+                                     question_shape=shape, **self._kwargs)
         except Exception as exc:  # noqa: BLE001 -- one dead question must not end the run
             return Answer(text="", answered=False, error=f"{type(exc).__name__}: {exc}",
                           seconds=time.time() - started)
