@@ -6370,3 +6370,27 @@ small-truth questions. A red commit (526ec41: three tests failed behind a
 `pytest | tail` pipe) was fixed in deabe7f; the suite is run with the exit
 code propagated from now on.
 
+## D-155 outcome (part 4) -- the plain free-SQL control on the cluster: the id instruction is worth nothing on QwQ
+
+Job 54293 (free-SQL, FREESQL_PLAIN_ANSWER=1, QwQ, no critic, 2 repeats) on
+Gabriel's 9, the 20 counts and the 14 concept-sets, read against wave 2's
+free-SQL (54259/54260, which carried the id instruction):
+
+| | with the id instruction (wave 2) | plain (54293) |
+|---|---|---|
+| Gabriel's 9 (18 answers), judged | 0.303 (named 7.4, gold 2.8, silent 5) | 0.303 (named 8.7, gold 2.8, silent 6) |
+| counts (40), exact / closeness | 0.35 / 0.54 | 0.53 / 0.59 |
+| concept-set (28), set_f1 / named-only P R | 0.372 / 0.36 0.50 | 0.575 / 0.63 0.76 |
+
+So the sentence "put the ids in `papers`, that is what gets scored" was worth
+0.12 on qwen3-32b (OpenRouter, part 1) and nothing on QwQ, where the plain
+control even scores higher on counts and concept-sets. Caveats: wave 2 ran
+on older code and another day (the concept-set jump, n=28, is the kind of
+swing a single-repeat control has shown before, D-091); and QwQ's free-SQL
+answers are often its chain of thought whichever prompt it gets (D-152 note in
+the analysis document), which caps what an answer instruction can change.
+Reading for the chapter: the id instruction matters to a model that
+otherwise answers in prose and does nothing for one that answers in its
+reasoning trace; report both lanes. The 120-question plain run (54289) will
+say the same for the retrieval and per-paper types.
+
