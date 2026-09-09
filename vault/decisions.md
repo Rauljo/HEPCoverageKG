@@ -6213,3 +6213,17 @@ counts written where a list was asked). The OpenRouter no-critic name-ids
 run on Gabriel's 9 (27 records, cheap) was left to finish and pairs with
 84932.
 
+## D-153 addendum 3 -- name-ids without the critic, OpenRouter, Gabriel's 9 (the no-critic pair)
+
+Run 20260909T145435-hepkg-2681 (typed, no critic, --name-ids) against the
+no-critic control 84932: judged_f1 0.383 -> 0.486 (+0.10), papers named 7.9
+-> 12.8, gold 3.2 -> 4.3, judged wrong 1.6 -> 2.1, outside the judged set
+3.1 -> 6.3, silent 3/27 both, zero errors. Per question: gf-01-condition
+0.25 -> 0.75, gf-02 0.31 -> 0.71, gf-03 0.74 -> 0.89, gf-01 +0.06; gf-05
+0.32 -> 0.19 with reach 0.65 -> 0.21 (a retrieval swing on that repeat, not
+the instruction); gf-08 -0.05 with reach 0.81 -> 0.56 likewise. So with the
+critic off the gain is larger (+0.10 vs +0.03 with it on) and the mechanism
+is the same: the papers were on the page and now get listed, at the price
+of twice the unjudged names. Record spread 0.24 at n=27; the sign is
+consistent across all four lane/critic pairs now measured.
+
