@@ -6227,3 +6227,34 @@ is the same: the papers were on the page and now get listed, at the price
 of twice the unjudged names. Record spread 0.24 at n=27; the sign is
 consistent across all four lane/critic pairs now measured.
 
+## D-155 -- two fairness arms: a plain free-SQL control, and constrained selection of the answer's papers
+
+**Plain free-SQL (FREESQL_PLAIN_ANSWER=1, 9f824ce).** The free-SQL answer tool
+has said since it was built "put the arXiv ids you are asserting in `papers`
+-- that is what gets scored", and the system prompt "you must WRITE THE IDS
+OUT"; the typed control's answer tool said the opposite (D-117). The control
+therefore carried the typed system's --name-ids instruction from day one.
+The plain variant removes the scoring sentence from the tool, the prompt and
+the last-round nudge and describes `papers` as optional, mirroring the typed
+v3 contract. The fair baseline pair is typed-v3 vs free-SQL-plain, with
+name-ids then introduced on both. Runs: Gabriel's 9 on OpenRouter (3
+repeats); the 84 retrieval + 36 per-paper questions on DIAS (54289).
+
+**Constrained selection (CONSTRAINED_IDS=1, 0c74eb2).** The principled form
+of name-ids (literature: Willard & Louf 2023): at the answer exit, one more
+call asks the answerer for {"papers": [...]} under a JSON schema whose items
+are an enum of every arXiv id reachable from the entities the run retrieved
+(vLLM `guided_json`; plain-JSON fallback recorded as `constrained_mode`),
+with the question, the draft answer and each candidate's matching entity
+labels in the prompt. The model cannot invent an id or write a summary; it
+can only choose. Selected ids are appended to the text and set as
+`answer_papers`. Runs: Gabriel's 9 on DIAS, no critic, 3 repeats -- 54290
+(control) vs 54291 (constrained). OpenRouter providers may ignore schema
+constraints, so the cluster is the test.
+
+**A mistake the guard caught.** The first server for these runs (54282) was
+launched from serve_one.sh without an explicit model and took the 72B pinned
+in the cluster's .env; the five arm jobs asked for QwQ and model_served
+refused all of them at start. Relaunched as QwQ (54286); jobs 54287-54291.
+Lesson recorded: always pass LLM_MODEL_NAME on the server's sbatch line.
+
