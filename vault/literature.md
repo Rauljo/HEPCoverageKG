@@ -683,3 +683,36 @@ Their framing of the problem: most KG approaches use the graph as an *auxiliary 
 **Beyond what was already recorded**: the **semantic parsing vs information-retrieval** distinction (generate a logical form and execute it, versus retrieve and let the model compose) — this is the correct technical name for what we do, now used in the background chapter. Retrieval granularity taxonomy (nodes, triplets, paths, subgraphs, hybrid). Iterative retrieval split into **non-adaptive** (fixed steps, threshold) and **adaptive** (model decides whether to continue) — we are adaptive, and the survey lists refs 22/92/94/100/203/213/229/248 as doing what we do. Indexing: graph, text and vector indexes as a multi-layered system; **indexing quotes** is called out, which we do. Evaluation limitations worth quoting: no standardised retrieval-faithfulness metric because reliable retrieval ground truth is hard, and **position bias in LLM-as-judge**, mitigated by reasoning models with explicit CoT.
 **Future-work items that are ours**: scalable retrieval on real-world (not toy) KGs; hierarchical retrieval architectures for the grouping layer; and benchmarks that annotate **ground-truth retrieval elements, not only final answers** — which is precisely the half of our evaluation that does not yet exist.
 **Where discussed**: notes 2026-08-02.
+
+## Making the model write what it retrieved (added 2026-09-09, for the prompt-engineering section)
+
+- **ALCE -- Gao, Yen, Yu, Chen, "Enabling Large Language Models to Generate
+  Text with Citations", EMNLP 2023 (arXiv:2305.14627).** A benchmark and
+  method family for answers that carry citations to retrieved passages;
+  citation recall/precision are scored separately from answer correctness,
+  and even the best systems lack complete citation support half the time on
+  ELI5. Relevance: our `judged_f1`/`set_f1` on named ids is a citation-recall
+  metric in disguise, and the `papers_from` design (cite a set the harness
+  resolves) is ALCE's "cite the passage id" idea applied to graph sets.
+- **Self-RAG -- Asai, Wu, Wang, Sil, Hajishirzi, ICLR 2024 (arXiv:2310.11511).**
+  The generator emits reflection tokens (retrieve? / is the passage relevant? /
+  is the output supported? / is it useful) as part of generation, trained
+  with a critic model. Relevance: our answer gate and ranked answer are
+  untrained, prompt-side versions of the "is it supported / is it complete"
+  checks; the cost we measured (the gate's retries, the ask firing rarely) is
+  what Self-RAG pays for at training time instead.
+- **Lost in the Middle -- Liu, Lin, Hewitt, Paranjape, Bevilacqua, Petroni,
+  Liang, TACL 12:157-173, 2024.** Models use the beginning and end of a long
+  context and neglect the middle. Relevance: explains why a 24-paper list on a
+  100-row page is summarised rather than listed (gf-08), why reordering rows
+  (the ranker) could matter in principle, and why the 25-row window helped as
+  often as it hurt.
+- **Guided generation -- Willard & Louf, "Efficient Guided Generation for
+  Large Language Models", 2023 (arXiv:2307.09702; the Outlines library).**
+  Constrain decoding to a regular expression or grammar so the output has a
+  guaranteed shape. Relevance: the strongest form of `--name-ids` would not
+  ask for ids in prose but constrain the `papers` field to a list of ids drawn
+  from the retrieved set (a closed vocabulary of the footprint); it removes
+  the formatting failure entirely and leaves only the selection problem. Not
+  available on the hosted endpoints we used; feasible on the vLLM server.
+
