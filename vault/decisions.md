@@ -6257,4 +6257,9 @@ launched from serve_one.sh without an explicit model and took the 72B pinned
 in the cluster's .env; the five arm jobs asked for QwQ and model_served
 refused all of them at start. Relaunched as QwQ (54286); jobs 54287-54291.
 Lesson recorded: always pass LLM_MODEL_NAME on the server's sbatch line.
+54287 (a typed no-critic control on the 120 questions) was then cancelled as
+redundant -- wave 2's 54257/54258 are that control on the same model and an
+unchanged control path -- and to keep the server at 16 concurrent workers
+rather than 20 (the overload that produced yesterday's timeouts). The
+name-ids (54288) and plain free-SQL (54289) jobs are read against wave 2.
 
