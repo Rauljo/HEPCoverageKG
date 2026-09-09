@@ -38,7 +38,7 @@ def test_off_by_default(monkeypatch):
 def test_selects_only_from_the_footprint_and_writes_ids(monkeypatch):
     monkeypatch.setenv("CONSTRAINED_IDS", "1"); monkeypatch.setenv("LLM_MODEL_NAME", "m")
     cl = _Client(json.dumps({"papers": ["2001.00001", "2002.00002", "2099.09999"]}))
-    monkeypatch.setattr(planner, "_client", lambda: cl)
+    monkeypatch.setattr(planner, "_client", lambda: (cl, "m"))
     s = _session(); G._constrained_ids({"conn": _conn()}, s)
     assert s.constrained_candidates == 3 and s.constrained_ids == ["2001.00001", "2002.00002"]
     assert "2099.09999" not in s.answer and s.answer.endswith("Papers: 2001.00001, 2002.00002")
@@ -49,6 +49,14 @@ def test_selects_only_from_the_footprint_and_writes_ids(monkeypatch):
 def test_falls_back_to_plain_json_when_guided_is_refused(monkeypatch):
     monkeypatch.setenv("CONSTRAINED_IDS", "1"); monkeypatch.setenv("LLM_MODEL_NAME", "m")
     cl = _Client('{"papers": ["2003.00003"]}', refuse_guided=True)
-    monkeypatch.setattr(planner, "_client", lambda: cl)
+    monkeypatch.setattr(planner, "_client", lambda: (cl, "m"))
     s = _session(); G._constrained_ids({"conn": _conn()}, s)
     assert s.constrained_ids == ["2003.00003"] and s.constrained_mode == "json_object" and len(cl.calls) == 2
+
+
+def test_bare_client_is_tolerated(monkeypatch):
+    monkeypatch.setenv("CONSTRAINED_IDS", "1"); monkeypatch.setenv("LLM_MODEL_NAME", "m")
+    cl = _Client('{"papers": ["2001.00001"]}')
+    monkeypatch.setattr(planner, "_client", lambda: cl)
+    s = _session(); G._constrained_ids({"conn": _conn()}, s)
+    assert s.constrained_ids == ["2001.00001"]

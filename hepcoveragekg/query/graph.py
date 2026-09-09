@@ -365,8 +365,12 @@ def _constrained_ids(runtime, session) -> None:
             f"Candidate papers this run retrieved (arXiv id: entities that matched):\n{listing}\n\n"
             "List every candidate that answers the question. Leave out candidates that merely "
             "mention the concept without satisfying the question.")}]
-    client = _p._client()
-    model = os.environ.get("LLM_MODEL_NAME", "")
+    made = _p._client()
+    # `_client()` returns (client, model); tolerate a bare client too.
+    if isinstance(made, tuple):
+        client, model = made[0], (made[1] if len(made) > 1 else os.environ.get("LLM_MODEL_NAME", ""))
+    else:
+        client, model = made, os.environ.get("LLM_MODEL_NAME", "")
     content = ""
     try:
         resp = client.chat.completions.create(
