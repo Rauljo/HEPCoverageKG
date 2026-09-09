@@ -6155,3 +6155,16 @@ Where the critic is on, the model names papers less often and slightly more
 precisely; counts are worse; nothing else moves beyond the floors. Its
 visible effect is on the page's length, not on which papers are right.
 
+## D-153 addendum -- name-ids alone on the OpenRouter lane (Gabriel's 9, 3 repeats)
+
+Run 20260909T121931-hepkg-99172 (typed + critic + --name-ids, nothing else)
+against the typed critic control 1914: judged_f1 0.481 vs 0.452 per question
+(0.481 vs 0.435 record mean), reach 0.717 vs 0.692, papers named 10.9 vs 7.1,
+gold among them 4.3 vs 3.4, judged wrong 2.0 vs 1.4, outside the judged set
+4.5 vs 2.3, silent answers 2 vs 4 of 27, zero errors. Same shape as the
+cluster: more named, more gold, more unjudged, +0.03-0.05 on the judged
+score, inside the 0.30 record spread at n=27. The cluster's single-repeat
++0.15 (0.330 -> 0.476) overstates it; the honest range for name-ids alone on
+the expert's questions is +0.03 to +0.10 depending on lane and code, with
+the certain effect being the fall in silent answers.
+
