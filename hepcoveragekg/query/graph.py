@@ -336,7 +336,7 @@ def _constrained_ids(runtime, session) -> None:
         return
     # Paper-set questions only: a count wants a number and a per-paper
     # question wants the paper's labels; an id list would replace both.
-    if runtime.get("question_shape") not in ("", "papers"):
+    if (runtime.get("question_shape") or "") not in ("", "papers"):
         return
     conn = runtime.get("conn")
     ids = sorted(getattr(session, "known_entity_ids", set()) or [])
