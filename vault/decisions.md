@@ -6453,3 +6453,46 @@ chapter can state the asymmetry and its measured size on both lanes.
 Cluster free-SQL numbers now all rest on plain-prompt runs: 54289 (120) and
 54293 (44).
 
+## D-156 outcome (part 2) -- constrained selection on the free-SQL side: nothing to select from
+
+Job 54297 (free-SQL plain + CONSTRAINED_IDS=1, QwQ, Gabriel's 9, 2 repeats)
+against 54293's Gabriel records (plain, 2 repeats): judged 0.303 -> 0.245,
+named 8.7 -> 7.1, gold 2.8 -> 1.9, silent 6 -> 4 of 18. Candidates offered
+5.4 per record and every one picked; zero candidates on gf-05, gf-07, gf-08.
+The reason is structural: free-SQL's footprint IS its SQL result rows, which
+are already the selection the model made in the query, so a second selection
+over them can only keep or remove, and on QwQ the rows are few. The
+mechanism helps a system whose retrieval is wide and whose answer is narrow
+(the typed planner: 27.6 candidates, 15.3 picked); free-SQL is the opposite
+shape. The -0.06 is within two-repeat noise (gf-02 alone swings 0.96 <-> 0.17
+between runs, part 4). Not pursued for free-SQL.
+
+## D-156 outcome (part 3) -- the retrieval stack plus constrained selection: reach up, score flat, gf-08 lost to the context window
+
+Job 54295 (kind fallback, 100 rows, enumeration expansion at 20, constrained
+selection; QwQ, no critic, Gabriel's 9, 3 repeats) against 54290 (control)
+and 54292 (constrained alone), same server session:
+
+| | judged (27) | judged (24, gf-08 excluded) | reach | named | gold | wrong | outside | silent | errors |
+|---|---|---|---|---|---|---|---|---|---|
+| control 54290 | 0.288 | 0.312 | 0.73 | 6.5 | 2.4 | 1.2 | 2.9 | 7 | 0 |
+| constrained 54292 | 0.554 | 0.590 | 0.58* | 15.5 | 5.5 | 3.0 | 7.1 | 0 | 0 |
+| stack + constrained 54295 | 0.543 | 0.611 | 0.88 | 16.3 | 5.4 | 2.9 | 8.0 | 3 | 3 |
+
+(*54292's reach is the artefact noted in part 2 of D-155; 54295 ran on the
+fixed code.) All three gf-08 repeats of 54295 died on QwQ's 32k window (the
+100-row pages on a 24-gold question, D-137 addendum 2), scoring zero. On the
+24 comparable records the retrieval mechanisms raise reach from 0.58 to
+0.88 -- gf-05 0.12 -> 0.88, gf-04 0.57 -> 0.78, gf-03 0.80 -> 1.00 -- and the
+judged score moves 0.590 -> 0.611, inside the 0.32 record spread. gf-05 is
+the clearest case: nearly all 16 gold now reach the candidate list (reach
+0.88) and the selector picks 5 papers of which 1.7 are gold (0.34). So the
+two halves are now measured separately on one lane: retrieval mechanisms
+deliver reach; the constrained selector converts a fixed fraction of what it
+is offered and adds no judgement about the condition (part 3 of D-155). The
+best typed configuration on the expert's questions, on this lane, is
+therefore constrained selection with or without the retrieval stack at
+0.55-0.61, against a control at 0.29-0.31, and the remaining loss is the
+condition judgement. For the write-up the 100-row arm needs a context guard
+before it can be run on long-list questions on QwQ.
+
