@@ -6428,3 +6428,28 @@ and 152 incomplete answers are what constrained selection (part 2, jobs
 54295/54296) and the retrieval mechanisms are for, and the per-paper cost
 is why it must be gated by shape.
 
+## D-155 outcome (part 5) -- plain free-SQL on the 120 generated questions (54289): identical to the instructed run
+
+QwQ, no critic, 84 retrieval + 36 per-paper, 2 repeats, zero errors, against
+wave 2's free-SQL (54259/54260, with the id instruction):
+
+| retrieval (168) | with instruction | plain |
+|---|---|---|
+| silent answers | 23 | 23 |
+| ids per answer | 23.1 | 16.0 |
+| set_f1 / named-only F1 (P, R) / essay-only | 0.268 / 0.301 (0.24, 0.54) / 0.260 | 0.264 / 0.306 (0.26, 0.53) / 0.264 |
+| answers that are the model's chain of thought | 144 | 142 |
+
+Per-paper (72): fuzzy label recall 0.78 vs 0.76. With 54293 (Gabriel's 9,
+counts, concept-sets: part 4) the plain free-SQL control now exists on all
+164 on the cluster, and it changes nothing: on QwQ the answer is the
+reasoning trace whichever prompt it gets, and the trace already contains the
+ids its queries returned (silent 23 of 168 either way). So the asymmetry the
+user raised (the free-SQL baseline carried an id instruction the typed one
+did not) is real in the prompts and, on this lane, not in the numbers; on
+qwen3-32b it was worth 0.12 (part 1). The baseline table can use the plain
+rows with a footnote that the two differ by at most 0.01 on QwQ, and the
+chapter can state the asymmetry and its measured size on both lanes.
+Cluster free-SQL numbers now all rest on plain-prompt runs: 54289 (120) and
+54293 (44).
+
