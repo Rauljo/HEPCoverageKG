@@ -6168,3 +6168,30 @@ score, inside the 0.30 record spread at n=27. The cluster's single-repeat
 the expert's questions is +0.03 to +0.10 depending on lane and code, with
 the certain effect being the fall in silent answers.
 
+## D-153 addendum 2 -- what name-ids solves and what it does not, per question, on three lane/code pairs
+
+Control -> name-ids on OpenRouter (3 rep), DIAS merged code (1 rep), DIAS old
+code (2 rep -> 1). Solves, on every lane where the papers were reached:
+gf-01-condition 0.36 -> 0.65 / 0.00 -> 0.76 / 0.17 -> 0.76 (11 reached; named
+1-8 -> 18-19, gold 3-> 6-8); gf-07 on OpenRouter 0.38 -> 0.57 (named 2.7 ->
+9.7, gold 1 -> 6); gf-04 +0.05 everywhere; gf-08 on DIAS 0.00 -> 0.15-0.22;
+silent answers 4 -> 2 of 27. Does not solve: gf-05 (reach 2 of 16: nothing
+to name); gf-01 (8 judged-wrong stay 8: the precision problem of D-149);
+gf-08 on OpenRouter, where 2 of 3 records search the literal phrase, find
+nothing and declare "not in the graph" (class A, a false abstention no
+answer instruction reaches); gf-07 on DIAS (the join, still prose). Where it
+looks harmful the cause is elsewhere: gf-02's 0.65 -> 0.52 is a facets call
+that returned 4 rows instead of 6 on one repeat (retrieval variance, the
+answer names all rows both times); gf-01-met lists 21-25 papers of which
+17-21 nobody judged, so judged_f1 is flat while the answer got longer. Cost
+everywhere: names outside the judged set double or triple (gf-01-condition
+4 -> 13, gf-01-met 8 -> 17). Net: the instruction converts "reached and
+silent" into "reached and listed"; it moves nothing that retrieval or the
+graph bounds, and it costs precision that judged_f1 cannot see but set_f1
+does (D-153).
+
+The user's next step for this mechanism: route the answer instruction by
+question shape (set / count / per-paper / yes-no) instead of one instruction
+for all, since the list instruction is set-specific and costs the other
+shapes (per-paper label recall 0.81 -> 0.67). Filed in ideas.
+
