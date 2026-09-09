@@ -97,6 +97,56 @@ def plain_answer_tool() -> dict:
     return t
 
 
+def constrained_papers(client, model, question: str, draft: str, touched: set,
+                       context: dict | None = None) -> tuple[list, str]:
+    """Constrained selection for the free-SQL side (CONSTRAINED_IDS=1; D-156).
+
+    Same mechanism as the typed planner's: one more call whose reply must be
+    {"papers": [...]} with items restricted by schema to the arXiv ids the
+    run's own queries returned (`touched`), enforced by vLLM `guided_json`,
+    plain JSON as the fallback. Returns (picked ids, mode).
+    """
+    cands = sorted(str(p) for p in touched)[:300]
+    if not cands:
+        return [], ""
+    ctx = context or {}
+    listing = "\n".join(f"{p}: {(ctx.get(p) or '')[:140]}" for p in cands)
+    schema = {"type": "object",
+              "properties": {"papers": {"type": "array", "items": {"type": "string", "enum": cands}}},
+              "required": ["papers"], "additionalProperties": False}
+    messages = [
+        {"role": "system", "content": "You select papers from a candidate list. Reply with JSON only, "
+                                      "of the form {\"papers\": [\"2106.01676\", ...]}, using only ids from the list."},
+        {"role": "user", "content": (
+            f"Question: {question}\n\nDraft answer:\n{(draft or '')[:3000]}\n\n"
+            f"Candidate papers your queries returned (arXiv id: where it came from):\n{listing}\n\n"
+            "List every candidate that answers the question. Leave out candidates that merely "
+            "mention the concept without satisfying the question.")}]
+    content, mode = "", ""
+    try:
+        r = client.chat.completions.create(model=model, messages=messages, temperature=0.0, max_tokens=2000,
+                                           extra_body={"guided_json": schema, "chat_template_kwargs": {"enable_thinking": False}})
+        content, mode = r.choices[0].message.content or "", "guided_json"
+    except Exception:  # noqa: BLE001
+        try:
+            r = client.chat.completions.create(model=model, messages=messages, temperature=0.0, max_tokens=2000,
+                                               response_format={"type": "json_object"})
+            content, mode = r.choices[0].message.content or "", "json_object"
+        except Exception:  # noqa: BLE001
+            return [], ""
+    picked: list = []
+    m = re.search(r"\{.*\}", content, re.S)
+    if m:
+        try:
+            for p in (json.loads(m.group(0)).get("papers") or []):
+                p = str(p).strip()
+                if p in set(cands) and p not in picked:
+                    picked.append(p)
+        except (ValueError, AttributeError):
+            pass
+    return picked, mode
+
+
 SEARCH_TOOL = {
     "type": "function",
     "function": {
@@ -633,6 +683,7 @@ class FreeSQLSystem:
         self._languages = tuple(languages)
         import os as _os
         self._plain_answer = _os.environ.get("FREESQL_PLAIN_ANSWER", "") == "1"
+        self._constrained = _os.environ.get("CONSTRAINED_IDS", "") == "1"
         self._driver = None
         self._database = "neo4j"
         if "cypher" in self._languages:
@@ -666,6 +717,7 @@ class FreeSQLSystem:
             "tools": list(self._languages) + (["search"] if index is not None else []),
             "languages": list(self._languages),
             "plain_answer": self._plain_answer,
+            "constrained_ids": self._constrained,
             "neo4j": bool(self._driver),
             "persist": bool(persist),
             "reviewer": bool(reviewer),
@@ -681,6 +733,15 @@ class FreeSQLSystem:
             # its judge nor its encoder (D-089).
             **_env_config(),
         }
+
+    def _client_pair(self):
+        """(client, model) for the constrained call; the same endpoint the answerer uses."""
+        from ..query.planner import _client
+        made = _client()
+        if isinstance(made, tuple):
+            return made[0], (made[1] if len(made) > 1 else self.config.get("model", ""))
+        import os as _os
+        return made, _os.environ.get("LLM_MODEL_NAME", "")
 
     def _client_chat(self):
         if self._chat is not None:
@@ -889,6 +950,7 @@ class FreeSQLSystem:
         ]
         started = time.time()
         touched: set[str] = set()
+        where: dict = {}          # paper id -> the query that first returned it
         entities: set[str] = set()
         calls = prompt_tokens = completion_tokens = 0
         rounds = 0
@@ -953,9 +1015,17 @@ class FreeSQLSystem:
                             "for and where.")})
                         widenings += 1
                         continue
+                    text_out = choice.content or ""
+                    extra = {}
+                    if self._constrained and touched:
+                        cl, mdl = self._client_pair()
+                        picked, mode = constrained_papers(cl, mdl, q.text, text_out, touched, where)
+                        extra = {"constrained_candidates": len(touched), "constrained_ids": picked, "constrained_mode": mode}
+                        if picked:
+                            text_out = text_out.rstrip() + "\n\nPapers: " + ", ".join(picked)
                     return Answer(
-                        text=choice.content or "", answered=bool(choice.content),
-                        papers=sorted(touched), steps=steps, entity_ids=sorted(entities),
+                        text=text_out, answered=bool(text_out),
+                        papers=sorted(touched), steps=steps, entity_ids=sorted(entities), **extra,
                         llm_calls=calls, rounds=rounds,
                         prompt_tokens=prompt_tokens, completion_tokens=completion_tokens,
                         seconds=time.time() - started, **self._review_fields())
@@ -997,9 +1067,17 @@ class FreeSQLSystem:
                     if call.function.name == "answer":
                         asserted = [str(x).strip() for x in (args.get("papers") or [])]
                         asserted = [x for x in asserted if re.fullmatch(r"\d{4}\.\d{4,5}", x)]
+                        text_out = str(args.get("text") or "")
+                        extra = {}
+                        if self._constrained and touched:
+                            cl, mdl = self._client_pair()
+                            picked, mode = constrained_papers(cl, mdl, q.text, text_out, touched, where)
+                            extra = {"constrained_candidates": len(touched), "constrained_ids": picked, "constrained_mode": mode}
+                            if picked:
+                                text_out = text_out.rstrip() + "\n\nPapers: " + ", ".join(picked)
                         return Answer(
-                            text=str(args.get("text") or ""),
-                            answered=bool(str(args.get("text") or "").strip() or asserted),
+                            text=text_out,
+                            answered=bool(text_out.strip() or asserted), **extra,
                             # What it ASSERTED, not what its queries touched. The
                             # planner's `papers_from` cites a set; this is the
                             # same gesture, and without it the control would be
@@ -1029,6 +1107,8 @@ class FreeSQLSystem:
                         result = run_cypher(self._driver, self._database, query)
                     else:
                         result = run_sql(self._conn, query)
+                    for _p in papers_in(result):
+                        where.setdefault(_p, " ".join(query.split())[:140])
                     touched.update(papers_in(result))
                     entities.update(entities_in(result))
                     steps.append({
