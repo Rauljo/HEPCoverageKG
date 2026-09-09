@@ -6195,3 +6195,21 @@ question shape (set / count / per-paper / yes-no) instead of one instruction
 for all, since the list instruction is set-specific and costs the other
 shapes (per-paper label recall 0.81 -> 0.67). Filed in ideas.
 
+## D-154 -- the name-ids-by-type pair moved to the cluster lane
+
+The user's request (2026-09-09): show, without the critic, what name-ids does
+on the 84 retrieval questions (answers that name nothing, partial lists,
+summaries) and that per-paper questions get worse. Started on OpenRouter,
+stopped at ~30 records each once the point was made that the baseline table
+is on the QwQ lane and this comparison has to sit beside it; the ~$0.5 spent
+there is written off. On DIAS: server 54282 (QwQ-32B-AWQ alone, serve_one,
+12 h), arm jobs 54283 (control, ARM=off, no critic) and 54284 (--name-ids,
+no critic), both on eval/questions/retrieval84-paper36.jsonl (84 + 36
+questions), 2 repeats, 4 workers, --timeout 900, LLM_TIMEOUT=600, started
+behind the server. Expected ~3-4 h. Read them with the D-153 by-type script:
+silent answers, ids per answer, named-only P/R, essay-only, fuzzy label
+recall; plus a count of partial lists ("such as", "examples include",
+counts written where a list was asked). The OpenRouter no-critic name-ids
+run on Gabriel's 9 (27 records, cheap) was left to finish and pairs with
+84932.
+

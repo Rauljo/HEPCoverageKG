@@ -694,13 +694,11 @@ Their framing of the problem: most KG approaches use the graph as an *auxiliary 
   ELI5. Relevance: our `judged_f1`/`set_f1` on named ids is a citation-recall
   metric in disguise, and the `papers_from` design (cite a set the harness
   resolves) is ALCE's "cite the passage id" idea applied to graph sets.
-- **Self-RAG -- Asai, Wu, Wang, Sil, Hajishirzi, ICLR 2024 (arXiv:2310.11511).**
-  The generator emits reflection tokens (retrieve? / is the passage relevant? /
-  is the output supported? / is it useful) as part of generation, trained
-  with a critic model. Relevance: our answer gate and ranked answer are
-  untrained, prompt-side versions of the "is it supported / is it complete"
-  checks; the cost we measured (the gate's retries, the ask firing rarely) is
-  what Self-RAG pays for at training time instead.
+- **Self-RAG** (entry above, ICLR 2024): its reflection tokens ("is the passage
+  relevant / is the output supported / is it complete") are the trained
+  version of our untrained, prompt-side answer gate and ranked answer; the
+  cost we measured (retries, the ask firing rarely) is what Self-RAG pays for
+  at training time instead.
 - **Lost in the Middle -- Liu, Lin, Hewitt, Paranjape, Bevilacqua, Petroni,
   Liang, TACL 12:157-173, 2024.** Models use the beginning and end of a long
   context and neglect the middle. Relevance: explains why a 24-paper list on a
