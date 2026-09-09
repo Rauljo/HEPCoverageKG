@@ -18,7 +18,11 @@
 > D-143); on small-truth generated questions with qwen3-32b it doubles recall at equal precision
 > and a judge-based strike removes gold (D-144). The first results section is drafted from
 > [`analysis/controls-and-gabriel.md`](analysis/controls-and-gabriel.md): the controls by question type
-> and Gabriel's nine questions one by one. Today's log: [`logs/2026-09-08.md`](logs/2026-09-08.md).
+> and Gabriel's nine questions one by one. On 2026-09-09: the results chapter's baseline
+> section drafted with the user; free-SQL's plain control and constrained decoding built and
+> measured (D-155, D-156) -- constrained selection is the answer-side mechanism for set questions,
+> recall doubles at the footprint's precision. Logs: [`logs/2026-09-08.md`](logs/2026-09-08.md),
+> [`logs/2026-09-09.md`](logs/2026-09-09.md).
 
 > **→ [`system.md`](system.md) (v1.8, 2026-08-07) is now the reference document for what gets built
 > next**: the query system and the agent layers on top of the graph, the evaluation design, the
