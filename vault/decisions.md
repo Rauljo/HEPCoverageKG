@@ -6394,3 +6394,37 @@ otherwise answers in prose and does nothing for one that answers in its
 reasoning trace; report both lanes. The 120-question plain run (54289) will
 say the same for the retrieval and per-paper types.
 
+## D-156 outcome (part 1) -- name-ids without the critic, by type, on the cluster (54288 vs wave 2)
+
+QwQ, no critic, 84 retrieval + 36 per-paper questions, 2 repeats (168 / 72
+answers), against wave 2's no-critic control on the same questions.
+
+| retrieval questions | control | name-ids |
+|---|---|---|
+| answers naming no paper | 58 | 27 |
+| a count written where a list was asked | 29 | 6 |
+| partial lists ("such as", "examples include", fewer ids than the truth) | 21 | 5 |
+| complete lists (every truth paper named) | 15 | 16 |
+| ids per answer | 8.6 | 19.4 |
+| set_f1 / named-only F1 (P, R) / essay-only | 0.200 / 0.202 (0.18, 0.32) / 0.132 | 0.221 / 0.224 (0.21, 0.36) / 0.188 |
+| reach | 0.98 | 0.99 |
+
+| per-paper questions | control | name-ids |
+|---|---|---|
+| retrieved label recall (by id) | 0.97 | 0.97 |
+| mentioned label recall (fuzzy) | 0.77 | 0.66 |
+
+Reading. The instruction fixes the answer FORM: silent answers halve,
+counts-instead-of-lists and "such as" lists nearly vanish. It does not fix
+the answer CONTENT: complete lists stay at 16 of 168 -- the model writes
+more ids (19 per answer for a 5.5-paper truth) but not the right 5.5; the
+named-only recall moves from 0.32 to 0.36. On QwQ without the critic the
+precision does not fall (0.18 -> 0.21), unlike the critic-on pair on the 164
+(D-153: 0.27 -> 0.15), so the precision cost seen there was the critic's
+shortened page being listed in full, not the instruction alone. The
+per-paper cost is confirmed (0.77 -> 0.66): the answer stops describing the
+paper. So for the chapter: name-ids is a form fix; the remaining 27 silent
+and 152 incomplete answers are what constrained selection (part 2, jobs
+54295/54296) and the retrieval mechanisms are for, and the per-paper cost
+is why it must be gated by shape.
+
