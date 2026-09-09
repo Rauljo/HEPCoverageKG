@@ -6092,3 +6092,29 @@ remaining errors are the LIKE/IN family over-match (3 over) and too-narrow
 entity choice (6 under). Report these figures in the baseline chapter in
 place of the cluster ones (0.30 / 0.35), with the lane stated.
 
+## D-152 -- the failure classes reduced to three for the write-up
+
+The five D-118 classes (A surface form, B truncation, C summarise/point, D
+quote-only, E tag-is-not-selection) plus the graph ceiling collapse into
+three, which is how the chapter presents them:
+
+- **A -- retrieval / query.** The fact is in the graph in reachable form and
+  the query did not reach it: the question's other clauses never searched
+  (gf-02), a kind filter that excludes where the concept lives (gf-05), a
+  literal phrase searched as a label (gf-08). Fixable at query time.
+- **B -- handoff and memory.** The papers are on the page and the answer
+  does not carry them: truncation at the row limit (gf-08), a count or a
+  summary or examples where a list was asked (gf-01-condition, gf-01-met,
+  the 84 retrieval questions), no answer at all, or two retrieved sets the
+  tools cannot combine (gf-07). Fixable at the answer or tool layer.
+- **C -- graph.** The fact is not in the graph in usable form: never made an
+  entity and alive only in a quote or a literal value (gf-03, gf-04), no
+  predicate for the relation the question needs (gf-07), or the connection
+  recorded as a mention where the question needs a requirement (gf-01, half
+  the gold papers). Fixable only by extraction.
+
+Old-to-new: A->A; B, C->B; D, E, ceiling->C. gf-07 is B and C. The
+mechanisms of the week map onto A (kind fallback, enumeration expansion) and
+B (name-ids, max-rows, answer gate, ranked answer); nothing built touches C,
+which is the honest limit to state.
+
