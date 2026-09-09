@@ -6263,3 +6263,22 @@ unchanged control path -- and to keep the server at 16 concurrent workers
 rather than 20 (the overload that produced yesterday's timeouts). The
 name-ids (54288) and plain free-SQL (54289) jobs are read against wave 2.
 
+## D-155 outcome (part 1) -- the plain free-SQL control on Gabriel's 9: 0.453
+
+Run 20260909T150745-free-sql-3469 (OpenRouter, 3 repeats, FREESQL_PLAIN_ANSWER=1)
+against the default free-SQL 85223: judged_f1 0.571 -> 0.453 (-0.12), papers
+named 9.4 -> 7.8, gold 4.4 -> 3.4, silent answers 1 -> 4 of 27, precision on
+the judged set unchanged (wrong 1.0 -> 0.8). Per question the loss is on the
+long-list questions: gf-01-condition 0.76 -> 0.46, gf-01-met 0.80 -> 0.41,
+gf-05/07/08 each -0.1; gf-02, gf-03, gf-01 unchanged. So "put the ids in
+`papers`, that is what gets scored" was worth 0.12 to free-SQL, and
+--name-ids is worth +0.10 to the typed side without the critic (D-153 add.
+3): the instruction is worth about the same to both systems. The fair
+baseline pair on this lane is typed 0.383 vs free-SQL 0.453 (gap 0.07,
+inside the 0.24-0.30 record spread), and the fair name-ids pair is typed
+0.486 vs free-SQL 0.571. Consequence for the chapter: the baseline table's
+free-SQL rows should be the plain control (cluster job 54289 for the 120
+generated questions, this run for the 9), the original free-SQL numbers
+reported as "with the id instruction", and name-ids then introduced on both
+sides with these two deltas side by side.
+
