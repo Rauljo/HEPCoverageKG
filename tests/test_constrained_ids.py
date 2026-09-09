@@ -42,7 +42,7 @@ def test_selects_only_from_the_footprint_and_writes_ids(monkeypatch):
     s = _session(); G._constrained_ids({"conn": _conn()}, s)
     assert s.constrained_candidates == 3 and s.constrained_ids == ["2001.00001", "2002.00002"]
     assert "2099.09999" not in s.answer and s.answer.endswith("Papers: 2001.00001, 2002.00002")
-    assert s.answer_papers == ["2001.00001", "2002.00002"] and s.constrained_mode == "guided_json"
+    assert s.answer_papers == [] and s.constrained_mode == "guided_json"   # footprint kept for reach
     assert cl.calls[0]["extra_body"]["guided_json"]["properties"]["papers"]["items"]["enum"] == ["2001.00001", "2002.00002", "2003.00003"]
 
 

@@ -403,8 +403,11 @@ def _constrained_ids(runtime, session) -> None:
     session.constrained_ids = picked
     session.answer_before_constrained = session.answer
     if picked:
+        # The TEXT carries the selection (the field the scorers read). The
+        # record's `papers` stays the retrieval footprint, so retrieval_reach
+        # remains comparable with the control (job 54292 overwrote it and
+        # read 0.53 against 0.74 for the same retrieval).
         session.answer = (session.answer or "").rstrip() + "\n\nPapers: " + ", ".join(picked)
-        session.answer_papers = list(picked)
     logger.info("constrained ids: %d of %d candidates selected (%s)",
                 len(picked), len(cands), getattr(session, "constrained_mode", ""))
 

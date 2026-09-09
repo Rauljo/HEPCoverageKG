@@ -6297,3 +6297,33 @@ constrained copy and the OpenRouter free-SQL plain on the full 164 (no other
 arm ran the 164 there; ~$0.30 written off). OpenRouter keeps only the
 27-record Gabriel runs.
 
+## D-155 outcome (part 2) -- constrained selection on the cluster: 0.288 -> 0.554 on Gabriel's 9
+
+Jobs 54290 (typed, no critic, control) and 54292 (typed, no critic,
+CONSTRAINED_IDS=1), QwQ, same server session, 3 repeats, 27 records each,
+zero errors, guided_json honoured on every record (vLLM enforced the enum).
+
+| | judged_f1 | named | gold | judged wrong | outside | silent |
+|---|---|---|---|---|---|---|
+| control 54290 | 0.288 | 6.5 | 2.4 | 1.2 | 2.9 | 7/27 |
+| constrained 54292 | 0.554 | 15.5 | 5.5 | 3.0 | 7.1 | 0/27 |
+
+Candidates offered 27.6 per record, selected 15.3 (55%). Per question:
+gf-01-condition 0.00 -> 0.92 (all 11 gold), gf-04 0.25 -> 0.67, gf-07 0.00 ->
+0.33, gf-03 0.59 -> 0.89, gf-08 0.10 -> 0.26, gf-01-met 0.27 -> 0.49, gf-05
++0.06, gf-01 and gf-02 flat. The +0.27 is about three standard errors at
+this n (record spread 0.315). Two readings. First, this control is low
+(0.288 against 0.438 for the same arm in wave 2 and 0.383 on OpenRouter):
+seven of its 27 answers name nothing, so part of the gain is the silent
+answers alone. Second, and the point of the arm: unlike --name-ids, which
+lists the footprint as prose, the constrained step turns the answer into a
+choice per candidate -- 45% of candidates are left out -- and precision on
+the judged set is 0.65 (5.5 / 8.5) against name-ids' 0.68 on OpenRouter with
+half the recall; it converts the handoff loss without inventing an id and
+without a summary ever being possible. The comparable name-ids figure on
+the cluster does not exist as a same-session pair (54294 cancelled by the
+user's choice); across lanes name-ids is +0.03 to +0.15 and constrained is
++0.27. The reach column in the run file (0.53 vs 0.74) is an artefact: the
+step overwrote the record's `papers` with its selection; fixed in the
+following commit (the text carries the selection, the footprint stays).
+
