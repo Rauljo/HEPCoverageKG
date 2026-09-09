@@ -6327,3 +6327,24 @@ user's choice); across lanes name-ids is +0.03 to +0.15 and constrained is
 step overwrote the record's `papers` with its selection; fixed in the
 following commit (the text carries the selection, the footprint stays).
 
+## D-155 outcome (part 3) -- anatomy of the constrained run: the format is solved, the selection is not
+
+Candidate lists rebuilt from the records' entity ids on the DIAS copy (job
+54292, 27 records, 318 gold slots): gold offered as candidates 226 (71%);
+gold never offered 92 -- gf-05 14 of 16, gf-04 8 of 18, gf-02 5 of 11, the
+retrieval bound of D-135 unchanged. Of the gold offered, 144 picked (64%);
+of the 518 non-gold offered, 269 picked (52%). By question: where the
+candidate list is short and clean (gf-02, gf-03: candidates = gold) it picks
+everything and the score is the retrieval bound; where the list is long
+(gf-01 45, gf-01-met 41, gf-08 58 candidates) it picks about half with little
+discrimination -- gf-01 1.00 of gold / 0.59 of non-gold, gf-01-met 0.44 /
+0.62, gf-08 0.18 / 0.26 (worse than chance on the 24-gold question). So
+constrained decoding removes the formatting failure completely (silent 7 ->
+0, no summaries, no invented ids) and its gain is that the offered gold gets
+written; it adds no judgement about which candidate satisfies the question,
+which is the same weakness the ranker (D-135) and the grade strike (D-144)
+met. The honest description for the write-up: it is the ceiling of what an
+answer-side mechanism can do on this graph -- every offered gold that the
+model would name gets named -- and it leaves the two real limits untouched:
+gold never retrieved (29% of slots) and the condition judgement.
+
