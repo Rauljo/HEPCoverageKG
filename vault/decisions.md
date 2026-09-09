@@ -6496,3 +6496,29 @@ therefore constrained selection with or without the retrieval stack at
 condition judgement. For the write-up the 100-row arm needs a context guard
 before it can be run on long-list questions on QwQ.
 
+## D-156 outcome (part 4) -- constrained selection on the 84 retrieval questions: recall doubles, precision unchanged
+
+Job 54296 (typed, no critic, CONSTRAINED_IDS=1, QwQ, 84 retrieval questions,
+2 repeats, zero errors), against wave 2's no-critic control and 54288
+(name-ids) on the same 168 answers:
+
+| | silent | complete lists | ids / answer | set_f1 | named-only F1 (P, R) | essay-only | paired delta vs control |
+|---|---|---|---|---|---|---|---|
+| control | 58 | 15 | 8.6 | 0.200 | 0.202 (0.18, 0.32) | 0.132 | -- |
+| name-ids | 27 | 16 | 19.4 | 0.221 | 0.224 (0.21, 0.36) | 0.188 | +0.024 (se 0.024) |
+| constrained | 3 | 78 | 31.2 | 0.271 | 0.274 (0.21, 0.69) | 0.269 | +0.066 (se 0.023) |
+
+Candidates offered 45 per answer, 24 picked. By truth size: P / R / F1 =
+0.16 / 0.73 / 0.23 on 1-3-paper truths (n 60), 0.19 / 0.69 / 0.26 on 4-8
+(n 80), 0.35 / 0.65 / 0.40 on 9+ (n 28). The fear that drove the shape gate
+-- that a forced list would cost precision on small-truth questions -- does
+not materialise: precision is the footprint's (0.18-0.21) under all three
+arms, and constrained selection doubles recall on top of it. Complete lists
+go from 15 to 78 of 168; silent answers from 58 to 3. The +0.066 is about
+three standard errors, three times name-ids' gain, on the same questions
+and lane. Together with parts 1-3 and D-155: constrained selection is the
+answer-side mechanism for set questions on both question sources; its
+precision is the retrieval footprint's, so precision is now entirely a
+retrieval and condition-judgement problem. All five jobs of the day's plan
+are scored; the periodic check is removed.
+
