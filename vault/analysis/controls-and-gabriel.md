@@ -239,7 +239,19 @@ class in the D-118 vocabulary: **A** surface form / query formulation,
 Runs: typed+critic OpenRouter = 1914 + 63766 (6 repeats); typed no-critic
 OpenRouter = 84932 (3 repeats); free-SQL OpenRouter = 85223 (3 repeats, current
 gold; the SQL quoted in the traces below is from the earlier run 28311, whose
-queries are the same kind);
+queries are the same kind). SAME-CONDITIONS PAIR: the typed no-critic
+cluster runs (54257/54258) and the cluster free-SQL runs (54259/54260) are
+the same model, day and server, and the class table rests on them; the
+cluster free-SQL traces show the same behaviours as the OpenRouter ones on
+gf-05 (searches "Higgs boson candidate" as a detector object, 5 papers),
+gf-08 ("ee channel" / "two electrons", 0 rows, "no analyses were found") and
+gf-02 (LIKE '%ABCD%'). Two things are OpenRouter-only: the gf-07 join
+attempts (the cluster free-SQL never wrote a join, one search then chain of
+thought) and the gf-04 unfolding query. And one cluster-only artefact: on
+gf-07, gf-08 and one gf-02 run the QwQ free-SQL answer IS the model's chain
+of thought ("Okay, let me see. The user is asking ...") recorded as the
+answer, with no ids -- the same class-B exit as the typed planner's, on the
+other system;
 typed no-critic QwQ = 54257/54258; free-SQL QwQ = 54259/54260; typed critic QwQ
 = 54251/54252.
 
