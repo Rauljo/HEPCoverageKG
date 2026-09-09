@@ -6282,3 +6282,18 @@ generated questions, this run for the 9), the original free-SQL numbers
 reported as "with the id instruction", and name-ids then introduced on both
 sides with these two deltas side by side.
 
+## D-155 addendum -- what runs, after the user's corrections (2026-09-09 16:40)
+
+DIAS, QwQ server 54286, no critic anywhere: 54288 typed --name-ids on the 84
+retrieval + 36 per-paper questions (2 repeats; read against wave 2's
+54257/54258 for silent answers, partial lists, and the per-paper cost);
+54289 free-SQL plain on the same 120 and 54293 on the remaining 44 (2
+repeats; together the fair free-SQL control on the full 164); 54290 typed
+control and 54292 typed + CONSTRAINED_IDS=1 on Gabriel's 9 (3 repeats; the
+constrained-decoding test, on the one server where the schema is enforced --
+live check: guided_json honoured on every record). Cancelled: 54294 (name-ids
+on the remaining 44 -- not needed for the point being made), the OpenRouter
+constrained copy and the OpenRouter free-SQL plain on the full 164 (no other
+arm ran the 164 there; ~$0.30 written off). OpenRouter keeps only the
+27-record Gabriel runs.
+
