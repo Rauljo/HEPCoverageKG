@@ -319,6 +319,92 @@ def _answer_named(session) -> list:
     return in_text or list(session.answer_papers)
 
 
+def _constrained_ids(runtime, session) -> None:
+    """Constrained selection of the answer's papers (2026-09-09, literature:
+    Willard & Louf 2023). Off unless CONSTRAINED_IDS=1.
+
+    --name-ids asks for arXiv ids in prose and gets the footprint written out
+    (D-153). This removes the formatting question altogether: the candidate
+    list is every paper reachable from the entities the run retrieved, and
+    the model is asked once more for a JSON object whose `papers` items are
+    constrained by schema (vLLM `guided_json`) to that list. The model cannot
+    invent an id or write a summary; it can only choose. Selected ids are
+    appended to the text (the field the scorers read) and set as
+    `answer_papers`; the original text is kept.
+    """
+    if os.environ.get("CONSTRAINED_IDS", "") != "1":
+        return
+    conn = runtime.get("conn")
+    ids = sorted(getattr(session, "known_entity_ids", set()) or [])
+    if conn is None or not ids:
+        return
+    from hepcoveragekg.query import planner as _p
+    try:
+        rows = conn.execute(
+            f"SELECT DISTINCT eo.paper_id, eo.label FROM entity_occurrence eo "
+            f"WHERE eo.entity_id IN ({','.join('?' * len(ids))})", ids).fetchall()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("constrained ids: footprint query failed: %s", exc)
+        return
+    by: dict = {}
+    for pid, label in rows:
+        by.setdefault(str(pid), []).append(str(label))
+    named = set(_answer_named(session))
+    cands = sorted(set(by) | named)[:300]
+    if not cands:
+        return
+    listing = "\n".join(f"{p}: " + "; ".join(sorted(set(by.get(p, [])))[:3])[:160] for p in cands)
+    schema = {"type": "object",
+              "properties": {"papers": {"type": "array", "items": {"type": "string", "enum": cands}}},
+              "required": ["papers"], "additionalProperties": False}
+    messages = [
+        {"role": "system", "content": "You select papers from a candidate list. Reply with JSON only, "
+                                      "of the form {\"papers\": [\"2106.01676\", ...]}, using only ids from the list."},
+        {"role": "user", "content": (
+            f"Question: {session.question}\n\nDraft answer:\n{(session.answer or '')[:3000]}\n\n"
+            f"Candidate papers this run retrieved (arXiv id: entities that matched):\n{listing}\n\n"
+            "List every candidate that answers the question. Leave out candidates that merely "
+            "mention the concept without satisfying the question.")}]
+    client = _p._client()
+    model = os.environ.get("LLM_MODEL_NAME", "")
+    content = ""
+    try:
+        resp = client.chat.completions.create(
+            model=model, messages=messages, temperature=0.0, max_tokens=2000,
+            extra_body={"guided_json": schema, "chat_template_kwargs": {"enable_thinking": False}})
+        content = resp.choices[0].message.content or ""
+        session.constrained_mode = "guided_json"
+    except Exception as exc:  # noqa: BLE001 -- the server may not support guided decoding
+        logger.info("constrained ids: guided_json refused (%s); plain JSON", str(exc)[:80])
+        try:
+            resp = client.chat.completions.create(
+                model=model, messages=messages, temperature=0.0, max_tokens=2000,
+                response_format={"type": "json_object"})
+            content = resp.choices[0].message.content or ""
+            session.constrained_mode = "json_object"
+        except Exception as exc2:  # noqa: BLE001
+            logger.warning("constrained ids: selection call failed: %s", str(exc2)[:120])
+            return
+    picked: list = []
+    m = re.search(r"\{.*\}", content, re.S)
+    if m:
+        try:
+            for p in (json.loads(m.group(0)).get("papers") or []):
+                p = str(p).strip()
+                if p in set(cands) and p not in picked:
+                    picked.append(p)
+        except (ValueError, AttributeError):
+            pass
+    session.constrained_candidates = len(cands)
+    session.constrained_ids = picked
+    session.answer_before_constrained = session.answer
+    if picked:
+        session.answer = (session.answer or "").rstrip() + "\n\nPapers: " + ", ".join(picked)
+        session.answer_papers = list(picked)
+    logger.info("constrained ids: %d of %d candidates selected (%s)",
+                len(picked), len(cands), getattr(session, "constrained_mode", ""))
+
+
 def _grade_strike(session) -> None:
     """Strike from the named answer the papers the ranker graded at or below
     STRIKE_GRADE_MAX (D-142). Off unless the variable is set.
@@ -672,6 +758,7 @@ def execute(state: PlannerState, config=None) -> PlannerState:
             if runtime.get("answer_critic"):
                 _answer_critic(runtime, session)
             _grade_strike(session)
+            _constrained_ids(runtime, session)
 
             return state
 
@@ -838,6 +925,7 @@ def finish(state: PlannerState, config=None) -> PlannerState:
         if runtime.get("answer_critic"):
             _answer_critic(runtime, session)
         _grade_strike(session)
+        _constrained_ids(runtime, session)
 
     session.evidence_ids = sorted(set(session.evidence_ids))
     session.verification = verify.verify_session(session)

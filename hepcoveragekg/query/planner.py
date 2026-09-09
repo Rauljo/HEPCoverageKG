@@ -806,6 +806,11 @@ class Session:
     #: The grade strike (D-142): the text before it, and what it removed.
     answer_before_strike: str = ""
     grade_struck: list = field(default_factory=list)
+    #: Constrained selection (CONSTRAINED_IDS=1): candidates, chosen ids, mode.
+    constrained_candidates: int = 0
+    constrained_ids: list = field(default_factory=list)
+    constrained_mode: str = ""
+    answer_before_constrained: str = ""
 
     # THE PLAN REVIEWER (separate from the search critic, which judges retrieved
     # rows). Counted apart from the planner's own calls and tokens: the whole
@@ -2541,8 +2546,8 @@ def _prepare(conn, index, question, max_rounds, max_places, max_rows,
     # "a second look from the big model helped" -- the mistake `REVIEWER_MODEL`
     # exists to avoid on the plan reviewer.
     runtime["answer_critic"] = bool(answer_critic)
+    runtime["conn"] = conn        # the answer critic and the constrained selection read it
     if answer_critic:
-        runtime["conn"] = conn
         _ac_client, _ac_model = _critic_client()
         _ac_cap = completion_cap(_ac_model)
 

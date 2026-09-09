@@ -114,6 +114,9 @@ class Answer:
     ranked_answer_shown: int = 0
     #: The grade strike (D-142): ids removed from the named answer.
     grade_struck: list = field(default_factory=list)
+    constrained_candidates: int = 0
+    constrained_ids: list = field(default_factory=list)
+    constrained_mode: str = ""
     #: Enumeration expansion (D-131).
     enum_concepts: int = 0
     enum_added: int = 0
@@ -303,6 +306,7 @@ class PlannerSystem:
             "env.ENUM_LIMIT": os.environ.get("ENUM_LIMIT", ""),
             "env.RANKED_ASK_MIN_MISSING": os.environ.get("RANKED_ASK_MIN_MISSING", ""),
             "env.STRIKE_GRADE_MAX": os.environ.get("STRIKE_GRADE_MAX", ""),
+            "env.CONSTRAINED_IDS": os.environ.get("CONSTRAINED_IDS", ""),
             **effective_config(planner.answer, planner_kwargs),
         }
 
@@ -420,6 +424,9 @@ def from_session(session, conn=None) -> Answer:
         ranked_answer_asked=bool(getattr(session, "ranked_answer_asked", False)),
         ranked_answer_shown=getattr(session, "ranked_answer_shown", 0),
         grade_struck=list(getattr(session, "grade_struck", []) or []),
+        constrained_candidates=int(getattr(session, "constrained_candidates", 0) or 0),
+        constrained_ids=list(getattr(session, "constrained_ids", []) or []),
+        constrained_mode=getattr(session, "constrained_mode", "") or "",
         enum_concepts=getattr(session, "enum_concepts", 0),
         enum_added=getattr(session, "enum_added", 0),
     )

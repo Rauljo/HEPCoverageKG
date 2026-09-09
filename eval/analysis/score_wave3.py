@@ -5,7 +5,7 @@ D=sys.argv[1]
 def load(j):
     f=glob.glob(f"{D}/*{j}.jsonl") or glob.glob(f"{D}/*/*{j}.jsonl")
     return {r["qid"]:r for r in (json.loads(l) for l in open(f[0]).read().splitlines()[1:])} if f else {}
-ARMS=[("ctrl-a w1 (old code)",54251),("ctrl-b w1 (old code)",54252),("nocritic-a w2",54257),("nocritic-b w2",54258),("ctrl-c w3 (merged)",54261),("stack w3 (54268)",54268)]
+ARMS=[("ctrl-a w1 (old code)",54251),("ctrl-b w1 (old code)",54252),("nocritic-a w2",54257),("nocritic-b w2",54258),("ctrl-c w3 (merged)",54261),("stack w3 (54268)",54268),("ctrl+name-ids (54272)",54272)]
 R={n:load(j) for n,j in ARMS}
 def m(v): return statistics.mean(v) if v else float("nan")
 def col(n,k,qs): return [R[n][q]["scores"][k] for q in qs if q in R[n] and R[n][q]["scores"].get(k) is not None]
@@ -33,7 +33,7 @@ if R[st]:
     qs=set(R[st])&set(R[cc])
     print(f"\nSTACK vs ctrl-c, paired on the stack's {len(qs)} questions")
     row(cc,qs); row(st,qs)
-    for n in ("ctrl-a w1 (old code)","nocritic-a w2"):
-        row(n,qs&set(R[n]))
+    for n in ("ctrl-a w1 (old code)","nocritic-a w2","ctrl+name-ids (54272)"):
+        if R.get(n): row(n,qs&set(R[n]))
     d=[(R[st][q]["scores"]["set_f1"]-R[cc][q]["scores"]["set_f1"]) for q in qs if R[st][q]["scores"].get("set_f1") is not None and R[cc][q]["scores"].get("set_f1") is not None]
     if d: print(f"  paired set_f1 delta stack-ctrl: mean {m(d):+.3f}, sd {statistics.pstdev(d):.3f}, n {len(d)}, se {statistics.pstdev(d)/len(d)**0.5:.3f}")

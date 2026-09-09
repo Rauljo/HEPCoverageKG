@@ -6,15 +6,15 @@ import json, glob, re, sys, collections
 from hepcoveragekg.query import retrieve, templates, planner
 from hepcoveragekg.eval.systems import _papers_of
 
-SP = sys.argv[1]; DB = f"{SP}/wave1/hepkg-dias.db"
-RUNS = {"ctrl-a": glob.glob(f"{SP}/wave1/*54251.jsonl")[0],
-        "ctrl-b": glob.glob(f"{SP}/wave1/*54252.jsonl")[0]}
+# Usage: gabriel_replay.py DB.db LABEL=RUN.jsonl [LABEL=RUN.jsonl ...]
+DB = sys.argv[1]
+RUNS = {a.split("=", 1)[0]: a.split("=", 1)[1] for a in sys.argv[2:]}
 GOLD = {json.loads(l)["qid"]: json.loads(l)
         for l in open("eval/questions/gabriel-gold-2026-09-03-full.jsonl")}
 ARXIV = re.compile(r"\b\d{4}\.\d{4,5}\b")
 
 conn = templates.read_only(DB)
-index = retrieve.build(conn, cache=f"{SP}/wave1/index-dias.npz")
+index = retrieve.build(conn, cache=DB.rsplit("/",1)[0]+"/index-dias.npz")
 in_db = {r[0] for r in conn.execute("SELECT arxiv_id FROM paper")}
 
 def papers_from(result):
@@ -120,4 +120,4 @@ print("  TOTAL:", dict(wt))
 errs = [(k, d["errors"]) for k,d in out.items() if d["errors"]]
 if errs:
     print("\nreplay errors:"); [print("  ", k, e) for k,e in errs]
-json.dump({f"{r}|{q}": d for (r,q),d in out.items()}, open(f"{SP}/wave1/gabriel_replay.json","w"), indent=1)
+json.dump({f"{r}|{q}": d for (r,q),d in out.items()}, open(DB.rsplit("/",1)[0]+"/gabriel_replay-"+"-".join(RUNS)+".json","w"), indent=1)
