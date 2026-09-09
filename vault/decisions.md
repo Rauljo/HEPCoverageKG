@@ -6348,3 +6348,25 @@ answer-side mechanism can do on this graph -- every offered gold that the
 model would name gets named -- and it leaves the two real limits untouched:
 gold never retrieved (29% of slots) and the condition judgement.
 
+## D-156 -- constrained selection kept; gated by question shape; two follow-up runs
+
+The user's decision after D-155 part 3: keep constrained selection as the
+answer-side mechanism, for set-of-papers questions only. Code (526ec41 +
+deabe7f): the evaluation system passes each question's shape into the
+planner runtime ("papers" for a set question whose truth is a paper set,
+otherwise the shape), and the constrained step runs only when the shape is
+"papers" or unknown (the CLI). Counts and per-paper questions are untouched.
+This is the first piece of the answer-routing idea (ideas/answer-routing-by-
+shape.md) actually built.
+
+Queued on DIAS behind 54288, no critic: 54295 = the retrieval stack
+(--kind-fallback --max-rows 100 --enum-expand, ENUM_LIMIT=20) plus
+CONSTRAINED_IDS=1 on Gabriel's 9, 3 repeats -- the candidate answer to
+"what is the best typed configuration on the expert's questions", to read
+against 54290 (control) and 54292 (constrained alone); 54296 = constrained
+alone on the 84 retrieval questions, 2 repeats, to read against wave 2's
+no-critic control and 54288 (name-ids) for the precision cost on
+small-truth questions. A red commit (526ec41: three tests failed behind a
+`pytest | tail` pipe) was fixed in deabe7f; the suite is run with the exit
+code propagated from now on.
+
