@@ -77,6 +77,26 @@ ANSWER_TOOL = {
     },
 }
 
+def plain_answer_tool() -> dict:
+    """The answer tool WITHOUT the scoring instruction (2026-09-09).
+
+    The shipped description says "Put the arXiv ids you are asserting in
+    `papers` -- that is what gets scored", which is the typed system's
+    --name-ids instruction under another name, given to the control from day
+    one while the typed control's `answer` said the opposite (D-117). For a
+    fair baseline pair the control must not carry it either; this is the
+    counterpart of the typed v3 contract: a `papers` field that exists and is
+    described neutrally, and no word about scoring. Selected with
+    FREESQL_PLAIN_ANSWER=1 and recorded in the run config.
+    """
+    import copy
+    t = copy.deepcopy(ANSWER_TOOL)
+    t["function"]["description"] = "Give the final answer and stop."
+    t["function"]["parameters"]["properties"]["papers"]["description"] = (
+        "optionally, the arXiv ids the answer refers to")
+    return t
+
+
 SEARCH_TOOL = {
     "type": "function",
     "function": {
@@ -611,6 +631,8 @@ class FreeSQLSystem:
         # ("cypher",) queries the Neo4j projection of the same graph;
         # ("sql", "cypher") offers both and records which one the model used.
         self._languages = tuple(languages)
+        import os as _os
+        self._plain_answer = _os.environ.get("FREESQL_PLAIN_ANSWER", "") == "1"
         self._driver = None
         self._database = "neo4j"
         if "cypher" in self._languages:
@@ -643,6 +665,7 @@ class FreeSQLSystem:
             "statement_seconds": STATEMENT_SECONDS,
             "tools": list(self._languages) + (["search"] if index is not None else []),
             "languages": list(self._languages),
+            "plain_answer": self._plain_answer,
             "neo4j": bool(self._driver),
             "persist": bool(persist),
             "reviewer": bool(reviewer),
@@ -827,6 +850,12 @@ class FreeSQLSystem:
         elif "cypher" in self._languages:
             examples = WORKED_EXAMPLES + CYPHER_EXAMPLES
         system = SYSTEM_PROMPT.format(schema=self._schema, examples=examples)
+        if self._plain_answer:
+            system = system.replace(
+                "- Counting questions want a number. Questions asking which analyses or which\n"
+                "  papers want arXiv ids, and you must WRITE THE IDS OUT in your final answer.\n",
+                "- Counting questions want a number. Questions asking which analyses or which\n"
+                "  papers want the papers.\n")
         if self._languages == ("cypher",):
             system = system.replace("sql(query)    -- read anything, aggregate anything, join anything.",
                                     "cypher(query) -- read anything, aggregate anything, traverse anything.")
@@ -873,9 +902,10 @@ class FreeSQLSystem:
 
         try:
             for rounds in range(1, self._max_rounds + 1):
+                answer_tool = plain_answer_tool() if self._plain_answer else ANSWER_TOOL
                 tools = ([SQL_TOOL] if "sql" in self._languages else []) \
                     + ([CYPHER_TOOL] if "cypher" in self._languages else []) \
-                    + [ANSWER_TOOL] + ([SEARCH_TOOL] if self._index is not None else [])
+                    + [answer_tool] + ([SEARCH_TOOL] if self._index is not None else [])
                 # THE LAST ROUND IS FOR ANSWERING. The planner got this fix and
                 # this loop did not, which is why deepseek-v4-flash scored 0.000
                 # here while scoring 0.512 on the planner: 6 of 6 rounds on every
@@ -883,11 +913,11 @@ class FreeSQLSystem:
                 # The control cannot be a fair control if it is the only side
                 # that can run out of turns holding the answer.
                 if rounds >= self._max_rounds:
-                    tools = [ANSWER_TOOL]
+                    tools = [answer_tool]
                     messages.append({"role": "user", "content": (
                         f"Round {rounds} of {self._max_rounds} -- your last. No "
-                        "more queries: answer now from what you already have, "
-                        "and put the arXiv ids in `papers`.")})
+                        "more queries: answer now from what you already have"
+                        + ("." if self._plain_answer else ", and put the arXiv ids in `papers`."))})
                 reply = chat(messages, tools)
                 calls += 1
                 usage = getattr(reply, "usage", None)
