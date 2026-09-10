@@ -69,3 +69,21 @@ def test_gated_by_question_shape(monkeypatch):
     for shape, expect in (("count", 0), ("labels", 0), ("papers", 1), ("", 1)):
         s = _session(); G._constrained_ids({"conn": _conn(), "question_shape": shape}, s)
         assert len(s.constrained_ids) == expect, shape
+
+
+def test_draft_ids_are_candidates_only_if_the_graph_holds_them(monkeypatch):
+    """D-157: job 54296 let ids the draft had INVENTED into the enum (10 of 168
+    records carried runs like 1606.05334, 1606.05335, ...). A draft-named id is
+    a candidate only when the paper table holds it."""
+    monkeypatch.setenv("CONSTRAINED_IDS", "1"); monkeypatch.setenv("LLM_MODEL_NAME", "m")
+    c = _conn()
+    c.executescript("""CREATE TABLE paper(arxiv_id TEXT);
+      INSERT INTO paper VALUES('2001.00001'),('2002.00002'),('2003.00003'),('2050.00050');""")
+    cl = _Client(json.dumps({"papers": ["2050.00050", "1606.05334"]}))
+    monkeypatch.setattr(planner, "_client", lambda: (cl, "m"))
+    s = _session()
+    s.answer = "See 2001.00001, 2050.00050 and 1606.05334, 1606.05335."   # one held, two invented
+    G._constrained_ids({"conn": c}, s)
+    enum = cl.calls[0]["extra_body"]["guided_json"]["properties"]["papers"]["items"]["enum"]
+    assert enum == ["2001.00001", "2002.00002", "2003.00003", "2050.00050"]
+    assert s.constrained_ids == ["2050.00050"] and "1606.05334" not in s.answer.split("Papers:")[-1]

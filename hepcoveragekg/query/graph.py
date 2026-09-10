@@ -353,7 +353,19 @@ def _constrained_ids(runtime, session) -> None:
     by: dict = {}
     for pid, label in rows:
         by.setdefault(str(pid), []).append(str(label))
+    # Ids the draft already named are eligible too, but ONLY if the graph
+    # holds them: job 54296 (D-157) admitted runs of consecutive ids the
+    # draft had invented, and the enum then made them legal choices.
     named = set(_answer_named(session))
+    if named - set(by):
+        try:
+            held = {str(r[0]) for r in conn.execute(
+                f"SELECT arxiv_id FROM paper WHERE arxiv_id IN ({','.join('?' * len(named))})",
+                sorted(named)).fetchall()}
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("constrained ids: paper lookup failed (%s); draft ids dropped", exc)
+            held = set()
+        named &= held
     cands = sorted(set(by) | named)[:300]
     if not cands:
         return
