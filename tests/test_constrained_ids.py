@@ -87,3 +87,35 @@ def test_draft_ids_are_candidates_only_if_the_graph_holds_them(monkeypatch):
     enum = cl.calls[0]["extra_body"]["guided_json"]["properties"]["papers"]["items"]["enum"]
     assert enum == ["2001.00001", "2002.00002", "2003.00003", "2050.00050"]
     assert s.constrained_ids == ["2050.00050"] and "1606.05334" not in s.answer.split("Papers:")[-1]
+
+
+def test_critic_dropped_entities_leave_the_candidate_list(monkeypatch):
+    """D-158: with CONSTRAINED_FROM_KEPT=1 an entity the search critic dropped
+    contributes no candidates; without it the enum is the full footprint."""
+    from types import SimpleNamespace as NS
+    monkeypatch.setenv("CONSTRAINED_IDS", "1"); monkeypatch.setenv("LLM_MODEL_NAME", "m")
+    review = NS(verdicts=[NS(entity_id="e2", kept=False), NS(entity_id="e1", kept=True)])
+    for flag, enum, dropped in (("", ["2001.00001", "2002.00002", "2003.00003"], 0),
+                                ("1", ["2001.00001", "2002.00002"], 1)):
+        monkeypatch.setenv("CONSTRAINED_FROM_KEPT", flag)
+        cl = _Client('{"papers": ["2001.00001"]}')
+        monkeypatch.setattr(planner, "_client", lambda: (cl, "m"))
+        s = _session(); s.reviews = [review]
+        G._constrained_ids({"conn": _conn()}, s)
+        assert cl.calls[0]["extra_body"]["guided_json"]["properties"]["papers"]["items"]["enum"] == enum
+        assert s.constrained_critic_dropped == dropped
+
+
+def test_answer_critic_runs_after_the_selector_when_constrained(monkeypatch):
+    """D-158: the critic must judge the list the selector wrote, not a draft
+    the selector then overwrites."""
+    order = []
+    monkeypatch.setattr(G, "_answer_critic", lambda rt, s: order.append("critic"))
+    monkeypatch.setattr(G, "_grade_strike", lambda s: order.append("strike"))
+    monkeypatch.setattr(G, "_constrained_ids", lambda rt, s: order.append("select"))
+    monkeypatch.setenv("CONSTRAINED_IDS", "1")
+    G._answer_exit({"answer_critic": True}, _session())
+    assert order == ["strike", "select", "critic"]
+    order.clear(); monkeypatch.delenv("CONSTRAINED_IDS")
+    G._answer_exit({"answer_critic": True}, _session())
+    assert order == ["critic", "strike", "select"]

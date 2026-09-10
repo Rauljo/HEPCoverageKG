@@ -117,6 +117,7 @@ class Answer:
     constrained_candidates: int = 0
     constrained_ids: list = field(default_factory=list)
     constrained_mode: str = ""
+    constrained_critic_dropped: int = 0
     #: Enumeration expansion (D-131).
     enum_concepts: int = 0
     enum_added: int = 0
@@ -431,6 +432,7 @@ def from_session(session, conn=None) -> Answer:
         constrained_candidates=int(getattr(session, "constrained_candidates", 0) or 0),
         constrained_ids=list(getattr(session, "constrained_ids", []) or []),
         constrained_mode=getattr(session, "constrained_mode", "") or "",
+        constrained_critic_dropped=int(getattr(session, "constrained_critic_dropped", 0) or 0),
         enum_concepts=getattr(session, "enum_concepts", 0),
         enum_added=getattr(session, "enum_added", 0),
     )

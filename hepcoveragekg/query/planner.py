@@ -810,6 +810,9 @@ class Session:
     constrained_candidates: int = 0
     constrained_ids: list = field(default_factory=list)
     constrained_mode: str = ""
+    #: Entities the search critic had dropped and CONSTRAINED_FROM_KEPT then
+    #: kept out of the candidate list (D-158).
+    constrained_critic_dropped: int = 0
     answer_before_constrained: str = ""
 
     # THE PLAN REVIEWER (separate from the search critic, which judges retrieved

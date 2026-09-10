@@ -340,6 +340,17 @@ def _constrained_ids(runtime, session) -> None:
         return
     conn = runtime.get("conn")
     ids = sorted(getattr(session, "known_entity_ids", set()) or [])
+    # CONSTRAINED_FROM_KEPT=1 (D-158): the search critic's verdicts shape the
+    # candidate list. Without it the critic and the selector are disconnected:
+    # `known_entity_ids` holds every row a tool returned, dropped or not, so
+    # the enum offered the papers the critic had just called unrelated.
+    if os.environ.get("CONSTRAINED_FROM_KEPT", "") == "1":
+        dropped = {v.entity_id for r in (getattr(session, "reviews", []) or [])
+                   for v in getattr(r, "verdicts", []) if not v.kept}
+        if dropped:
+            before = len(ids)
+            ids = [i for i in ids if i not in dropped]
+            session.constrained_critic_dropped = before - len(ids)
     if conn is None or not ids:
         return
     from hepcoveragekg.query import planner as _p
@@ -426,6 +437,27 @@ def _constrained_ids(runtime, session) -> None:
         session.answer = (session.answer or "").rstrip() + "\n\nPapers: " + ", ".join(picked)
     logger.info("constrained ids: %d of %d candidates selected (%s)",
                 len(picked), len(cands), getattr(session, "constrained_mode", ""))
+
+
+def _answer_exit(runtime, session) -> None:
+    """The answer-side steps, in the one order that lets each see the other.
+
+    Without constrained selection: answer critic, grade strike, then the
+    (inactive) selector -- the order every run before D-158 used. With it, the
+    selector runs BEFORE the answer critic: the critic judges the list the
+    selector wrote, instead of striking ids from a draft the selector then
+    re-adds from the full candidate list, which is what the old order did.
+    """
+    if os.environ.get("CONSTRAINED_IDS", "") == "1":
+        _grade_strike(session)
+        _constrained_ids(runtime, session)
+        if runtime.get("answer_critic"):
+            _answer_critic(runtime, session)
+        return
+    if runtime.get("answer_critic"):
+        _answer_critic(runtime, session)
+    _grade_strike(session)
+    _constrained_ids(runtime, session)
 
 
 def _grade_strike(session) -> None:
@@ -778,10 +810,7 @@ def execute(state: PlannerState, config=None) -> PlannerState:
             # silently covered only the third of answers that cite a set: on
             # 54245 the critic ran 8 times in 22 chances, and 9 of the skips
             # had evidence available and prose ids to judge.
-            if runtime.get("answer_critic"):
-                _answer_critic(runtime, session)
-            _grade_strike(session)
-            _constrained_ids(runtime, session)
+            _answer_exit(runtime, session)
 
             return state
 
@@ -945,10 +974,7 @@ def finish(state: PlannerState, config=None) -> PlannerState:
             session.answer_gate_failed = True
             logger.warning("answer written as prose: %s, %d chars",
                            verdict.kind, len(session.answer))
-        if runtime.get("answer_critic"):
-            _answer_critic(runtime, session)
-        _grade_strike(session)
-        _constrained_ids(runtime, session)
+        _answer_exit(runtime, session)
 
     session.evidence_ids = sorted(set(session.evidence_ids))
     session.verification = verify.verify_session(session)
