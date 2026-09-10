@@ -399,24 +399,34 @@ def _constrained_ids(runtime, session) -> None:
     else:
         client, model = made, os.environ.get("LLM_MODEL_NAME", "")
     content = ""
-    try:
-        resp = client.chat.completions.create(
-            model=model, messages=messages, temperature=0.0, max_tokens=2000,
-            extra_body={"guided_json": schema, "chat_template_kwargs": {"enable_thinking": False}})
-        content = resp.choices[0].message.content or ""
-        session.constrained_mode = "guided_json"
-    except Exception as exc:  # noqa: BLE001 -- the server may not support guided decoding
-        logger.info("constrained ids: guided_json refused (%s); plain JSON", str(exc)[:80])
+    # THREE FORMS, STANDARD FIRST (D-159). vLLM 0.8.5 honoured the legacy
+    # `guided_json` field; 0.18 silently ignores it and the model answered in
+    # free chain of thought, so a whole night's selections came back empty
+    # while `constrained_mode` still said guided_json. `response_format`
+    # json_schema is enforced on both, and is what hosted providers accept.
+    attempts = (
+        ("json_schema", dict(
+            response_format={"type": "json_schema", "json_schema": {
+                "name": "papers", "schema": schema, "strict": True}},
+            extra_body={"chat_template_kwargs": {"enable_thinking": False}})),
+        ("guided_json", dict(
+            extra_body={"guided_json": schema, "chat_template_kwargs": {"enable_thinking": False}})),
+        ("json_object", dict(response_format={"type": "json_object"})),
+    )
+    for mode, kw in attempts:
         try:
             resp = client.chat.completions.create(
-                model=model, messages=messages, temperature=0.0, max_tokens=2000,
-                response_format={"type": "json_object"})
+                model=model, messages=messages, temperature=0.0, max_tokens=2000, **kw)
             content = resp.choices[0].message.content or ""
-            session.constrained_mode = "json_object"
-        except Exception as exc2:  # noqa: BLE001
-            logger.warning("constrained ids: selection call failed: %s", str(exc2)[:120])
-            return
+            session.constrained_mode = mode
+            break
+        except Exception as exc:  # noqa: BLE001 -- try the next form
+            logger.info("constrained ids: %s refused (%s)", mode, str(exc)[:80])
+    else:
+        logger.warning("constrained ids: every selection form was refused")
+        return
     picked: list = []
+    parsed = False
     m = re.search(r"\{.*\}", content, re.S)
     if m:
         try:
@@ -424,8 +434,15 @@ def _constrained_ids(runtime, session) -> None:
                 p = str(p).strip()
                 if p in set(cands) and p not in picked:
                     picked.append(p)
+            parsed = True
         except (ValueError, AttributeError):
             pass
+    if not parsed:
+        # The server accepted the request but did not enforce the schema:
+        # recorded, so a run cannot report a constraint that never applied.
+        session.constrained_mode += "-unparsed"
+        logger.warning("constrained ids: reply was not JSON under %s (%d chars)",
+                       session.constrained_mode, len(content))
     session.constrained_candidates = len(cands)
     session.constrained_ids = picked
     session.answer_before_constrained = session.answer
