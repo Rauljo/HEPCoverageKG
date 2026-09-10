@@ -69,6 +69,7 @@ Cluster lane, QwQ. Two independent jobs per arm (a / b). Typed without critic
 | typed, no critic b | 0.205 | 0.215 / 0.19 / 0.33 (57) | 27/84 | 0.146 |
 | free-SQL a | 0.284 | 0.326 / 0.25 / 0.59 (70) | 14/84 | 0.272 |
 | free-SQL b | 0.252 | 0.277 / 0.23 / 0.48 (75) | 9/84 | 0.247 |
+| free-SQL, plain answer tool (54289, 2 runs merged; D-155) | 0.264 | 0.306 / 0.26 / 0.53 (145 of 168) | 23/168 | 0.264 |
 
 Free-SQL wins on every reading. Two separate facts make the gap. First, the
 typed planner answers a third of these questions without writing a single
@@ -87,6 +88,7 @@ tool calls has more places to stop short.
 | typed, no critic b | 0.335 | 0.579 / 0.52 / 0.77 (7) | 7/14 | 0.289 |
 | free-SQL a | 0.399 | 0.399 / 0.38 / 0.54 (13) | 1/14 | 0.371 |
 | free-SQL b | 0.344 | 0.370 / 0.35 / 0.46 (13) | 1/14 | 0.344 |
+| free-SQL, plain answer tool (54293, 2 runs merged) | 0.575 | 0.644 / 0.63 / 0.76 (25 of 28) | 3/28 | 0.575 |
 
 Same direction, small n; the typed b run's 0.579 named-only is on 7 records.
 
@@ -97,6 +99,7 @@ Same direction, small n; the typed b run's 0.579 named-only is on 7 records.
 | typed, no critic a / b | 0.30 / 0.30 | 0.35 / 0.37 |
 | typed, critic a / b (w1) | 0.15 / 0.15 | 0.28 / 0.32 |
 | free-SQL a / b | 0.25 / 0.45 | 0.52 / 0.56 |
+| free-SQL, plain answer tool (54293) | 0.53 (40 answers) | 0.59 |
 
 Exact counts are rare for everyone (n = 20, so one question is 0.05). Free-SQL
 is markedly *closer* when wrong (0.52-0.56 vs 0.35), which is what a COUNT
@@ -111,6 +114,7 @@ it removes rows before they are counted.
 | typed, no critic a / b | 0.972 / 0.972 | 0.296 / 0.297 | 0.68 / 0.68 |
 | typed, critic a / b (w1) | 0.972 / 0.972 | 0.368 / 0.350 | 0.60 / 0.62 |
 | free-SQL a / b | 0.297 / 0.235 | 0.500 / 0.541 | -0.20 / -0.31 |
+| free-SQL, plain answer tool (54289) | 0.11 | fuzzy 0.76 (strict n/a) | -- |
 
 Read with caveat 5 below. The typed planner's `contents_of` returns 97% of
 the truth entities (exact, by id) and the answer then contains 30% of their
@@ -150,10 +154,31 @@ paper ids it stops describing what the paper contains.
 | typed, no critic | 0.473 / 0.403 |
 | typed, critic (w1) | 0.354 / 0.361 |
 | free-SQL | 0.232 / 0.375 |
+| free-SQL, plain answer tool (54293, 2 repeats) | 0.303 (18 answers) |
 
 Here the order reverses: typed beats free-SQL, and the no-critic typed run
 beats the critic run. Single repeats on nine questions; the OpenRouter lane
 (section 1.7) is where these arms are measured properly.
+
+### 1.5b The plain free-SQL control (added 2026-09-10)
+
+Every free-SQL run above carried the instruction "put the arXiv ids you are
+asserting in `papers`, that is what gets scored" -- the typed system's
+--name-ids under another name, while the typed control's `answer` said the
+opposite (D-117, D-155). The plain answer tool removes it (D-155). On the
+cluster (QwQ) the plain control behaves like the instructed one on the
+generated questions: retrieval silent 23 of 168 either way, counts written
+instead of a list 4 vs 1, "such as" partial lists 7 vs 6, complete lists 64
+vs 65, and 142 of 168 answers are the model's chain of thought with the ids
+inside. So free-SQL does NOT share the typed planner's handoff failures on
+this lane (typed: 58 silent, 29 counts, 21 partial, 15 complete of 168), and
+that is not the instruction's doing. The concept-set (0.372 -> 0.575, n 28)
+and count (0.35 -> 0.53) rows move by more than the prompt can explain and
+are the run-to-run variation of 2-repeat samples on those small sets
+(D-091's lesson); quote both with their n. On OpenRouter (qwen3-32b) the
+instruction was worth 0.12 on Gabriel's 9 (0.571 -> 0.453 without it).
+Baseline free-SQL rows for the chapter: the plain runs, with the instructed
+figures beside them where they differ.
 
 ### 1.6 The critic
 
