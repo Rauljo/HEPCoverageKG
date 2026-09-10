@@ -114,11 +114,42 @@ Reply with JSON and nothing else:
 {"verdicts": [{"paper": "<arxiv id>", "keep": true|false, "why": "<8 words>"}]}"""
 
 
-def _render(paper_id: str, labels: Iterable[str], quotes: Iterable[str]) -> str:
-    lab = ", ".join(sorted({str(l) for l in labels if l})[:8]) or "(none)"
-    qs = [str(q).strip().replace("\n", " ") for q in quotes if str(q or "").strip()]
+_WORD = re.compile(r"[a-z0-9][a-z0-9+\-]{1,}")
+_STOP = frozenset("the a an of in on for to and or with which that this these those use uses used using analyses analysis paper papers their its is are was were be by as at from into than".split())
+
+
+def _question_terms(question: str) -> set:
+    return {w for w in _WORD.findall((question or "").lower()) if w not in _STOP}
+
+
+def _overlap(text: str, terms: set) -> int:
+    t = (text or "").lower()
+    return sum(1 for w in terms if w in t)
+
+
+def _render(paper_id: str, labels: Iterable[str], quotes: Iterable[str],
+            question: str = "", n_quotes: int = 3) -> str:
+    """The block the judge reads for one paper.
+
+    RANKED BY THE QUESTION (D-163). Until 2026-09-10 the labels were the
+    first eight alphabetically and the quotes the first three in database
+    scan order, out of up to a hundred retrieved. Reconstructed on the gold
+    papers the 9B judge struck: for 7 of 31 the term the question asked
+    about was in the retrieved evidence and not in the block shown, and
+    for the rest it was visible only as a label while the judge asked for
+    a quote ("no mention of HistFitter in quotes", 56 quotes retrieved, 3
+    shown). Labels and quotes are now ordered by how many of the question's
+    words they contain, ties by original order, so the material that bears
+    on the condition is what the judge sees.
+    """
+    terms = _question_terms(question)
+    labs = list(dict.fromkeys(str(l) for l in labels if l))
+    labs = sorted(labs, key=lambda l: (-_overlap(l, terms), labs.index(l)))
+    lab = ", ".join(labs[:8]) or "(none)"
+    qs = list(dict.fromkeys(str(q).strip().replace("\n", " ") for q in quotes if str(q or "").strip()))
+    qs = sorted(qs, key=lambda q: (-_overlap(q, terms), qs.index(q)))
     out = [f"PAPER {paper_id}", f"  retrieved: {lab}"]
-    for q in qs[:3]:
+    for q in qs[:n_quotes]:
         out.append(f"  quote: {q[:QUOTE_CHARS]}")
     if not qs:
         out.append("  quote: (no verbatim sentence retrieved)")
@@ -219,7 +250,7 @@ def judge_papers(chat: Callable, question: str, evidence: dict,
     verdicts: dict = {}
     for i in range(0, len(papers), chunk):
         batch = papers[i:i + chunk]
-        blocks = "\n\n".join(_render(p, *evidence[p]) for p in batch)
+        blocks = "\n\n".join(_render(p, *evidence[p], question=question) for p in batch)
         user = f"QUESTION: {question}\n\n{blocks}"
         try:
             response = chat([{"role": "system", "content": PROMPT},
@@ -388,7 +419,7 @@ def rank_papers(chat: Callable, question: str, evidence: dict,
 
     for i in range(0, len(papers), chunk):
         batch = papers[i:i + chunk]
-        blocks = "\n\n".join(_render(p, *evidence[p]) for p in batch)
+        blocks = "\n\n".join(_render(p, *evidence[p], question=question) for p in batch)
         try:
             response = chat([{"role": "system", "content": RANK_PROMPT},
                              {"role": "user",
