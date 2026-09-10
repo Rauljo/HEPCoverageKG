@@ -262,3 +262,17 @@ def test_the_critic_runs_on_prose_ids_with_no_citation():
     G.execute(state, cfg)
     assert set(judge.seen) == {"2004.14060", "2006.05880"}, \
         "the critic must judge ids written in prose, not only a cited set"
+
+
+def test_evidence_shown_is_ranked_by_the_question():
+    """D-163: the quote and label that carry the question's terms come first,
+    not the first three in scan order or the first eight alphabetically."""
+    from hepcoveragekg.query import answer_critic as AC
+    labels = ["Muon", "Jet", "HistFitter framework", "b-jet", "Electron", "MET", "Photon", "Tau", "Vertex"]
+    quotes = ["Jets are reconstructed with anti-kt.", "Muons must pass isolation.", "Electrons are calibrated.",
+              "The statistical analysis uses the HistFitter framework.", "Photons are vetoed."]
+    block = AC._render("2001.00001", labels, quotes, question="Which analyses use the HistFitter framework?")
+    lines = block.splitlines()
+    assert lines[1].startswith("  retrieved: HistFitter framework")
+    assert lines[2] == "  quote: The statistical analysis uses the HistFitter framework."
+    assert len([l for l in lines if l.startswith("  quote:")]) == 3
