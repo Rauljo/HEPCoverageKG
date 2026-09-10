@@ -128,7 +128,8 @@ def _overlap(text: str, terms: set) -> int:
 
 
 def _render(paper_id: str, labels: Iterable[str], quotes: Iterable[str],
-            question: str = "", n_quotes: int = 3) -> str:
+            aliases: Optional[Iterable[str]] = None, *,
+            question: str = "", n_quotes: int = 5) -> str:
     """The block the judge reads for one paper.
 
     RANKED BY THE QUESTION (D-163). Until 2026-09-10 the labels were the
@@ -142,12 +143,20 @@ def _render(paper_id: str, labels: Iterable[str], quotes: Iterable[str],
     words they contain, ties by original order, so the material that bears
     on the condition is what the judge sees.
     """
-    terms = _question_terms(question)
+    qterms = _question_terms(question)
     labs = list(dict.fromkeys(str(l) for l in labels if l))
-    labs = sorted(labs, key=lambda l: (-_overlap(l, terms), labs.index(l)))
+    labs = sorted(labs, key=lambda l: (-_overlap(l, qterms), labs.index(l)))
     lab = ", ".join(labs[:8]) or "(none)"
+    # The quote ranking uses the CORPUS vocabulary: the words of the matched
+    # labels and the aliases the retrieval resolved, not only the question's
+    # wording. A question about "b-tagged jets" then finds the quote that
+    # says "b-jet", and "missing transverse momentum" finds "MET".
+    cterms = set(qterms)
+    for l in labs:
+        cterms |= _question_terms(l)
+    cterms |= {str(a).lower() for a in (aliases or []) if a}
     qs = list(dict.fromkeys(str(q).strip().replace("\n", " ") for q in quotes if str(q or "").strip()))
-    qs = sorted(qs, key=lambda q: (-_overlap(q, terms), qs.index(q)))
+    qs = sorted(qs, key=lambda q: (-_overlap(q, qterms) * 2 - _overlap(q, cterms), qs.index(q)))
     out = [f"PAPER {paper_id}", f"  retrieved: {lab}"]
     for q in qs[:n_quotes]:
         out.append(f"  quote: {q[:QUOTE_CHARS]}")
@@ -213,28 +222,45 @@ def evidence_by_paper(conn, entity_ids: Iterable[str],
     marks = ",".join("?" * len(ids))
     want = {str(p) for p in papers} if papers else None
     out: dict = {}
-    rows = conn.execute(
-        f"""SELECT eo.paper_id AS pid, eo.label AS label, ev.quote AS quote
+    # ALIASES RIDE ALONG (D-163). The hybrid retrieval resolved the question
+    # to these entities, and each carries the corpus's other spellings of the
+    # same thing ("MET", "p_T^miss" for missing transverse momentum). They
+    # are the vocabulary the quote ranking needs; the question's own words
+    # are not. Older databases have no aliases column: fall back without.
+    sql = """SELECT eo.paper_id AS pid, eo.label AS label, ev.quote AS quote{alias_col}
             FROM entity_occurrence eo
             LEFT JOIN assertion a
                    ON a.paper_id = eo.paper_id
                   AND (a.subject_id = eo.entity_id OR a.object_id = eo.entity_id)
             LEFT JOIN assertion_evidence ae ON ae.assertion_id = a.assertion_id
             LEFT JOIN evidence ev ON ev.evidence_id = ae.evidence_id
-            WHERE eo.entity_id IN ({marks})""",
-        tuple(ids),
-    ).fetchall()
+            WHERE eo.entity_id IN ({marks})"""
+    try:
+        rows = conn.execute(sql.format(alias_col=", eo.aliases AS aliases", marks=marks), tuple(ids)).fetchall()
+        has_alias = True
+    except Exception:  # noqa: BLE001 -- no aliases column
+        rows = conn.execute(sql.format(alias_col="", marks=marks), tuple(ids)).fetchall()
+        has_alias = False
     for r in rows:
         pid = r["pid"] if not isinstance(r, tuple) else r[0]
         if not pid or (want is not None and pid not in want):
             continue
         label = r["label"] if not isinstance(r, tuple) else r[1]
         quote = r["quote"] if not isinstance(r, tuple) else r[2]
-        labels, quotes = out.setdefault(pid, (set(), []))
+        raw_alias = (r["aliases"] if not isinstance(r, tuple) else r[3]) if has_alias else None
+        labels, quotes, aliases = out.setdefault(pid, (set(), [], set()))
         if label:
             labels.add(label)
         if quote and quote not in quotes:
             quotes.append(quote)
+        if raw_alias:
+            try:
+                parsed = json.loads(raw_alias) if isinstance(raw_alias, str) else raw_alias
+            except ValueError:
+                parsed = [raw_alias]
+            for a_ in (parsed or []):
+                if a_:
+                    aliases.add(str(a_))
     return out
 
 

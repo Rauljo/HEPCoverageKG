@@ -128,7 +128,7 @@ def test_evidence_by_paper_reads_only_retrieved_entities():
     conn.execute("INSERT INTO evidence VALUES ('ev1','b-tagged jets are required.')")
     got = AC.evidence_by_paper(conn, ["E1"])          # E2 was NOT retrieved
     assert set(got) == {"P1"}
-    labels, quotes = got["P1"]
+    labels, quotes = got["P1"][0], got["P1"][1]
     assert "b-tagged jet" in labels and "Muon" not in labels
     assert quotes == ["b-tagged jets are required."]
 
@@ -275,4 +275,26 @@ def test_evidence_shown_is_ranked_by_the_question():
     lines = block.splitlines()
     assert lines[1].startswith("  retrieved: HistFitter framework")
     assert lines[2] == "  quote: The statistical analysis uses the HistFitter framework."
-    assert len([l for l in lines if l.startswith("  quote:")]) == 3
+    assert len([l for l in lines if l.startswith("  quote:")]) == 5
+
+
+def test_quote_ranking_uses_the_matched_labels_and_aliases():
+    """D-163: the corpus's spellings, not only the question's words."""
+    from hepcoveragekg.query import answer_critic as AC
+    labels = ["Missing transverse momentum (p_T^miss)"]
+    quotes = ["Jets are calibrated.", "Events must have MET above 200 GeV.", "Muons are isolated.",
+              "Photons are vetoed.", "Electrons pass tight id.", "Taus are reconstructed."]
+    block = AC._render("2001.00001", labels, quotes, {"MET", "p_T^miss"},
+                       question="Which analyses require missing transverse momentum in their selection?")
+    assert block.splitlines()[2] == "  quote: Events must have MET above 200 GeV."
+
+
+def test_evidence_by_paper_reads_aliases_when_present():
+    conn = sqlite3.connect(":memory:"); conn.row_factory = sqlite3.Row
+    conn.execute("CREATE TABLE entity_occurrence (entity_id TEXT, paper_id TEXT, label TEXT, aliases TEXT)")
+    conn.execute("CREATE TABLE assertion (assertion_id TEXT, paper_id TEXT, subject_id TEXT, object_id TEXT)")
+    conn.execute("CREATE TABLE assertion_evidence (assertion_id TEXT, evidence_id TEXT)")
+    conn.execute("CREATE TABLE evidence (evidence_id TEXT, quote TEXT)")
+    conn.execute("INSERT INTO entity_occurrence VALUES ('E1','P1','Missing transverse momentum','[\"MET\",\"p_T^miss\"]')")
+    got = AC.evidence_by_paper(conn, ["E1"])
+    assert got["P1"][2] == {"MET", "p_T^miss"}
