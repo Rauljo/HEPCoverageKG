@@ -149,6 +149,39 @@ def planner_temperature() -> float:
     return t
 
 
+#: The verdict JSON for a batch of eight papers is a few hundred tokens. A
+#: judge that does not think never needs more than this.
+ANSWER_CRITIC_SMALL_CAP = 1500
+
+
+def answer_critic_call(client, model: str, messages, cap: int):
+    """One judge call, with the ladder that keeps the verdicts coming.
+
+    `enable_thinking=False` FIRST, then the plain call (D-105: a reasoning
+    judge spends its allowance thinking and every verdict defaults to KEEP).
+    And a SMALLER CAP on failure (D-164): the 9B judge's window is 8192
+    tokens, so a request asking for a reasoning-sized completion on top of
+    a five-quote prompt is rejected outright by the server, both attempts
+    fail, and again every verdict defaults to keep -- 1003 of 1003 on job
+    54344 -- while the run is labelled critic-on. The verdicts themselves
+    need a few hundred tokens; only a judge that thinks needs the big cap.
+    """
+    attempts = []
+    for c in (cap, ANSWER_CRITIC_SMALL_CAP) if cap > ANSWER_CRITIC_SMALL_CAP else (cap,):
+        attempts.append(dict(max_tokens=c, extra_body={"chat_template_kwargs": {"enable_thinking": False}}))
+        attempts.append(dict(max_tokens=c))
+    last = None
+    for kw in attempts[:-1]:
+        try:
+            return client.chat.completions.create(
+                model=model, messages=messages, temperature=0.0, **kw)
+        except Exception as exc:  # noqa: BLE001 -- try the next rung
+            last = exc
+            continue
+    return client.chat.completions.create(
+        model=model, messages=messages, temperature=0.0, **attempts[-1])
+
+
 def completion_cap(model: str) -> int:
     """The output allowance for `model`, reasoning models getting the larger one."""
     # Read fresh, not from the module constant: that is frozen at import, so a
@@ -2560,20 +2593,7 @@ def _prepare(conn, index, question, max_rounds, max_places, max_rows,
         _ac_cap = completion_cap(_ac_model)
 
         def _answer_critic_chat(messages):  # noqa: E306
-            # `enable_thinking=False` FIRST, then the plain call. This is D-105
-            # exactly: a reasoning judge spends its whole allowance thinking,
-            # returns empty content, and every verdict defaults to KEEP while
-            # the run is labelled critic-on.
-            try:
-                return _ac_client.chat.completions.create(
-                    model=_ac_model, messages=messages, temperature=0.0,
-                    max_tokens=_ac_cap,
-                    extra_body={"chat_template_kwargs": {"enable_thinking": False}})
-            except Exception:  # noqa: BLE001 -- judge must not kill the run
-                pass
-            return _ac_client.chat.completions.create(
-                model=_ac_model, messages=messages, temperature=0.0,
-                max_tokens=_ac_cap)
+            return answer_critic_call(_ac_client, _ac_model, messages, _ac_cap)
 
         runtime["answer_critic_chat"] = _answer_critic_chat
     runtime["persist"] = bool(persist)

@@ -298,3 +298,21 @@ def test_evidence_by_paper_reads_aliases_when_present():
     conn.execute("INSERT INTO entity_occurrence VALUES ('E1','P1','Missing transverse momentum','[\"MET\",\"p_T^miss\"]')")
     got = AC.evidence_by_paper(conn, ["E1"])
     assert got["P1"][2] == {"MET", "p_T^miss"}
+
+
+def test_judge_call_falls_back_to_a_small_cap_when_the_server_rejects_the_big_one():
+    """D-164: the 9B judge's 8k window rejected max_tokens=8000 on a five-quote prompt."""
+    from types import SimpleNamespace as NS
+    from hepcoveragekg.query import planner
+    calls = []
+
+    class _C:
+        chat = property(lambda self: self); completions = property(lambda self: self)
+        def create(self, **kw):
+            calls.append(kw["max_tokens"])
+            if kw["max_tokens"] > 4000:
+                raise RuntimeError("max_tokens exceeds the model's context length")
+            return NS(choices=[NS(message=NS(content='{"verdicts": []}'))])
+    out = planner.answer_critic_call(_C(), "m", [{"role": "user", "content": "q"}], 8000)
+    assert out.choices[0].message.content == '{"verdicts": []}'
+    assert calls == [8000, 8000, 1500]
