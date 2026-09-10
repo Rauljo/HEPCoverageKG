@@ -127,12 +127,29 @@ def _render(paper_id: str, labels: Iterable[str], quotes: Iterable[str]) -> str:
 
 def _parse(raw: str, expected: set) -> dict:
     """paper_id -> (keep, why). Unparseable returns {} so callers default."""
-    span = _JSON_SPAN.search(raw or "")
-    if not span:
-        return {}
-    try:
-        parsed = json.loads(span.group(0))
-    except json.JSONDecodeError:
+    parsed = None
+    text = raw or ""
+    # A reasoning judge (QwQ as the answer critic, D-162) writes its chain of
+    # thought before the JSON, and that thought can contain braces; the
+    # first-brace-to-last-brace span then fails to parse and every verdict
+    # defaults to keep. Try the span, then the last "verdicts" object.
+    candidates = []
+    span = _JSON_SPAN.search(text)
+    if span:
+        candidates.append(span.group(0))
+    key = text.rfind('"verdicts"')
+    if key >= 0:
+        start = text.rfind("{", 0, key)
+        end = text.rfind("}")
+        if 0 <= start < end:
+            candidates.append(text[start:end + 1])
+    for cand in candidates:
+        try:
+            parsed = json.loads(cand)
+            break
+        except json.JSONDecodeError:
+            continue
+    if not isinstance(parsed, dict):
         return {}
     out: dict = {}
     for item in (parsed.get("verdicts") or []):

@@ -132,3 +132,30 @@ def test_a_reply_that_ignores_the_schema_is_recorded_as_unparsed(monkeypatch):
     monkeypatch.setattr(planner, "_client", lambda: (cl, "m"))
     s = _session(); G._constrained_ids({"conn": _conn()}, s)
     assert s.constrained_ids == [] and s.constrained_mode == "json_schema-unparsed" and "Papers:" not in s.answer
+
+
+def test_critic_selects_writes_the_judges_kept_set(monkeypatch):
+    """D-162: with CRITIC_SELECTS=1 the answer critic judges every candidate
+    and its kept set is the list; the answerer's selection call is not made."""
+    from types import SimpleNamespace as NS
+    monkeypatch.setenv("CONSTRAINED_IDS", "1"); monkeypatch.setenv("CRITIC_SELECTS", "1"); monkeypatch.setenv("LLM_MODEL_NAME", "m")
+    cl = _Client('{"papers": ["2001.00001"]}')
+    monkeypatch.setattr(planner, "_client", lambda: (cl, "m"))
+    from hepcoveragekg.query import answer_critic as AC
+    monkeypatch.setattr(AC, "evidence_by_paper", lambda conn, ids, papers: {p: ({"b-jet"}, []) for p in papers})
+    monkeypatch.setattr(AC, "judge_papers", lambda chat, q, ev: NS(kept=["2002.00002", "2003.00003"], dropped=["2001.00001"], defaulted=0, verdicts=[1, 2, 3]))
+    s = _session(); G._constrained_ids({"conn": _conn(), "answer_critic_chat": lambda m: None}, s)
+    assert s.constrained_ids == ["2002.00002", "2003.00003"] and s.constrained_mode == "critic"
+    assert s.answer.endswith("Papers: 2002.00002, 2003.00003") and cl.calls == []
+    order = []
+    monkeypatch.setattr(G, "_answer_critic", lambda rt, s: order.append("critic"))
+    monkeypatch.setattr(G, "_grade_strike", lambda s: None); monkeypatch.setattr(G, "_constrained_ids", lambda rt, s: order.append("select"))
+    G._answer_exit({"answer_critic": True}, _session())
+    assert order == ["select"]
+
+
+def test_answer_critic_parse_survives_a_think_block():
+    from hepcoveragekg.query import answer_critic as AC
+    raw = '<think>Let me check {paper 1}... the set {a, b} is fine.</think>\n{"verdicts": [{"paper": "2001.00001", "keep": true, "why": "uses it"}, {"paper": "2002.00002", "keep": false, "why": "no"}]}'
+    got = AC._parse(raw, {"2001.00001", "2002.00002"})
+    assert got == {"2001.00001": (True, "uses it"), "2002.00002": (False, "no")}

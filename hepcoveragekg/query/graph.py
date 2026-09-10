@@ -380,6 +380,31 @@ def _constrained_ids(runtime, session) -> None:
     cands = sorted(set(by) | named)[:300]
     if not cands:
         return
+    # CRITIC_SELECTS=1 (D-162): the answer critic judges EVERY candidate with
+    # its evidence and its kept set is the answer's list; the answerer makes
+    # no selection. The answerer's own constrained call keeps about half of
+    # the list either way (gold rate 0.21 kept vs 0.10 left out); this asks
+    # whether a judge reading the evidence does better when it decides alone.
+    if os.environ.get("CRITIC_SELECTS", "") == "1" and runtime.get("answer_critic_chat"):
+        from hepcoveragekg.query import answer_critic as AC
+        try:
+            evidence = AC.evidence_by_paper(conn, ids, cands)
+            review = AC.judge_papers(runtime["answer_critic_chat"], session.question, evidence)
+        except Exception as exc:  # noqa: BLE001 -- a judge must not kill a run
+            logger.warning("critic-selects failed, no list written: %s", exc)
+            return
+        kept = set(review.kept)
+        picked = [p for p in cands if p in kept]
+        session.answer_review = review
+        session.constrained_candidates = len(cands)
+        session.constrained_ids = picked
+        session.constrained_mode = "critic"
+        session.answer_before_constrained = session.answer
+        if picked:
+            session.answer = (session.answer or "").rstrip() + "\n\nPapers: " + ", ".join(picked)
+        logger.info("critic selects: %d of %d candidates kept (%d defaulted)",
+                    len(picked), len(cands), review.defaulted)
+        return
     listing = "\n".join(f"{p}: " + "; ".join(sorted(set(by.get(p, [])))[:3])[:160] for p in cands)
     schema = {"type": "object",
               "properties": {"papers": {"type": "array", "items": {"type": "string", "enum": cands}}},
@@ -468,7 +493,8 @@ def _answer_exit(runtime, session) -> None:
     if os.environ.get("CONSTRAINED_IDS", "") == "1":
         _grade_strike(session)
         _constrained_ids(runtime, session)
-        if runtime.get("answer_critic"):
+        # Under CRITIC_SELECTS the critic already judged the list it wrote.
+        if runtime.get("answer_critic") and os.environ.get("CRITIC_SELECTS", "") != "1":
             _answer_critic(runtime, session)
         return
     if runtime.get("answer_critic"):
