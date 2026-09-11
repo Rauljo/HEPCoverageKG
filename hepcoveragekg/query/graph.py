@@ -785,6 +785,8 @@ def execute(state: PlannerState, config=None) -> PlannerState:
                 if widened is not None:
                     session.widenings_used.add(widened.rung)
                     session.widenings_offered += 1
+                    logger.info("widening ladder: rung %s offered (%d so far)",
+                                widened.rung, session.widenings_offered)
                     state["messages"].append({
                         "role": "tool", "tool_call_id": call["id"],
                         "content": widen.PUSH_MESSAGE.format(
@@ -855,6 +857,8 @@ def execute(state: PlannerState, config=None) -> PlannerState:
             if widened is not None:
                 session.widenings_used.add(widened.rung)
                 session.widenings_offered += 1
+                logger.info("widening ladder: rung %s offered (%d so far)",
+                            widened.rung, session.widenings_offered)
                 state["messages"].append({
                     "role": "tool", "tool_call_id": call["id"],
                     "content": widen.WIDEN_MESSAGE.format(

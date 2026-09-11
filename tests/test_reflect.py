@@ -374,3 +374,25 @@ def test_the_record_says_which_arm_it_was(monkeypatch):
     monkeypatch.delenv("SUBGOAL_SCOPE")
     rec = systems.from_session(P.Session(question=Q))
     assert rec.reflect_mode == "off" and rec.subgoal_scope == ""
+
+
+def test_the_widening_ladder_reaches_the_record():
+    """Three arms ran on --persist and none could say whether it executed.
+
+    The counters lived on the Session and stopped there. An arm scored flat,
+    and flat was read as "does not help" when it could equally have been
+    "never ran" -- different findings the run files could not tell apart.
+    """
+    from hepcoveragekg.eval import systems
+
+    session = P.Session(question=Q)
+    session.widenings_offered = 2
+    session.widenings_taken = 1
+    session.widenings_used = {"broader", "unrelated"}
+    rec = systems.from_session(session)
+    assert rec.widenings_offered == 2
+    assert rec.widenings_taken == 1
+    assert rec.widening_rungs == ["broader", "unrelated"]
+
+    quiet = systems.from_session(P.Session(question=Q))
+    assert quiet.widenings_offered == 0 and quiet.widening_rungs == []

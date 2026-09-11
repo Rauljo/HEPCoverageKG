@@ -139,6 +139,18 @@ class Answer:
     #: the flag string and the config hash both miss them.
     subgoal_scope: str = ""
     reflect_mode: str = ""
+    #: THE WIDENING LADDER, WHICH WAS NEVER MEASURABLE.
+    #:
+    #: 2026-09-11: three arms had been run on `--persist` and not one of them
+    #: could say whether the ladder executed a single time. The counters lived
+    #: on the Session and stopped there -- nothing reached the record, and
+    #: nothing was logged. An arm scored flat, and "flat" was read as "the
+    #: mechanism does not help" when it could equally have been "the mechanism
+    #: never ran". Those are different findings and the run files could not
+    #: tell them apart.
+    widenings_offered: int = 0
+    widenings_taken: int = 0
+    widening_rungs: list = field(default_factory=list)
     reflect_defects: list = field(default_factory=list)
     #: Enumeration expansion (D-131).
     enum_concepts: int = 0
@@ -460,6 +472,10 @@ def from_session(session, conn=None) -> Answer:
         reflect_checks=int(getattr(session, "reflect_checks", 0) or 0),
         reflect_note=str(getattr(session, "reflect_note", "") or "")[:1200],
         subgoal_scope=os.environ.get("SUBGOAL_SCOPE", ""),
+        widenings_offered=int(getattr(session, "widenings_offered", 0) or 0),
+        widenings_taken=int(getattr(session, "widenings_taken", 0) or 0),
+        widening_rungs=sorted(str(r) for r in
+                              (getattr(session, "widenings_used", None) or set())),
         reflect_mode=_reflect_mode(),
         reflect_defects=list(getattr(session, "reflect_defects", []) or []),
         enum_concepts=getattr(session, "enum_concepts", 0),
