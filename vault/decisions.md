@@ -6522,3 +6522,1083 @@ precision is the retrieval footprint's, so precision is now entirely a
 retrieval and condition-judgement problem. All five jobs of the day's plan
 are scored; the periodic check is removed.
 
+
+## D-157 -- constrained selection let the draft's invented ids into the enum; fixed
+
+While checking the claim "the constrained step cannot invent an id" for the
+write-up (2026-09-10), every id in the appended `Papers:` lists of 54292 and
+54296 was checked against the paper table of the DIAS copy. Gabriel's 9
+(54292): 413 ids, all in the graph. The 84 retrieval questions (54296): 10 of
+165 lists carried ids the graph does not hold -- 122 in total, 78 of them in
+one record as a run of consecutive numbers (1606.05334, 1606.05335, ...). The
+schema WAS enforced (`constrained_mode` guided_json on 167 of 168; nothing
+selected outside its enum). The enum was wrong: `_constrained_ids` built the
+candidate list as the footprint UNION the ids the draft answer already named,
+and the draft is exactly where the model invents ids. So the mechanism
+removed summaries, counts and "such as" completely, and let a hallucination
+through when the draft had one.
+
+Fix (commit after this entry): a draft-named id is a candidate only if the
+paper table holds it; test added; suite 1022 passed. Score effect: set_f1 on
+54296 recomputed with the non-graph ids removed moves 0.269 -> 0.272 (the
+invented ids only ever cost precision, and the footprint lists are long), so
+the D-156 part 4 numbers stand. For the chapter: as run, the claim holds for
+form (no summaries, no pointers, no counts in 165 of 168 answers; 3 had no
+candidates) and for Gabriel's 9 in full; on the generated set it held in 158
+of 168 answers, and it now holds by construction. Also noted: methodology.tex
+says the grammar "contains all the paper ids present in the database"; the
+implementation enumerates the papers reachable from the run's retrieved
+entities (plus, now, graph-held ids the draft named), which is a smaller and
+more defensible list -- the sentence should say so.
+
+## D-158 -- the critic section: measure the critics on top of constrained selection, on the list they can act on
+
+The user's framing (2026-09-10 evening): after citation grounding every
+reached paper gets written, and many of them are merely retrieved, not
+relevant; the critic's justification is to act on that. Checked against the
+code and the records before agreeing:
+
+1. Precision is now the whole remaining loss. Constrained selection's
+   precision is the footprint's (0.21 on the 84 retrieval questions, D-156
+   part 4); on Gabriel's 9 it names 15.5 papers per answer, 5.5 gold, 3.0
+   judged wrong, 7.1 unjudged (D-155 part 2); the selector picks about half
+   of a long candidate list with little discrimination (D-155 part 3).
+2. Every critic number so far (D-124, D-133, D-153) was measured on
+   controls whose answers were silent half the time, so a filter could not
+   show. And the critics were wired so that constrained selection undid
+   them: `known_entity_ids` holds every row a tool returned, dropped or not,
+   so the enum offered the papers the search critic had called unrelated;
+   and the answer critic ran BEFORE the selector, which re-added from the
+   full list whatever the critic had struck.
+3. Offline, from the wave-1 critic-on records (54251/54252) replayed on the
+   DIAS copy: if the candidate list were built from kept entities only, the
+   84 retrieval questions would lose 472 of 7024 candidate papers, none of
+   them gold (823 gold candidates untouched); Gabriel's 9 would lose 14 of
+   146, 2 gold and 12 not. The critic judges entities and a paper survives
+   if any kept entity touches it, so the entity-level critic removes only
+   7% of candidates. The search critic on the cluster also defaulted 55% of
+   its verdicts to kept on Gabriel's 9 (14% on the 84).
+
+Decision: the critic section is measured as three arms on top of
+constrained selection, same server session, QwQ answerer + Qwen3.5-9B judge
+(serve_stacked), no other mechanism: C0 constrained alone (control); C1
+search critic with the candidate list from kept entities
+(CONSTRAINED_FROM_KEPT=1, code above); C2 = C1 plus the answer critic
+applied to the selected list (--answer-critic, now ordered after the
+selector). C1-C0 is the search critic, C2-C1 the paper-level judge. A fourth
+arm M (kind fallback + enumeration expansion + constrained, no 100-row pages
+so QwQ's window is not hit) gives the retrieval mechanisms as deltas on the
+same session. Each arm on the 84 retrieval questions (2 repeats) then
+Gabriel's 9 (3 repeats). Prediction from item 3: C1 moves precision by at
+most a few hundredths; C2 is the arm that can move it, and D-124's finding
+that the answer critic strikes gold (7 of 16 on OpenRouter, llama-8b) is the
+risk. Per-paper and count questions are not run: the shape gate keeps the
+selector off them, and the critics' effect there is already in D-153.
+
+## D-159 -- the stacked server ignored `guided_json`; the selection call now uses `response_format` json_schema
+
+First hourly check of the D-158 arms (2026-09-10, ~1 h in): the critics were
+alive (C1 had judged 1001 candidates, C2 had 18 answer reviews, M's fallback
+fired on 22 records) but only 5 of 26 C0 records carried a selection, every
+record saying `constrained_mode` = guided_json with ~50 candidates and 0
+picked. A probe of the answerer with the same request returned free chain
+of thought ("Okay, let's see...") -- the schema was not applied. Cause: the
+single server of 2026-09-09 (serve_one.sh) runs the vLLM 0.8.5 image, which
+honours the legacy `guided_json` field; the stacked server (serve_stacked.sh,
+needed for the Qwen3.5-9B judge) runs 0.18.0, which accepts the field and
+ignores it. Probed on 0.18: `response_format` {json_schema, strict} and
+`structured_outputs` {json} are both enforced; `guided_json` is not.
+
+Fix (1fa357f): the selection call tries `response_format` json_schema first,
+then `guided_json`, then json_object; a reply that does not parse as JSON is
+recorded as `<mode>-unparsed`, so a run can no longer report a constraint
+that never applied. Suite 1025 passed. The ten arm jobs (54300-54309) were
+cancelled at ~25 records each, and the OpenRouter batch (which had also run
+on the old field) stopped and its partial file removed; both relaunched on
+the fixed code: DIAS C0 54310/54311, C1 54312/54313, C2 54314/54315, M
+54316/54317, C3 54318/54319 (server 54299 kept). Yesterday's constrained
+numbers (54292, 54296, D-155/D-156) are unaffected: they ran on 0.8.5 and
+their records carry the selections. Lesson for the write-up's methods: the
+constraint has to be verified on the server that ran, not assumed from the
+request field; the `-unparsed` marker is that check.
+
+## D-158 addendum -- the five arms on OpenRouter (Gabriel's 9 x 3, qwen3-32b, llama-3.1-8b judge, json_schema enforced on 27/27 per arm)
+
+Runs 19445 (C0), 19866 (C1), 20258 (C2), 20648 (C3), 20986 (M); zero to one
+errors each; ~$1.6 in total.
+
+| arm | judged F1 | P | R | named | gold | wrong | outside | silent | candidates -> picked | reach |
+|---|---|---|---|---|---|---|---|---|---|---|
+| C0 constrained | 0.439 | 0.56 | 0.46 | 14.2 | 3.8 | 2.3 | 8.0 | 2 | 27.0 -> 11.0 | 0.77 |
+| C1 + search critic (kept-only candidates) | 0.396 | 0.52 | 0.42 | 11.8 | 3.5 | 2.2 | 6.0 | 4 | 20.0 -> 9.8 | 0.68 |
+| C2 + both critics | 0.330 | 0.58 | 0.31 | 8.1 | 2.4 | 1.0 | 4.7 | 3 | 22.6 -> 10.2 | 0.61 |
+| C3 + answer critic only | 0.401 | 0.69 | 0.36 | 7.0 | 2.7 | 1.1 | 3.1 | 2 | 26.3 -> 6.4 | 0.69 |
+| M + kind fallback + enum expansion | 0.501 | 0.67 | 0.50 | 13.9 | 4.6 | 2.1 | 7.1 | 2 | 43.0 -> 10.8 | 0.95 |
+
+Reading (all inside the 0.24-0.30 record spread at n=27, but the anatomy is
+not noise):
+- The search critic removes 4.6 entities per record and 7 candidate papers
+  (27 -> 20); it costs reach (0.77 -> 0.68) and lowers gold named (3.8 ->
+  3.5) more than wrong (2.3 -> 2.2). It filters entities, not relevance.
+- The answer critic halves the list (14.2 -> 7.0) and raises precision on
+  the judged set from 0.56 to 0.69, but of the 135 papers it struck 35 were
+  gold, 48 judged wrong, 52 outside the judged set: it strikes gold one time
+  in four. Its reasons are the D-124 pattern verbatim ("vetoes b-tagged jets"
+  on a paper Gabriel marked yes for using b-tagged jets in selection; "no
+  unfolding mentioned explicitly" when the evidence labels do not carry the
+  method; "merely studies Higgs production"). So on this lane the paper judge
+  trades 0.10 of recall for 0.13 of precision and the F1 falls 0.04.
+- The retrieval mechanisms are the only arm above the control: reach 0.77
+  -> 0.95, gold named 3.8 -> 4.6, precision UP (0.56 -> 0.67) because the
+  selector picks the same ~11 from a list of 43 instead of 27; gf-01-condition
+  0.61 -> 0.72, gf-04 0.48 -> 0.71, gf-05 0.22 -> 0.34.
+Consequence: on OpenRouter the critic section says what D-124 and D-133
+said, now measured on a list the critics could actually act on: the search
+critic is a weak entity filter, the answer critic is a precision/recall
+trade that loses on F1 because its judge cannot read the condition from
+labels either. The cluster arms (Qwen3.5-9B judge) decide the chapter
+numbers; if they agree, the write-up's line is that the remaining loss is
+the condition judgement and no judge in hand makes it from the graph's
+evidence, which points back at the graph (D-150) rather than at the agent.
+
+## D-158 addendum 2 -- the arms on the cluster (QwQ answerer, Qwen3.5-9B judge, server 54299, json_schema enforced on every record)
+
+Same-session control C0 = constrained alone (54310 / 54311). The stacked
+server runs 3x slower per record than yesterday's single server (median 438 s
+vs 144 s), which cost C0 six 900-s timeouts on the 84; the other arms ran
+with --timeout 1200 and lost one each. Timings are not comparable across
+the two servers (serve_stacked.sh header); scores are.
+
+**84 retrieval questions, 2 repeats (168 answers).** Essay-level F1 (ids in
+the text vs the truth set), paired against C0 on the same (question,
+repeat), errored records dropped:
+
+| arm | set F1 | named-only F1 (P/R) | silent | complete | ids/answer | candidates -> picked | delta vs C0 (se) |
+|---|---|---|---|---|---|---|---|
+| wave-2 control (no selection) | 0.200 | 0.202 (0.18/0.32) | 58 | 15 | 6.2 | -- | -- |
+| C0 constrained | 0.245 | 0.255 (0.20/0.60) | 7 | 50 | 20.8 | 42.8 -> 20.5 | -- |
+| 54296 constrained, yesterday's server | 0.271 | 0.274 (0.21/0.69) | 3 | 78 | 24.7 | 45.1 -> 24.0 | +0.018 (0.014) |
+| C1 + search critic, kept-only candidates | 0.283 | 0.286 (0.22/0.66) | 2 | 71 | 30.7 | 40.3 -> 21.4 | +0.035 (0.016) |
+| C2 + both critics | 0.276 | 0.278 (0.25/0.49) | 1 | 35 | 20.8 | 39.6 -> 21.6 | +0.028 (0.019) |
+| M + kind fallback + enum expansion | 0.270 | 0.270 (0.21/0.67) | 1 | 64 | 24.8 | 49.4 -> 24.3 | +0.017 (0.013) |
+
+The same configuration run yesterday differs from today's C0 by +0.018
+(se 0.014): that is the session floor, and none of the three arms clears it
+by more than about one further standard error. The search critic removes
+21 entities per record but only 2.5 candidate papers (42.8 -> 40.3), as
+D-158 item 3 predicted; its arm names more ids (30.7) because the critic
+run writes the kept set into the draft, not because the enum changed. The
+answer critic struck 1786 of the papers it reviewed, 260 of them gold:
+precision 0.22 -> 0.25, recall 0.66 -> 0.49, complete lists 71 -> 35. (Its
+reach column reads 0.77 because it also filters `answer_papers`; artefact.)
+
+**Gabriel's 9, 3 repeats (27 records), judged F1:**
+
+| arm | judged F1 | P | R | named | gold | wrong | outside | silent | reach |
+|---|---|---|---|---|---|---|---|---|---|
+| 54290 control, yesterday | 0.288 | 0.43 | 0.27 | 6.5 | 2.4 | 1.2 | 2.9 | 7 | 0.74 |
+| 54292 constrained, yesterday | 0.554 | 0.68 | 0.54 | 15.5 | 5.5 | 3.0 | 7.1 | 0 | -- |
+| C0 constrained | 0.540 | 0.67 | 0.54 | 16.1 | 5.4 | 2.9 | 7.9 | 1 | 0.75 |
+| C1 + search critic | 0.572 | 0.69 | 0.58 | 15.9 | 5.5 | 3.1 | 7.3 | 0 | 0.75 |
+| C2 + both critics | 0.465 | 0.73 | 0.40 | 9.5 | 3.9 | 1.7 | 3.9 | 0 | 0.73 |
+| M + mechanisms | 0.594 | 0.69 | 0.59 | 18.8 | 6.7 | 4.0 | 8.0 | 0 | 0.86 |
+
+Constrained alone reproduces yesterday (0.540 vs 0.554). The search critic
+defaulted 35% of its verdicts on these questions (12% on the generated
+set), removed 10.7 entities per record and no candidate papers (28.3 vs
+26.4): +0.03, noise. The answer critic struck 223 papers of which 54 gold
+(one in four, exactly the OpenRouter rate): P +0.06, R -0.14, F1 -0.075;
+gf-08 0.29 -> 0.00, gf-03 0.89 -> 0.57. Its reasons for striking gold are
+the D-150 gap read aloud: "mentions HistFitter but lacks usage
+confirmation", "no search/measurement distinction found", "no mention of
+exactly two leptons", "vetoes b-tagged jets" -- the evidence labels record
+that a thing is mentioned, not how it is used, and a judge reading them
+cannot confirm the condition, so it removes true papers. The retrieval
+mechanisms are the best arm: reach 0.75 -> 0.86, gold named 5.4 -> 6.7
+(wrong 2.9 -> 4.0), judged 0.540 -> 0.594, gf-08 0.29 -> 0.59, gf-05 0.21 ->
+0.31 -- more reach at the footprint's precision, as D-156 part 3 said, now
+without the context-window deaths.
+
+**Decision for the chapter.** Both lanes agree. (1) The search critic is an
+entity filter that does not reach the paper list; its score effect is inside
+the session floor. (2) The answer critic is the mechanism that acts on the
+right unit, and it loses: it buys precision with gold, because the graph's
+evidence cannot confirm a condition (D-150). (3) The retrieval mechanisms
+add reach and, on the expert's questions, score. So the critic section
+reports C0 / C1 / C2 and C3 (pending, answer critic alone) as measured,
+states the one-in-four gold strike with its reasons, and hands the
+remaining loss to the graph. The final typed configuration is constrained
+selection plus the retrieval mechanisms (M), no critic; the full-164 run of
+it is the last experiment.
+
+## D-158 addendum 3 -- C3, the answer critic alone on the selected list (54318 / 54319)
+
+84 retrieval (168, zero errors, one unparsed reply): named-only F1 0.270
+(P 0.24 / R 0.47), complete lists 29, ids per answer 13.2 (C0: 20.8); the
+critic struck 1923 papers, 277 of them gold (14%); paired delta vs C0
++0.018 (se 0.018). Gabriel's 9 (27): judged 0.489 (P 0.79 / R 0.39) against
+C0's 0.540 (0.67 / 0.54); struck 216, 54 gold (25%); gf-01 0.52 -> 0.18,
+gf-03 0.89 -> 0.80, gf-01-condition 0.92 -> 0.83. Same reasons as C2 ("no
+mention of missing transverse momentum in selection", "requires zero
+b-tagged jets", "no verbatim sentence confirms usage"). So the paper-level
+judge alone is the highest-precision arm on the expert's questions (0.79)
+and the lowest recall, and F1 loses 0.05; without the search critic it
+strikes the same gold. Critic section closed: C0 / C1 / C2 / C3 measured on
+both lanes, one consistent story.
+
+## D-160 -- the final typed configuration on the full 164: constrained selection + kind fallback + enumeration expansion, no critic (54320)
+
+Cluster, QwQ, server 54299, 2 repeats, 328 records, zero errors, every set
+record with candidates selected under json_schema (one unparsed), the shape
+gate holding on all 112 count and per-paper records. By type, against the
+baseline table's two controls (typed wave-2 control 54257/54258; free-SQL
+plain 54289/54293):
+
+| type (answers) | metric | typed control | free-SQL plain | FINAL typed |
+|---|---|---|---|---|
+| retrieval (168) | set F1 / named-only F1 (P / R) | 0.200 / 0.202 (0.18 / 0.32) | 0.264 / 0.306 (0.26 / 0.53) | 0.260 / 0.261 (0.20 / 0.64) |
+| | silent / count-instead / partial / complete | 58 / 29 / 23 / 15 | 23 / 4 / 10 / 64 | 1 / 0 / 1 / 57 |
+| | ids per answer | 6.2 | 13.7 | 23.3 |
+| concept-set (28) | set F1 / named-only (P / R) | 0.304 / 0.422 (0.37 / 0.66) | 0.575 / 0.644 (0.63 / 0.76) | 0.304 / 0.313 (0.29 / 0.68) |
+| | silent / complete / ids | 10 / 9 / 5.5 | 3 / 19 / 4.6 | 1 / 13 / 14.0 |
+| count (40) | exact / closeness | 0.30 / 0.36 | 0.53 / 0.59 | 0.20 / 0.30 |
+| per-paper (72) | retrieved / mentioned (fuzzy) label recall | 0.97 / 0.77 | 0.11 / 0.76 | 0.97 / 0.80 |
+| Gabriel's 9 (18) | judged F1 (P / R) / silent | 0.438 (0.60 / 0.39) / 3 | 0.303 (0.33 / 0.30) / 6 | 0.598 (0.67 / 0.60) / 0 |
+
+Reading.
+- On the expert's questions the final typed system is the best arm by a
+  wide margin (0.598 vs 0.438 typed control and 0.303 free-SQL on this
+  lane; 0.594 on the 3-repeat run 54317), with no silent answer.
+- On the generated retrieval questions it ties free-SQL on set F1 (0.260 vs
+  0.264) by the opposite route: recall 0.64 vs 0.53, precision 0.20 vs
+  0.26; the form failures are gone (1 silent, 0 counts, 1 partial), and
+  complete lists 15 -> 57.
+- Concept-set is where the selector's cost shows: truths average 3.4
+  papers, the selector picks 13.2 of 47 candidates, named-only precision
+  0.37 -> 0.29; set F1 ties the control only because the 10 silent answers
+  are gone. Free-SQL stays far ahead here (0.575).
+- Counts got worse (exact 0.30 -> 0.20, closeness 0.36 -> 0.30). The
+  selector is off for counts (gate holds), but the retrieval mechanisms are
+  not: kind fallback fired on 33 of 40 count records and the entities seen
+  rose from 72 to 107 per record, so the model counts over a wider superset
+  (D-151's mechanism, made worse by more rows). n=40, so this is 12 vs 8
+  exact answers, but the direction is the expected one.
+- Per-paper unchanged (0.80 vs 0.77): the gate does its job.
+Consequence for the chapter: the final configuration is set-question
+machinery. The results table reports it by type with these two costs
+stated (concept-set precision, counts), and the routing idea
+(ideas/answer-routing-by-shape.md) is the honest future-work line: the
+retrieval mechanisms should be gated by shape as the selector already is.
+
+## D-158 addendum 4 -- why the search-critic arm writes more ids: a side effect on answer form, not a relevance effect
+
+C1 writes 30.7 ids per answer against C0's 20.8 with the same retrieval
+(45 vs 43 footprint papers) and the same appended selection (21.4 vs
+20.5). The difference is the DRAFT: 14.0 ids (12.7 wrong) with the critic
+on, 4.3 without. Same question, same rows: C0 writes "14 papers (arXiv IDs
+listed above)", C1 writes the fourteen ids; C0 names 3 Sherpa papers, C1
+names 15. Tool use is the same (papers_of on a kept set: 1 call of 171;
+subjects_of ~80 rows either way). So the critic's tally and kept-set note
+on the search result make the answerer write its list out instead of
+pointing at it, and the list it writes is everything subjects_of returned,
+judged or not. That is where C1's recall gain (0.60 -> 0.66) and its extra
+wrong ids (17.7 -> 27.1) both come from: a formatting side effect, the
+same one --name-ids produced (D-153), not a relevance judgement reaching
+the answer. Consequence for the chapter: the search critic's +0.035 is not
+evidence that the critic filters; the row "entities dropped 21.4,
+candidate papers dropped 2.5" is the relevance effect, and it is nil.
+
+## D-161 -- constrained arms are scored on the selected list, not on every id in the text
+
+The user's point (2026-09-10): under constrained selection the appended
+`Papers:` line IS the answer's paper set; the planner's draft ids are
+incidental, and D-158 addendum 4 showed they can add ten wrong ids per
+answer on their own. Script: eval/analysis/score_constrained_list.py
+(selected ids minus the answer critic's strikes; retrieval questions against
+the exact truth, Gabriel's against his verdicts). Text-based vs list-based:
+
+| arm | 84: text F1 -> list F1 (size, right, wrong) | Gabriel: text -> list (P / R) |
+|---|---|---|
+| constrained 54296 | 0.269 -> 0.267 (24.0, 3.6, 20.4) | 0.554 -> 0.548 (0.67 / 0.53) |
+| constrained C0 | 0.245 -> 0.246 (20.5, 3.1, 17.3) | 0.540 -> 0.529 (0.70 / 0.53) |
+| + search critic C1 | 0.283 -> 0.291 (21.4, 3.6, 17.8); +0.045 (se 0.015) vs C0 | 0.572 -> 0.561 (0.68 / 0.56) |
+| + answer critic C3 | 0.268 -> 0.227 (10.5, 2.0, 8.5); -0.019 (0.019) | 0.489 -> 0.450 (0.86 / 0.36) |
+| + both C2 | 0.276 -> 0.240 (11.1, 2.1, 9.0); -0.006 (0.020) | 0.465 -> 0.403 (0.91 / 0.32) |
+| + mechanisms M | 0.269 -> 0.268 (24.3, 3.7, 20.6); +0.022 (0.013) | 0.594 -> 0.588 (0.69 / 0.59) |
+
+Reading: for arms without a critic the two scorings agree within 0.005, so
+the citation-grounding and final-configuration numbers stand. For the
+search critic the draft's extra ids vanish and the list itself is the same
+length as the control's with 0.5 more right papers: +0.045 vs the
+same-session control, +0.024 vs the previous day's -- a small, consistent
+gain, still of the order of the session floor. For the answer critic the
+list scoring is the stricter one: F1 -0.02 on the 84 and -0.08 on Gabriel's
+9, precision 0.86 / recall 0.36 there. The chapter's critic table
+(tab:critic-arms) now uses list scoring, with the caption saying so; the
+answer-form table (tab:answer-form) stays text-based because its subject is
+the text's form.
+
+## D-162 -- two follow-ups on the answer critic: a big judge, and the judge as the selector
+
+The user's two ideas (2026-09-10, while writing the critic section):
+
+1. **The answer critic on the big model.** Every answer-critic number so far
+   used the small judge (Qwen3.5-9B on the cluster, Llama-3.1-8B on
+   OpenRouter), which struck gold one time in four with reasons that
+   contradict its own prompt ("vetoes b-tagged jets, does not use them",
+   when the prompt says a veto counts). Does a 32B judge, or a 235B one,
+   follow the condition better? Code: the answer critic's JSON parser now
+   finds the last "verdicts" object, so a reasoning judge's think block
+   (braces included) no longer defaults every verdict to keep.
+
+2. **The judge selects, the answerer does not** (CRITIC_SELECTS=1). Under
+   constrained decoding the answerer's own selection keeps half the
+   candidate list with a weak preference (gold rate 0.21 kept vs 0.10 left
+   out, D-161 discussion), and the answer critic then strikes from that.
+   The new mode drops the answerer's choice: the answer critic judges every
+   candidate paper with its evidence, and its kept set becomes the answer's
+   `Papers:` line (mode "critic"); the trailing answer-critic pass is
+   skipped since the list was judged as it was made. Tests added; suite
+   1027 passed (8e0eb26).
+
+Runs. OpenRouter, Gabriel's 9 x 3, constrained + --answer-critic: judge
+qwen3-32b (j32), judge qwen3-235b-a22b (jbig), and CRITIC_SELECTS with each
+(s32, sbig). Cluster, stacked server 54324, LLM_REASONING_COMPLETION_TOKENS
+8000 on every arm so the QwQ judge has room to think: C0b constrained
+control (54325/54326), answer critic with QwQ as judge (54327/54328),
+critic-selects with QwQ (54329/54330), critic-selects with the 9B
+(54331/54332); 84 retrieval x 2 then Gabriel's 9 x 3 each. Read against
+C0b; the earlier C3 (9B judge, 0.227 list F1 / 0.450 Gabriel) is the
+comparison for item 1.
+
+## D-163 -- the answer critic was shown unranked evidence; now ranked by the question
+
+Found by the user (2026-09-10 evening): what does the judge actually see?
+Per paper, `evidence_by_paper` returns every label and quote retrieved for
+the paper through the run's entities, and `_render` showed the first EIGHT
+labels alphabetically and the first THREE quotes in database scan order,
+cut at 320 characters, out of up to 116 quotes. Reconstructed for the 31
+gold papers the 9B judge struck on Gabriel's 9 (C3, 54319): in 7 the term
+the question asked about was in the retrieved evidence and not in the block
+shown (gf-08's "two leptons" papers with 26-65 quotes each); in the other
+24 it was visible only as a label while the judge asked for a quote ("no
+mention of HistFitter in quotes" on a paper with 56 retrieved quotes, 3
+shown). So part of the one-in-four gold strike rate was the evidence
+window, not the judge or the graph.
+
+Fix (0c1a668, after a red commit b06e0cf whose patch script had aborted
+before writing -- `pytest | tail` hid the exit code again; the commit line
+now propagates it): labels and quotes are ordered by how many of the
+question's content words they contain, ties by original order, before the
+cut; both the answer critic and the ranker use it. Test added. The three
+critic arms of D-162 (aQ, sQ, s9) were cancelled at ~10 minutes and
+relaunched on this code; C0b needs no critic and kept running; the
+OpenRouter judge batch was restarted. The D-158 answer-critic numbers
+(C2, C3) stand as the record of the critic AS IT RAN, and the chapter has
+to say the evidence shown was unranked; the D-162 arms are the ranked
+version. If the ranked judge still strikes gold at the same rate, the
+limit is the graph's evidence; if not, part of the earlier loss was ours.
+
+## D-163 addendum -- ranking the quotes with the retrieval's own vocabulary, not the question's words
+
+The user's follow-up: is word overlap with the question enough, or should
+the hybrid retriever (or a reranker agent) pick the quotes? Decision: use
+what the hybrid retrieval already produced. The run resolved the question
+to entities, and each matched entity carries the corpus's other spellings
+(aliases: "MET", "p_T^miss" for missing transverse momentum; 2529 of 6047
+occurrence rows carry aliases). `evidence_by_paper` now returns them as a
+third element, and the quote ranking scores a quote by the question's
+words (weight 2) plus the words of the paper's matched labels and its
+aliases (weight 1), so "b-tagged jets" finds the quote that says "b-jet"
+and "missing transverse momentum" finds "MET". Five quotes shown instead
+of three (about 3.5k tokens per 8-paper call). Not done: dense reranking
+of quotes with bge-base (thousands of sentences per answer on the CPU
+nodes, 30-60 s each, for paraphrase cases the aliases already cover) and
+a reranker agent (an LLM choosing quotes for an LLM judge is the judge's
+job done twice; if quote choice needs a model, show the judge more quotes).
+Commit 9af00d1, suite 1030. Critic arms relaunched a third time: aQ
+54340/54341, sQ 54342/54343, s9 54344/54345; OpenRouter batch restarted.
+
+## D-164 -- the 9B judge defaulted every verdict under the 8000-token cap; a small-cap fallback
+
+First check of the D-162/D-163 arms (~30 min in): the critic-selects arm on
+the 9B judge (54344) had answer_review on all 22 records with candidates
+1003, kept 1003, defaulted 1003 -- the judge never returned a verdict, so
+the "Papers:" line was the whole candidate list. Cause: the arms export
+LLM_REASONING_COMPLETION_TOKENS=8000 so that QwQ can think when it is the
+judge, and `completion_cap` applies that to any model whose name contains
+"qwen3" -- including Qwen3.5-9B, served with an 8192-token window. A
+five-quote prompt for eight papers is ~3.5k tokens; asking for 8000 more
+is rejected by vLLM before generation, both rungs of the D-105 ladder
+fail, and every paper defaults to keep. The QwQ-judge arms are healthy
+(aQ: 0 defaulted of 274; sQ: 8 of 400). Fix (commit after this entry):
+`answer_critic_call` tries the model's cap, then 1500 tokens, each with
+thinking off first; the verdict JSON needs a few hundred tokens and only
+a thinking judge needs the big cap. Test added. 54344/54345 cancelled and
+relaunched as the s9 arm on the fixed code; the other arms continue.
+
+## D-162 addendum -- OpenRouter j32: answer critic with qwen3-32b as judge on ranked evidence (run 48244)
+
+Gabriel's 9 x 3, list scoring (D-161), against the OpenRouter constrained
+control 19445 and the earlier answer-critic arm 20648 (llama-8b, unranked
+evidence). Note the OpenRouter caveat: the constraint is not enforced at
+decoding there and the answerer's selection is short (11 papers), so list
+scoring reads the control at 0.332 where text scoring read 0.439.
+
+| arm | list F1 | P | R | size | gold | wrong | outside | struck (gold / wrong / outside) |
+|---|---|---|---|---|---|---|---|---|
+| constrained control | 0.332 | 0.70 | 0.38 | 11.0 | 2.6 | 1.6 | 6.7 | -- |
+| + answer critic, llama-8b, unranked | 0.264 | 0.77 | 0.24 | 4.2 | 1.9 | 0.9 | 1.4 | 135 (35 / 48 / 52) |
+| + answer critic, qwen3-32b, ranked | 0.325 | 0.92 | 0.27 | 5.5 | 2.7 | 0.4 | 2.4 | 112 (21 / 37 / 54) |
+
+Reading: the bigger judge on ranked evidence strikes gold at 19% instead
+of 26%, leaves 0.4 judged-wrong papers per answer instead of 1.6, and
+takes precision on the judged set to 0.92; recall stays 0.11 below the
+control and F1 comes back to the control's level (0.325 vs 0.332), not
+above it. gf-04 0.00 -> 0.51, gf-02 0.44 -> 0.57, gf-01-condition 0.61
+-> 0.40. The gold it still strikes says where the limit now is: "vetoes
+b-jets" (the prompt says a veto counts; the judge disagrees), "defines
+MET but does not state it is required in event selection", "no unfolding
+mentioned" -- condition judgements the evidence does not settle. So on
+this lane: judge size and evidence ranking together remove the
+over-striking of the small judge, and the residual is the condition.
+The 235B judge (jbig) and the critic-selects arms follow.
+
+## D-162 addendum 2 -- OpenRouter, all four judge arms: the judge as selector is the best arm measured on this lane
+
+Gabriel's 9 x 3, qwen3-32b answerer, ranked five-quote evidence (D-163),
+list scoring (D-161) and text scoring side by side; runs 48244 (AC 32b),
+49355 (AC 235b), 50043 (SELECT 32b), 51027 (SELECT 235b).
+
+| arm | text F1 | list F1 | P | R | list size | gold | wrong | outside |
+|---|---|---|---|---|---|---|---|---|
+| constrained control (19445) | 0.439 | 0.332 | 0.70 | 0.38 | 11.0 | 2.6 | 1.6 | 6.7 |
+| + retrieval mechanisms M (20986) | 0.501 | 0.390 | 0.78 | 0.40 | 10.8 | 3.6 | 1.3 | 6.0 |
+| + answer critic, llama-8b, unranked (20648) | 0.401 | 0.264 | 0.77 | 0.24 | 4.2 | 1.9 | 0.9 | 1.4 |
+| + answer critic, qwen3-32b | 0.404 | 0.325 | 0.92 | 0.27 | 5.5 | 2.7 | 0.4 | 2.4 |
+| + answer critic, qwen3-235b | 0.419 | 0.308 | 0.83 | 0.27 | 7.1 | 2.7 | 0.8 | 3.7 |
+| critic selects, qwen3-32b | **0.596** | **0.567** | 0.76 | 0.54 | 15.2 | 5.9 | 2.3 | 7.0 |
+| critic selects, qwen3-235b | 0.564 | 0.526 | 0.78 | 0.49 | 14.0 | 5.3 | 2.3 | 6.5 |
+
+Per question, critic-selects (32b) vs control: gf-01 0.34 -> 0.51,
+gf-01-condition 0.61 -> 0.92, gf-04 0.00 -> 0.74, gf-05 0.09 -> 0.38,
+gf-07 0.00 -> 0.44, gf-08 0.05 -> 0.40, gf-02 0.44 -> 0.57; gf-01-met
+0.56 -> 0.25 is the one loss. Over the 27 records the 32b judge kept 67%
+of the gold candidates and dropped 72% of the judged-wrong ones; the
+answerer's own constrained call, measured on the cluster (D-155 part 3),
+kept 64% of gold and 48% of non-gold. So the same kind of model, given
+the evidence per paper and asked one question per paper, discriminates
+where the answerer choosing from a label listing does not. The 235B
+judge is no better than the 32B (0.526 vs 0.567; both within one spread
+of each other), and the answer-critic mode (judge strikes from the
+answerer's picks) stays at or below the control with any judge: the
+loss there is the answerer's selection before the judge, which the
+judge cannot undo.
+
+Reading, with the OpenRouter caveats (soft constraint, short answerer
+selections, n=27, spread ~0.25): the user's expectation holds -- the
+judge should decide, the answerer should write. On this lane it is the
+best arm by 0.10 over the retrieval mechanisms and 0.16 over constrained
+alone on text scoring, and it is above the control on eight of nine
+questions. The cluster arms (QwQ judge, 9B judge) decide the chapter;
+if they agree, the final configuration changes to critic-selects (+ the
+retrieval mechanisms, untested together), and the methodology's order
+becomes retrieve -> judge every candidate -> write from the kept set.
+
+## D-162 addendum 3 -- cluster s9: the judge as selector with the 9B judge, ranked evidence (54346 / 54347)
+
+Against the constrained control C0 (54310 / 54311), list scoring:
+
+| | list F1 | P | R | size | right | wrong | delta vs C0 (se) |
+|---|---|---|---|---|---|---|---|
+| 84 retrieval: C0 | 0.246 | 0.20 | 0.59 | 20.5 | 3.1 | 17.3 | -- |
+| 84: + answer critic 9B, unranked (C3) | 0.227 | 0.25 | 0.47 | 10.5 | 2.0 | 8.5 | -0.019 (0.019) |
+| 84: + retrieval mechanisms (M) | 0.268 | 0.21 | 0.66 | 24.3 | 3.7 | 20.6 | +0.022 (0.013) |
+| 84: critic selects, 9B, ranked (s9) | **0.330** | 0.27 | 0.73 | 19.5 | 3.8 | 15.7 | **+0.083 (0.014)** |
+| Gabriel's 9: C0 | 0.529 | 0.70 | 0.53 | 15.6 | 5.1 | 2.6 | text 0.540 |
+| Gabriel's 9: M | 0.588 | 0.69 | 0.59 | 18.6 | 6.6 | 4.0 | text 0.594 |
+| Gabriel's 9: C3 | 0.450 | 0.86 | 0.36 | 8.4 | 3.7 | 0.5 | text 0.489 |
+| Gabriel's 9: s9 | 0.528 | 0.78 | 0.45 | 10.0 | 4.3 | 1.0 | text 0.567 |
+
+On the generated set this is the largest gain any mechanism has produced:
++0.083 at six standard errors, recall 0.59 -> 0.73 with a list of the same
+length and fewer wrong papers. On the expert's questions it is flat on the
+list (0.528 vs 0.529) and +0.03 on the text: the 9B judge keeps only 51% of
+the gold candidates (it drops 89% of the judged-wrong ones), and the gold
+it drops is dropped with the key term visible in the ranked block in 88 of
+111 cases -- the reasons are condition judgements ("no MET requirement in
+quotes", "vetoing b-jets excludes them from selection", "definition only,
+no selection criteria"), concentrated on gf-01 (0.52 -> 0.15, a compound
+search + b-tag + MET condition) and gf-08 (0.20 -> 0.13); it gains on
+gf-07 (0.21 -> 0.58) and gf-01-met (0.45 -> 0.67). So the small judge as
+selector is strict: right for the generated questions (one condition,
+small truth), too strict for the expert's compound ones. OpenRouter's 32b
+judge kept 67% of gold under the same design (addendum 2). The QwQ-judge
+arms (aQ, sQ) running now will say whether a bigger judge on the cluster
+keeps more gold; sQ's running keep rate is 53% of candidates vs s9's 45%.
+
+## D-165 -- the judge sees the paper's evidence, not the retrieved entities' evidence
+
+Asked "is five quotes enough?", the answer from s9's 111 dropped gold
+papers (Gabriel's 9): a quote with the key term and a requirement word was
+among the five shown for 27 (the judge said no anyway), only beyond the
+window for 17, and nowhere in the evidence shown for 67. Those 67 are 26
+distinct (question, paper) pairs, and for 14 of them the requirement
+sentence IS in the graph -- attached to a final-state or signal-region
+entity the search never retrieved, so `evidence_by_paper` (which reads
+only retrieved entities, by design: "judge what the system found") never
+showed it. 6 mention the term without a requirement word; 6 never mention
+it. So the graph's limit proper is 12 of 26; the rest was our restriction.
+
+Changes (af16aa5): `evidence_by_paper_wide` gives the judge every quote the
+graph holds for the paper (labels stay the retrieved entities', so the
+block still says why the paper is a candidate); opt-in with
+CRITIC_EVIDENCE=paper, in both the answer-critic and the critic-selects
+paths. The quote ranking gives a bonus to sentences with a requirement
+word (require, select, at least, exactly, must, veto...), and the window
+is eight quotes. Test added; suite 1032. First run: OpenRouter, critic
+selects with the qwen3-32b judge and paper-wide evidence, Gabriel's 9 x 3
+(to compare with s32 = 0.567 list / 0.596 text). Cluster arms in flight
+(aQ, sQ) keep the entity-restricted evidence; the paper-wide mode goes
+into the final configuration if it holds.
+
+## D-166 -- the judge selects free-SQL's list too, from paper-wide evidence
+
+The user's question: can the answer critic be applied to free-SQL the same
+way? With paper-wide evidence (D-165) yes: free-SQL retrieves no entities,
+but the judge needs only paper ids. `critic_selects_papers` (841fc34):
+candidates = the ids free-SQL's queries returned plus any it asserted,
+kept to those the paper table holds; per paper the judge gets every quote
+the graph has for it, and as "retrieved" labels the paper's own entity
+labels that share a word with the question, with their aliases (the
+vocabulary for the quote ranking); same prompt, same judge
+(`_critic_client`, the D-164 call ladder). Kept ids become the `Papers:`
+line; mode "critic"; the review summary is recorded. Also fixed on the
+way: free-SQL's own constrained call still sent the legacy `guided_json`
+field first (ignored by vLLM 0.18, D-159); it now sends `response_format`
+json_schema first. Test added; suite 1033.
+
+Runs: OpenRouter fsq32 (free-SQL plain + CRITIC_SELECTS, qwen3-32b judge,
+Gabriel's 9 x 3); cluster fsq9 (9B judge, 84 x 2 then Gabriel's 9 x 3)
+behind sQ-84, and ms9 = kind fallback + enum expansion + critic selects
+with the 9B judge behind aQ-84 (the "reach from the mechanisms, precision
+from the judge" test, limitation 1 of the evening's list). Both cluster
+arms run on the current code: eight quotes with the requirement bonus,
+entity-restricted evidence for the typed side (CRITIC_EVIDENCE unset), so
+they compare with s9 up to the quote window. Not gated by shape, on the
+user's instruction: routing comes after, with the by-type numbers.
+
+## D-162 addendum 4 -- cluster aQ on the 84: answer critic with QwQ as judge, ranked evidence (54340)
+
+List scoring vs C0 (54310): F1 0.268 (P 0.25, R 0.51, list 14.3, right
+2.6, wrong 11.7), +0.022 (se 0.015). Against the 9B judge on unranked
+evidence (C3: 0.227, list 10.5, right 2.0): the big judge with ranked
+evidence strikes less and keeps more right papers, and turns the answer
+critic from a small loss into a small gain -- but it stays far below the
+judge-as-selector with the 9B (0.330, right 3.8), because it can only
+remove from the answerer's picks. Confirms the OpenRouter reading (addendum
+2): who chooses matters more than which judge. Gabriel's 9 for this arm
+(54341) is running.
+
+## D-165 addendum -- paper-wide evidence on OpenRouter: no gain with the 32b judge (run 54964)
+
+Critic selects, qwen3-32b judge, Gabriel's 9 x 3, paper-wide evidence and
+eight quotes with the requirement bonus, against the same arm on
+entity-restricted evidence and five quotes (50043): list F1 0.542 vs
+0.567, text 0.553 vs 0.596, gold kept 70% vs 67%, wrong dropped 68% vs
+72%, list 13.9 vs 15.2. Per question: gf-01-condition 0.92 -> 0.84, gf-02
+0.57 -> 0.36, gf-08 0.40 -> 0.45, gf-01 0.51 -> 0.54; the rest flat. Inside
+the spread, sign negative. Reading: the 14 "requirement sentence on an
+unretrieved entity" cases (D-165) were the 9B judge's drops on the cluster;
+the 32b judge had already kept most of that gold from the labels alone,
+and the wider quote pool (whole paper, up to 150 sentences) costs it a
+little on the short-list questions (gf-02: more sentences that mention
+ABCD-like methods without being the sideband method). Decision: the
+cluster typed arms stay on entity-restricted evidence; paper-wide is not
+queued for the typed side tonight (the user asked to wait for this
+result). Free-SQL keeps paper-wide by necessity. The question of whether
+paper-wide helps the STRICT 9B judge specifically remains open; it can be
+answered on the cluster later if time allows (s9 vs s9-paper).
+
+## D-166 addendum -- first free-SQL judge run failed on a missing import; rerun
+
+Run 55575 (OpenRouter): 24 of 27 records errored with `NameError: _os`.
+The exit path I added used `_os.environ` at module scope while the file's
+existing `import os as _os` lines were local to two methods; my patch
+skipped adding the module import because the string was already present.
+The unit test called the new function directly and never hit the exit
+path. Fixed (0181d3f) with a guard test; the failed run file removed; the
+OpenRouter arm rerun; DIAS pulled before the pending cluster jobs
+(54351/54352) start. Lesson recorded: a test for a new exit path must go
+through the exit, not the helper.
+
+## D-162 addendum 5 -- aQ on Gabriel's 9: the answer critic with QwQ as judge (54341)
+
+List scoring against the same-session-ish controls: judged list F1 0.449
+(text 0.457), P 0.79, R 0.38, list 9.1, gold 4.0, judged-wrong 1.5; it
+struck 51 gold against 57 judged-wrong. Against C0 (0.529) and the 9B
+answer critic C3 (0.450) it is flat, and against critic-selects (s9 0.528,
+M 0.588) it is below. Per question it moves things around rather than up:
+gf-01 0.52 -> 0.55, gf-07 0.21 -> 0.41, gf-03 0.89, but gf-01-met 0.45 ->
+0.00 and gf-04 0.67 -> 0.38. So on the cluster too, the answer critic
+striking from the answerer's picks is not the way to use a judge, whatever
+its size (9B 0.450, QwQ 0.449, OpenRouter 32b 0.325 against its control's
+0.332), and the whole of the judge's value comes from letting it select
+(D-162 addendum 2 and 3). The gold-strike rate is the same on both judges:
+roughly one gold per wrong paper removed.
+
+## D-162 addendum 6 -- sQ on the 84: critic selects with QwQ as judge (54342)
+
+List scoring against C0 (54310): F1 0.326 (P 0.24, R 0.79, list 23.1, right
+4.3, wrong 18.8), +0.080 (se 0.013) -- statistically the same gain as the
+9B judge under the same design (s9: 0.330, +0.083), reached differently:
+the big judge keeps more (23.1 vs 19.5 papers, recall 0.79 vs 0.73) at
+slightly lower precision (0.24 vs 0.27), the small one is stricter. Both
+are far above the answer-critic mode with the same big judge (aQ: 0.268)
+and above the retrieval mechanisms (M: 0.268). So on the generated
+retrieval questions the finding is now robust across judge sizes: letting
+the judge select is worth about +0.08, four times what the mechanisms or
+the answer-critic mode give, and judge size trades recall against
+precision without changing the total.
+
+## D-166 outcome -- the judge on free-SQL: precision up, recall down, F1 flat (54351)
+
+84 retrieval questions x 2, 9B judge, paper-wide evidence; free-SQL's list
+is the judge's kept set, scored against free-SQL plain (54289, scored on
+the ids in its text):
+
+| | F1 | P | R | list | right | wrong | answers with no list | candidates |
+|---|---|---|---|---|---|---|---|---|
+| free-SQL plain | 0.264 | 0.26 | 0.46 | 13.7 | 2.2 | 11.5 | 23 | -- |
+| free-SQL + judge selects | 0.242 | 0.35 | 0.32 | 6.8 | 1.6 | 5.2 | 53 | 11.8 |
+| typed + judge selects (C0 constrained) | 0.246 | 0.20 | 0.57 | 20.5 | 3.1 | 17.3 | 7 | 42.8 |
+
+Paired delta -0.022 (se 0.025): flat. The judge does exactly what it does
+on the typed side -- precision 0.26 -> 0.35, wrong papers 11.5 -> 5.2 --
+but free-SQL's candidate pool is 11.8 papers against the typed side's 42.8,
+so what it removes is not replaced and recall falls 0.46 -> 0.32. Answers
+with no list rise from 23 to 53 of 168: on 31 of the first 75 records the
+queries returned no paper ids at all, so the judge had nothing to judge.
+This is the structural asymmetry of D-156 part 2 again, now with the
+stronger mechanism: a judge helps a system that over-retrieves and cannot
+help one that under-retrieves. For the chapter: the critic is a typed-side
+mechanism, and the reason is free-SQL's recall, not the judge.
+
+## D-162 addendum 7 -- mechanisms + judge on Gabriel's 9 (54354), and the judge on free-SQL there (54352)
+
+| arm (Gabriel's 9) | text F1 | list F1 | P | R | list | gold | wrong | cand |
+|---|---|---|---|---|---|---|---|---|
+| C0 constrained | 0.540 | 0.529 | 0.70 | 0.53 | 15.6 | 5.1 | 2.6 | 26.4 |
+| M mechanisms, no judge | 0.594 | 0.588 | 0.69 | 0.59 | 18.6 | 6.6 | 4.0 | 37.9 |
+| s9 judge selects | 0.567 | 0.528 | 0.78 | 0.45 | 10.0 | 4.3 | 1.0 | 29.6 |
+| **ms9 mechanisms + judge** | **0.600** | 0.551 | **0.82** | 0.46 | 10.1 | 4.6 | 0.9 | 35.7 |
+| free-SQL plain | 0.303 | 0.303 | 0.74 | 0.30 | 8.5 | 2.8 | 0.5 | -- |
+| fsq9 free-SQL + judge | 0.282 | 0.246 | **0.95** | 0.18 | 3.3 | 2.1 | 0.1 | 5.7 |
+
+Paired: ms9 vs s9 +0.023 (se 0.014) -- the mechanisms add 6 candidates and
+the judge converts them, so the two compose, but only just; ms9 vs M
+-0.037 (se 0.046) -- on the expert's questions the judge's strictness costs
+about as much recall as the mechanisms add reach, and M (no judge) keeps
+the best list F1 at 0.588. ms9 has the highest text F1 of any typed arm
+(0.600) and the best precision (0.82) with half the list length.
+free-SQL + judge on these questions: precision 0.95 with recall 0.18 and
+eleven of 27 answers left with no list; -0.128 (se 0.099) against plain.
+Per question ms9 wins where reach was the limit (gf-05 0.21 -> 0.35, gf-07
+0.21 -> 0.60) and loses where the judge is strict (gf-01 0.52 -> 0.18,
+gf-08 0.20 -> 0.15; gf-01 is the three-clause question D-167's calibration
+arm targets). Reading for the chapter: on generated retrieval questions the
+judge is worth +0.08 and the mechanisms +0.02; on the expert's questions
+it is the other way round, and the difference is question shape, not
+mechanism quality -- which is the routing argument, with numbers.
+
+## D-167 outcome (partial) -- the backlog screened on the cluster: nothing moves
+
+Ten of thirteen arms scored (Gabriel's 9 x 2 = 18 records each, QwQ
+answerer, 9B judge, base = constrained + critic selects, list scoring,
+paired against the base on the same question and repeat):
+
+| arm | list F1 | P | R | list | gold | wrong | vs base (se) |
+|---|---|---|---|---|---|---|---|
+| multi-condition calibration | 0.566 | 0.80 | 0.48 | 11.8 | 4.7 | 1.0 | +0.026 (0.025) |
+| path tool | 0.544 | 0.80 | 0.46 | 10.2 | 4.4 | 0.8 | +0.004 (0.018) |
+| stated objective | 0.541 | 0.81 | 0.45 | 10.1 | 4.4 | 0.9 | +0.001 (0.020) |
+| **base** | 0.540 | 0.83 | 0.44 | 10.2 | 4.4 | 0.7 | -- |
+| tool examples | 0.536 | 0.85 | 0.42 | 9.9 | 4.5 | 0.7 | -0.004 (0.021) |
+| widening ladder (persist) | 0.514 | 0.87 | 0.40 | 10.1 | 4.2 | 0.6 | -0.025 (0.013) |
+| sub-goal status | 0.510 | 0.78 | 0.45 | 11.2 | 4.3 | 1.2 | -0.030 (0.031) |
+| plan reviewer | 0.506 | 0.89 | 0.41 | 8.4 | 4.3 | 0.6 | -0.042 (0.032) |
+| judged union of both systems | 0.467 | 0.76 | 0.40 | 10.1 | 4.1 | 1.0 | -0.073 (0.059) |
+
+Every arm sits inside 0.47-0.57 against a base of 0.540 and none clears
+the floor. Two readings. (1) Once the judge selects the list, the
+planning-side mechanisms -- the ones the backlog was full of -- do not
+reach the answer: they change what is retrieved and the judge then keeps
+about the same ten papers. The plan reviewer is the clearest case: it
+shortens the list to 8.4 at precision 0.89 and loses recall, which is
+D-107's "stops early" measured again through the judge. (2) sub-goal
+status, the one arm that ever beat its noise floor (D-096), is -0.030
+here and was +0.035 on OpenRouter last night: no effect, the two signs
+cancel. The multi-condition calibration (D-167) is the only arm above the
+base, +0.026 at one standard error, with the anatomy the prompt predicted
+-- list 10.2 -> 11.8, gold 4.4 -> 4.7, precision 0.83 -> 0.80. Worth one
+confirmation run on the 84 retrieval questions, where n is ten times
+larger; not worth a chapter section on this evidence.
+
+## D-167 outcome -- all thirteen backlog arms screened; the shorter prompt is the only real candidate
+
+Gabriel's 9 x 2 (18 records), QwQ answerer, 9B judge, base = constrained +
+critic selects, list scoring, paired on question and repeat. Zero errors
+anywhere except the judged-union arm (2).
+
+| arm | text F1 | list F1 | P | R | list | gold | rounds | vs base (se) |
+|---|---|---|---|---|---|---|---|---|
+| **reduced prompt (`--minimal-prompt`)** | **0.649** | **0.608** | 0.77 | 0.55 | 12.5 | 5.8 | 2.94 | **+0.068 (0.043)** |
+| multi-condition calibration (D-167) | 0.575 | 0.566 | 0.80 | 0.48 | 11.8 | 4.7 | 3.00 | +0.026 (0.025) |
+| few-shot (from 54296) | 0.605 | 0.561 | 0.77 | 0.47 | 11.1 | 4.9 | 3.06 | +0.021 (0.030) |
+| push further | 0.522 | 0.546 | 0.85 | 0.46 | 10.6 | 4.5 | 3.78 | +0.006 (0.020) |
+| path tool | 0.582 | 0.544 | 0.80 | 0.46 | 10.2 | 4.4 | 2.89 | +0.004 (0.018) |
+| stated objective | 0.590 | 0.541 | 0.81 | 0.45 | 10.1 | 4.4 | 3.17 | +0.001 (0.020) |
+| base | 0.579 | 0.540 | 0.83 | 0.44 | 10.2 | 4.4 | 3.50 | -- |
+| sub-goals | 0.594 | 0.537 | 0.79 | 0.44 | 10.5 | 4.4 | 3.39 | -0.003 (0.016) |
+| tool examples | 0.586 | 0.536 | 0.85 | 0.42 | 9.9 | 4.5 | 3.00 | -0.004 (0.021) |
+| widening ladder | 0.573 | 0.514 | 0.87 | 0.40 | 10.1 | 4.2 | 3.00 | -0.025 (0.013) |
+| sub-goal status | 0.578 | 0.510 | 0.78 | 0.45 | 11.2 | 4.3 | 4.00 | -0.030 (0.031) |
+| plan reviewer | 0.509 | 0.488 | 0.86 | 0.39 | 8.6 | 4.1 | 3.06 | -0.052 (0.031) |
+| judged union of both systems | 0.467 | 0.467 | 0.76 | 0.40 | 10.1 | 4.1 | 3.11 | -0.073 (0.059) |
+
+The reduced prompt replaces the 4300-character purpose block with an
+881-character one (the four facts about the data, no worked guidance) and
+is the largest effect in the screen: +0.068 at 1.6 standard errors, recall
+0.44 -> 0.55, gold named 4.4 -> 5.8, list 10.2 -> 12.5, precision 0.83 ->
+0.77, and a round fewer per question. Every other arm is inside the floor,
+and the three negatives have one shape in common: they make the planner
+retrieve less or answer sooner (reviewer's list 8.6, ladder's precision
+0.87 at recall 0.40), which the judge cannot undo. The judged union is the
+worst arm: free-SQL's candidates dilute the pool the judge reads.
+
+Consequence: of the whole backlog -- few-shot, reviewer, sub-goals,
+sub-goal status, ladder, push further, tool examples, stated objective,
+path tool, reduced prompt -- only the reduced prompt is worth a
+confirmation run, and the reason is interesting for the write-up: with a
+judge selecting the answer, a SHORTER instruction to the planner is worth
+more than any planning mechanism, because what matters is how much the
+run retrieves, not how carefully it is told to plan.
+
+Queued on the idle server (08:40, server good to 19:07): the confirmation
+pair on the 84 retrieval questions, 2 repeats each, matched code --
+c84-base 54368, c84-minimal 54369, c84-multiclause 54370. A matched base
+is included because the screen's arms run on the current quote window
+(eight quotes with the requirement bonus) while s9-84 (54346, 0.330) ran
+on five without it, so that pair also measures the window change.
+
+## D-167 confirmation -- the reduced prompt and the calibration on the 84 retrieval questions
+
+Screen candidates confirmed at ten times the sample (84 questions x 2, QwQ
+answerer, 9B judge, critic selects, matched code, list scoring, paired):
+
+| arm | F1 | P | R | list | right | wrong | vs base (se) |
+|---|---|---|---|---|---|---|---|
+| c84-base 54368 | 0.317 | 0.25 | 0.72 | 19.8 | 3.7 | 16.1 | -- |
+| c84-minimal 54369 (reduced prompt) | 0.332 | 0.25 | 0.74 | 20.5 | 3.9 | 16.6 | +0.015 (0.008) |
+| c84-multiclause 54370 (calibration) | 0.333 | 0.26 | 0.78 | 21.5 | 4.2 | 17.3 | +0.015 (0.007) |
+| s9 54346, five quotes, no requirement bonus | 0.330 | 0.27 | 0.73 | 19.5 | 3.8 | 15.7 | +0.012 (0.007) |
+
+Both candidates survive but at a fifth of the size the screen suggested:
++0.015 (about two standard errors) against +0.068 and +0.026 on Gabriel's
+nine. So the screen's ranking was right about the sign and wrong about the
+size, which is what an 18-record screen is for. The calibration keeps the
+better anatomy (recall 0.72 -> 0.78, gold 3.7 -> 4.2 at unchanged
+precision); the reduced prompt buys less here than on the expert's
+questions, where its gain came from reaching more papers on long-list
+questions the generated set does not have.
+
+Also settled by the matched base: the evidence-window change (eight quotes
+with a requirement-word bonus, D-163/D-165) is worth nothing on its own --
+54346 ran on five quotes without the bonus and scores 0.330 against the new
+base's 0.317, i.e. the new window is 0.012 WORSE, inside noise. Keep it for
+the reason it was built (it removed the "no mention in quotes" strikes on
+gold), not for a score.
+
+For the chapter: neither is a mechanism worth a section. The line that
+holds is the one from the screen -- with a judge selecting, planning-side
+changes do not reach the answer -- and these two are the exception that
+proves its size: a shorter prompt and a better-calibrated judge move the
+score by about 0.015 each.
+
+## D-168 -- three bugs in the list scorer, found by the doc_writer session re-running it
+
+While updating table 4.6 the writing session re-ran
+`eval/analysis/score_constrained_list.py` instead of taking my numbers and
+found two wrong rows. Both were mine, and behind them were three bugs in
+the script (fixed: 07ae4d6, 37e93ee, c9a8fa9):
+
+1. **No text fallback.** A run with no `constrained_ids` anywhere -- any
+   control predating constrained selection -- scored F1 0.000 with an
+   undefined precision, a column of zeros that looks like a result. The
+   script now detects run-wide that nothing was ever selected and reads the
+   ids from the text, printing "(text)" next to the label. Run-wide on
+   purpose: inside a constrained run a record whose selector chose nothing
+   must keep scoring zero.
+2. **No question-type filter.** It scored whatever a file held, so the
+   wave-2 control (the full 164-question file) was compared with 84-question
+   arms. `FILTER=gen-retrieval-` added. Checked afterwards: every other run
+   I have reported is a single-type file (168 retrieval records or 27
+   Gabriel records), so the control row is the only figure this touched.
+3. **No pooling, and a collision when pooling.** Jobs can now be given as
+   `54257+54258`; both jobs label their records repeat 0, so a
+   (question, repeat) key collided and half the pairs disappeared from the
+   paired delta. Pooled jobs now keep distinct repeats, and when two arms do
+   not share repeat labels the delta is computed on per-question means with
+   "by question" printed.
+
+Corrected control column on the 84 retrieval questions, pooled over both
+repeats and scored on its text: F1 0.132, precision 0.18, recall 0.32, list
+6.2, right 1.3, wrong 5.0; paired against constrained -0.114 (se 0.021,
+n=84, by question) rather than the -0.126 I had sent from one repeat. The
+two control repeats differ by 0.028 on their own (0.118 and 0.146), which
+is the single-repeat noise on this question set.
+
+**A convention to state in the chapter, not a bug.** The script averages
+precision and recall over answers that name at least one paper, and F1 over
+all answers. That is the named-only rule of D-142, and it flatters arms that
+stay silent: the control's recall reads 0.32 under it and 0.21 over all
+records, while an arm that always writes a list moves by 0.02. Every table
+using these numbers should say so in its caption.
+
+## D-168 addendum -- the two scoring rules, measured side by side
+
+Prompted by doc_writer asking whether the mechanisms arm's two reported
+values (0.270 in D-158 addendum 2, 0.268 in D-162 addendum 3) were a bug:
+they are the text rule and the list rule, and both are right.
+
+| arm, 84 retrieval questions | list rule | text rule | list - text |
+|---|---|---|---|
+| C0 constrained | 0.246 | 0.245 | +0.001 |
+| M mechanisms | 0.268 | 0.269 | -0.001 |
+| s9 judge selects | 0.330 | 0.322 | +0.008 |
+
+The rules agree on arms without a judge, because the selection is written
+into the text anyway. They diverge on judge arms: a struck paper leaves the
+list but its id is still visible in the draft above the `Papers:` line, so
+the text rule counts papers the system has explicitly withdrawn. That is an
+argument for the list rule on any arm with a critic, and for never mixing
+rules across the columns of one table -- mixing would understate the judge
+by about 0.008 while leaving the mechanisms untouched, which is exactly the
+comparison the final-configuration argument rests on.
+
+Deltas against C0 are stable under both: mechanisms +0.022 (list) and
++0.024 (text), judge selects +0.083 and +0.078, all se 0.013-0.014, n=168.
+
+## D-167 addendum / D-166 addendum -- the OpenRouter cross-checks, once the key had credit
+
+Gabriel's 9 x 2, qwen3-32b answering and judging, list scoring.
+
+**Reduced prompt, second lane.** 0.572 against the two base runs' 0.544 and
+0.543: +0.028 (se 0.037 and 0.046). Same sign as the cluster screen (+0.068
+on 18 records) and the 84-question confirmation (+0.015, se 0.008), and the
+same anatomy on every lane -- a slightly longer list (14.4 vs 13.9) with
+more gold (5.6 vs 5.4) and no loss of precision (0.81 vs 0.76). Three lanes,
+three positive signs, sizes 0.068 / 0.028 / 0.015 as the sample grows: the
+effect is real and small, and the best estimate is the 84-question one.
+
+**The judge on free-SQL, second lane.** This is the run the network ate at
+02:02 and the key limit blocked afterwards. 0.483 against free-SQL plain's
+0.429: +0.067 (se 0.082), precision 0.75 -> 0.91, recall 0.38 -> 0.41, list
+7.8 -> 8.4, silent answers 4 -> 2 of 18. On the cluster the same design was
+flat to negative (-0.022 on the 84, -0.128 on Gabriel's 9), so across lanes
+the judge on free-SQL is somewhere between nothing and a small gain, and
+the one thing it does reliably on both is raise precision to 0.91-0.95 by
+removing wrong papers (judged-wrong 0.8 -> 0.3 per answer here). That is
+the profile for the confident-examples channel the user proposed, not for
+the full list.
+
+## D-169 -- the filter-versus-selector comparison was confounded with the evidence change; the matched pair to use
+
+Caught by doc_writer while restructuring table 4.6. C3 (54318, answer critic
+as a filter, 9B judge) ran at commit 1fa357f, three commits before the
+evidence ordering landed (b06e0cf/0c1a668, then 9af00d1), so its judge saw
+eight alphabetically chosen labels and three quotes in database order. Every
+arm it was being compared with ran after. So "0.227 against 0.330, the same
+judge on the same evidence used the other way round" was mode AND evidence
+moving together, and the sentence is withdrawn.
+
+The 2x2 of {filter, select} x {9B, QwQ} on ranked evidence, 84 retrieval
+questions, list rule:
+
+| | 9B judge | QwQ judge |
+|---|---|---|
+| filter (strikes from the answerer's picks) | never run | 54340, 0.268 |
+| select (judges every candidate, kept set is the list) | 54346, 0.330 | 54342, 0.326 |
+
+The matched comparison is 54340 against 54342: same judge, same evidence,
+same code (9af00d1), same server session, 0.268 against 0.326. 54346 sits
+beside 54342 to show judge size does not matter. The empty cell is not worth
+a run -- both filled cells of its row and column already imply it, the
+server expires at 19:07 and a 9B 84-question run takes ~4h15, so it would
+need a fresh allocation.
+
+Two traps recorded for whoever reads these run files next:
+- `critic_order: ranked` in every config is the SEARCH critic's candidate
+  order (--critic-seed), not the evidence ordering. No field records the
+  evidence format; the git sha is the only way to tell. Unranked: up to
+  1fa357f. Ranked, five quotes: 9af00d1 and 16ce099. Ranked with the
+  requirement bonus and eight quotes: af16aa5 onward.
+- 54340 and 54342 record CRITIC_MODEL as the Llama 8B with an empty
+  CRITIC_BASE_URL. That is the cluster .env's default and it is inert: with
+  no base URL the critic client returns the planner's own client, so the
+  judge was QwQ. The proof is behavioural -- 3489 and 7383 candidates judged
+  with 8 and 92 defaults; a wrong model name on that endpoint 404s every
+  call and defaults every verdict (2026-09-01, D-088).
+
+## D-167 addendum 2 -- the calibration on the OpenRouter lane; both candidates now measured on three lanes
+
+Gabriel's 9 x 2, qwen3-32b answering and judging, list rule, against the two
+base runs (0.544, 0.543):
+
+| | list F1 | P | R | list | gold | wrong | vs base |
+|---|---|---|---|---|---|---|---|
+| multi-condition calibration | 0.576 | 0.77 | 0.55 | 14.1 | 5.2 | 2.1 | +0.032 / +0.033 (se 0.06-0.07) |
+| reduced prompt | 0.572 | 0.81 | 0.53 | 14.4 | 5.6 | 2.3 | +0.028 / +0.029 (se 0.04) |
+
+Both candidates across every lane and sample:
+
+| | cluster screen, 18 rec | OpenRouter, 18 rec | cluster 84, 168 rec |
+|---|---|---|---|
+| reduced prompt | +0.068 | +0.028 | +0.015 (se 0.008) |
+| calibration | +0.026 | +0.032 | +0.015 (se 0.007) |
+
+Three lanes, six measurements, every sign positive, and the estimate shrinks
+as the sample grows -- the classic small-sample inflation. The honest
+statement is that each is worth about +0.015 on the generated retrieval
+questions, i.e. a fifth of what the first screen suggested, and that the
+anatomy is stable everywhere: the calibration adds recall (0.51 -> 0.55
+here, 0.72 -> 0.78 on the 84) at unchanged precision, the reduced prompt
+adds a little of both. Neither earns a section; together they are a sentence
+about the prompt mattering less than the judge.
+
+All screening work is now closed. OpenRouter cost for the three follow-ups
+about $1.2; the cluster server (54333) is idle with 3h30 left and nothing
+queued.
+
+## D-170 -- dense ranking of the judge's quotes with the retrieval encoder (CRITIC_QUOTE_RANK=dense)
+
+The user's request after the screening closed: use the quote index's
+embeddings to rerank the evidence the judge reads under critic-selects.
+Built (c3464f9): with CRITIC_QUOTE_RANK=dense, the quotes of each candidate
+paper are scored by cosine similarity to the question using the same bge
+encoder the retrieval index uses (`aliases.semantics.embed`), cached per
+process by text so the ~8,300 quotes in the graph are encoded once; the
+lexical score (question words, matched labels, aliases, requirement bonus)
+is kept as a bonus normalised to at most 0.1, so similarity carries the
+order and an alias the encoder cannot spell ("Higgs" splits into sub-tokens
+for bge, D-087) still lifts the quote that names it. The first blend
+weighted the raw word count and a sentence repeating the question buried a
+0.4 similarity gap; caught by the unit test, fixed before the commit.
+Labels stay lexically ranked. What it should fix: the D-165 finding that 17
+of 111 dropped gold papers had their requirement sentence beyond the quote
+window under sentences that matched more words -- paraphrases ("jet
+identified as originating from a b-hadron") the lexical rule cannot see.
+
+Runs: cluster scr-dense (job below) on Gabriel's 9 x 2 against scr-base
+54355 (same server session, same format otherwise); OpenRouter dense-rank
+against base-a/base-b. The 84-question confirmation needs a fresh server
+(this one expires 19:07 and a 9B 84-question run takes ~4h15).
+
+## D-170 outcome -- dense quote ranking does not find what the lexical rule misses, and costs too much on the cluster
+
+Two tests, both negative.
+
+**The mechanism, offline and exactly.** For every gold paper the 9B judge
+dropped on Gabriel's 9 (54347) whose retrieved quotes DO contain a sentence
+carrying the question's term and a requirement word -- 17 papers, the cases
+D-165 identified as fixable -- the block was rebuilt under both rankings and
+checked for whether that sentence reached the eight-quote window:
+
+| | condition sentence inside the window |
+|---|---|
+| lexical (question words, labels, aliases, requirement bonus) | 12 of 17 |
+| dense (bge cosine to the question, lexical as a 0.1 bonus) | 11 of 17 |
+
+One paper gained, two lost, ten unchanged. So the premise was wrong: the
+quotes the lexical rule misses are not paraphrases the encoder can see.
+The requirement-word bonus added in D-165 was already doing the work, and
+what remains outside the window is genuinely other material, not a
+differently-worded requirement.
+
+**The score.** OpenRouter, Gabriel's 9 x 2: list F1 0.560 against the two
+base runs' 0.544 and 0.543, +0.016 and +0.017 (se 0.04-0.05), which is
+inside the floor and consistent with a mechanism that changes one window in
+seventeen.
+
+**The cost, on the lane that matters.** The cluster arm (54378) was
+cancelled at 6 records with 3 of them dead on the 1200 s timeout. The
+encoder runs on the compute node's CPU -- the GPU is serving vLLM -- and
+each record judges ~30 candidates whose quotes run to a hundred sentences
+each, so encoding dominates: completed records took 253 and 295 s against
+the base's 166 s median, and half exceeded the limit. It was fast locally
+only because the laptop encodes on MPS.
+
+Decision: keep the flag (CRITIC_QUOTE_RANK=dense, off by default), report
+it as a negative result, and note the operational reason it cannot be the
+default on this hardware. The quote-index idea from the backlog is now
+answered: indexing quotes helps RETRIEVAL (D-085's value indexing is the
+proven case) and does not help the judge choose what to read.
+
+## D-171 -- the planning mechanisms tested where the answer is a fact, not a set
+
+The user's hypothesis (2026-09-11): the reviewer and the sub-goal arms are
+used in the literature to get a specific answer right, and every measurement
+here has been on set questions, where the judge dominates and planning
+changes do not reach the answer (D-167). Per-paper questions are the
+opposite shape: the answer is a paper's own labels ("Which collision systems
+does analysis 2405.18661 study?"), the truth is a label set, and the
+constrained selector is gated off for them, so nothing downstream can
+absorb a planning change.
+
+First fact: **there are no per-paper questions among the supervisor's**.
+Every file of his -- the 8 of 2026-08-25, the 9 merged, the 9 full, and the
+36 rewordings -- is shape "set" with a paper-set truth. So the experiment
+runs on the 36 generated per-paper questions alone, now split out as
+`eval/questions/paper36.jsonl` (908bee8).
+
+Arms, all with no constrained selection and no judge (the selector is gated
+off for this question shape anyway), on server 54390: per-paper 36 x 2 =
+72 records each -- 54392 base, 54393 all three (--reviewer --subgoals
+--subgoal-status), 54394 reviewer alone, 54395 sub-goal status alone. The last two are there to attribute whatever the
+combination does. Scored by label recall, retrieved (did the tools return
+the truth labels) and mentioned, strict and fuzzy, which is the metric pair
+the baseline table uses for this question type; the reference values there
+are retrieved 0.97 and mentioned-fuzzy 0.77 for the typed control.
+
+**And the supervisor's seven value questions, which I had forgotten.** They
+are not in any question file: they live in the batch-2 review he returned
+(rows 1098-1104, gf-06 and gf-10 to gf-15), because the first batch showed
+him a yes/no box beside a question asking "what signal efficiency does the
+cut retain?" and he wrote "Not a yes/no question. What to do here?". They
+were reframed for batch 2 as our answer plus a correctness verdict, and he
+returned six yes and one no. They are the only questions he has written
+whose answer is a FACT ABOUT ONE PAPER rather than a set of papers, which
+makes them the right held-out test for exactly the hypothesis above.
+
+Built as `eval/questions/gabriel-value7.jsonl` (acd6873) from his cited
+sentences and notes, with a scorer of its own,
+`eval/analysis/score_value7.py`: the label-recall metric ignores numbers,
+so it would score "about 60%" as a hit for a question whose answer is 80%.
+Each question instead carries a list of FACTS, each with alternative
+spellings, and an answer is credited with a fact only when one of its
+spellings appears in the normalised text. Self-tested on hand-written
+perfect and wrong answers before use. Corrections he supplied are folded
+into the facts -- gf-12's limit is a 2D contour so both the 875 GeV and the
+350 GeV neutralino mass are required, and gf-11 requires CSVv2, which he
+noted was right in our answer but missing from the evidence we showed him.
+Arms 54396-54399, 3 repeats of 7 questions, chained behind their per-paper
+counterparts.
+
+**An infrastructure note worth keeping.** The first server for this
+(54381) drew the node's third A100, the one carrying 1413 uncorrected ECC
+errors, requeued onto it four times and gave up; all eight arms then died,
+four on the dead dependency and four on the arm script's own guard that
+refuses to start against a server which will expire mid-run. The clean card
+was held by our own idle server from the previous day, so releasing it and
+resubmitting fixed it. Lesson: when the ECC guard requeues, check whether
+WE are holding the clean card with an idle server.
