@@ -250,3 +250,174 @@ def should_reflect(question: str, text: str, conn, session, rounds_left: int,
 
 def enabled_from_env() -> bool:
     return os.environ.get("POST_REFLECT", "") == "1"
+
+
+# ---------------------------------------------------------------------------
+# THE ASKED VERSION (REFLECT_MODE=model): Devil's Advocate's post-action
+# alignment, on the objective rather than on the answer.
+# ---------------------------------------------------------------------------
+#
+# The computed audit above is high-precision and, measured on real traces,
+# fires almost only on invented ids: at 44 retrieved entities per record the
+# coverage test is always satisfied, even where the ANSWER ignores a condition
+# (D-177). Coverage of the graph is not the same thing as fulfilment of the
+# objective, and only a reader can tell them apart.
+#
+# So this asks, and the thing it is asked about is chosen to stay out of the
+# circularity Pan et al. (TACL 2024) warn about. It does NOT ask "is your
+# answer right" -- that is self-evaluation, unreliable and able to spoil a
+# correct answer. It asks "given the question and THESE RETRIEVED ROWS, which
+# parts of the question do the rows already establish, and which have nothing
+# behind them yet" -- a question about the trace, which the model can check
+# against material in front of it, and which is what Devil's Advocate's
+# alignment function G_align(S_t, a_t, S_t+1, tau_i) does after every action.
+#
+# The verdict has consequences, which is the half our earlier progress block
+# (D-173, D-176) lacked: a run that tries to answer while the verdict says a
+# part has nothing behind it is sent back once with that part named. That is
+# the backtracking half of the same paper, with "go back to the previous
+# state" replaced by "go back and retrieve the missing part", because our
+# actions are queries and re-querying is cheap.
+
+COMPLETENESS_PROMPT = """\
+You are checking how much of a question has been ANSWERED SO FAR by what has
+been retrieved. You do not answer the question, you do not plan, and you do
+not judge whether the retrieved rows are correct.
+
+THE QUESTION
+{question}
+
+WHAT HAS BEEN RETRIEVED SO FAR
+{retrieved}
+
+{previous}Break the question into its parts. For each, say whether the rows above
+already establish it, or whether nothing retrieved bears on it yet.
+
+Reply in exactly this form and nothing else:
+
+PART: <the part of the question, in a few words> -- HAVE: <what the rows give
+for it, or "nothing yet">
+(one line per part)
+READY: yes|no
+NEXT: <the single most useful thing to retrieve next, concretely -- a search
+text, an entity, a predicate. Write "-" if READY is yes.>"""
+
+
+@dataclass
+class Verdict:
+    ready: bool
+    parts: list
+    next_step: str
+    raw: str = ""
+
+    @property
+    def missing(self) -> list:
+        return [p for p, have in self.parts if "nothing" in have.lower()]
+
+
+_PART = re.compile(r"^\s*PART:\s*(.+?)\s*--\s*HAVE:\s*(.+?)\s*$", re.M | re.I)
+_READY = re.compile(r"^\s*READY:\s*(yes|no)\b", re.M | re.I)
+_NEXT = re.compile(r"^\s*NEXT:\s*(.+?)\s*$", re.M | re.I)
+
+
+def retrieval_summary(conn, session, max_labels: int = 40) -> str:
+    """What the run has actually got, as the completeness call sees it.
+
+    The steps say what was asked and how much came back; the labels say what
+    the rows ARE, which is what a part of the question has to be matched
+    against. Both are capped: this is re-sent every round.
+    """
+    lines = []
+    for s in list(getattr(session, "steps", None) or [])[-8:]:
+        tool = getattr(s, "tool", "")
+        if tool in ("push", "reflect"):
+            continue
+        err = getattr(s, "error", "")
+        lines.append(f"  {tool}({getattr(s, 'args', {})}) -> "
+                     + (f"ERROR {err}" if err else f"{getattr(s, 'rows', 0)} rows"))
+    labels = []
+    seen = set()
+    for lab in _retrieved_labels(conn, getattr(session, "known_entity_ids", set())):
+        key = lab.lower()[:60]
+        if key not in seen and not lab.startswith("["):
+            seen.add(key)
+            labels.append(lab[:70])
+        if len(labels) >= max_labels:
+            break
+    if labels:
+        lines.append("  entities retrieved: " + "; ".join(labels))
+    return "\n".join(lines) or "  (nothing retrieved yet)"
+
+
+def completeness(chat, question: str, conn, session, previous: str = "") -> Optional[Verdict]:
+    """One call: which parts of the question the retrieved rows establish.
+
+    Returns None on any failure, which means "do not interfere" -- a parse
+    error must never block an answer.
+    """
+    body = COMPLETENESS_PROMPT.format(
+        question=question,
+        retrieved=retrieval_summary(conn, session),
+        previous=(f"YOUR LAST CHECK SAID\n{previous.strip()}\n\n" if previous.strip() else ""))
+    try:
+        response = chat([{"role": "user", "content": body}], None)
+        text = (response.choices[0].message.content or "").strip()
+    except Exception as exc:  # noqa: BLE001 -- a check must not kill a run
+        logger.warning("completeness call failed (%s); not interfering", str(exc)[:80])
+        return None
+    parts = [(m.group(1).strip(), m.group(2).strip()) for m in _PART.finditer(text)]
+    ready_m = _READY.search(text)
+    next_m = _NEXT.search(text)
+    if not parts and not ready_m:
+        logger.info("completeness verdict unparseable, not interfering: %r", text[:120])
+        return None
+    ready = (ready_m.group(1).lower() == "yes") if ready_m else True
+    return Verdict(ready=ready, parts=parts,
+                   next_step=(next_m.group(1).strip() if next_m else "-"), raw=text)
+
+
+def render_verdict(v: Verdict) -> str:
+    """The block the planner is shown between rounds."""
+    lines = [f"  - {p}: {have}" for p, have in v.parts] or ["  - (no parts identified)"]
+    tail = ("\n  Everything the question asks for has something behind it."
+            if v.ready else f"\n  Still missing. Most useful next: {v.next_step}")
+    return ("\n\nHOW MUCH OF THE QUESTION IS ANSWERED SO FAR (checked after the last "
+            "round, from what you retrieved):\n" + "\n".join(lines) + tail)
+
+
+BOUNCE = """\
+A check of what you have retrieved, made before this answer is accepted, says part of the question has nothing behind it yet:
+
+{missing}
+
+You have {rounds_left} rounds left. Retrieve that first: {next_step}. Then answer.
+
+This is not a judgement of your answer -- it is about what the rows you retrieved do and do not cover."""
+
+
+def bounce_message(v: Verdict, rounds_left: int) -> str:
+    missing = "\n".join(f"  - {p}: {have}" for p, have in v.parts
+                         if "nothing" in have.lower()) or "  - (see the check above)"
+    return BOUNCE.format(missing=missing, rounds_left=rounds_left,
+                         next_step=v.next_step if v.next_step != "-" else
+                         "search for the part named above")
+
+
+def mode() -> str:
+    """`graph` (the computed audit), `model` (the asked check), or `off`."""
+    raw = os.environ.get("REFLECT_MODE", "").strip().lower()
+    if raw in ("graph", "model", "both"):
+        return raw
+    return "graph" if os.environ.get("POST_REFLECT", "") == "1" else "off"
+
+
+def completeness_from_raw(raw: str) -> Optional[Verdict]:
+    """Rebuild a verdict from the text it produced, for re-display."""
+    parts = [(m.group(1).strip(), m.group(2).strip()) for m in _PART.finditer(raw or "")]
+    ready_m = _READY.search(raw or "")
+    next_m = _NEXT.search(raw or "")
+    if not parts and not ready_m:
+        return None
+    return Verdict(ready=(ready_m.group(1).lower() == "yes") if ready_m else True,
+                   parts=parts, next_step=(next_m.group(1).strip() if next_m else "-"),
+                   raw=raw)

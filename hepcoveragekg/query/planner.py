@@ -790,6 +790,7 @@ class Session:
     #: Post-answer reflection (POST_REFLECT=1, D-177). `reflect_offered` holds
     #: the conditions already raised, so one is never raised twice.
     reflections_used: int = 0
+    reflect_checks: int = 0
     reflect_offered: set = field(default_factory=set)
     reflect_defects: list = field(default_factory=list)
     widenings_taken: int = 0

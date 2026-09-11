@@ -137,3 +137,82 @@ def test_or_alternatives_count_as_one_condition():
 def test_and_conditions_are_still_demanded_separately():
     c = _conn()
     assert R.uncovered_conditions(Q, c, _session(("e1",))) == ["missing transverse momentum"]
+
+
+# --- the asked check (REFLECT_MODE=model) -----------------------------------
+
+VERDICT_NOT_READY = """PART: searches using b-tagged jets -- HAVE: 47 entities, set_1
+PART: missing transverse momentum -- HAVE: nothing yet
+READY: no
+NEXT: search "missing transverse momentum" """
+
+VERDICT_READY = """PART: b-tagged jets -- HAVE: set_1, 47 entities
+PART: missing transverse momentum -- HAVE: set_2, 12 entities
+READY: yes
+NEXT: -"""
+
+
+def _chat(reply):
+    def chat(msgs, tools=None):
+        chat.prompts.append(msgs[0]["content"])
+        return NS(choices=[NS(message=NS(content=reply))])
+    chat.prompts = []
+    return chat
+
+
+def test_the_check_reads_the_rows_not_the_answer():
+    s = _session(("e1",))
+    s.steps.append(P.Step(1, "search", {"text": "b-jet"}, rows=47))
+    c = _chat(VERDICT_NOT_READY)
+    v = R.completeness(c, Q, _conn(), s)
+    prompt = c.prompts[0]
+    assert "WHAT HAS BEEN RETRIEVED SO FAR" in prompt and "b-tagged jet" in prompt
+    assert "47 rows" in prompt
+    flat = " ".join(prompt.split()).lower()
+    assert "do not judge whether the retrieved rows are correct" in flat
+    assert v.ready is False and v.missing == ["missing transverse momentum"]
+    assert v.next_step.startswith('search "missing')
+
+
+def test_a_ready_verdict_does_not_interfere():
+    v = R.completeness(_chat(VERDICT_READY), Q, _conn(), _session())
+    assert v.ready is True and v.missing == []
+
+
+def test_an_unparseable_or_broken_check_never_blocks_an_answer():
+    assert R.completeness(_chat("I think it looks fine!"), Q, _conn(), _session()) is None
+    def broken(msgs, tools=None): raise RuntimeError("down")
+    assert R.completeness(broken, Q, _conn(), _session()) is None
+
+
+def test_mode_switch():
+    import os
+    for env, want in (({"REFLECT_MODE": "model"}, "model"), ({"REFLECT_MODE": "both"}, "both"),
+                      ({"POST_REFLECT": "1"}, "graph"), ({}, "off")):
+        os.environ.pop("REFLECT_MODE", None); os.environ.pop("POST_REFLECT", None)
+        os.environ.update(env)
+        assert R.mode() == want, (env, R.mode())
+    os.environ.pop("REFLECT_MODE", None); os.environ.pop("POST_REFLECT", None)
+
+
+def test_the_answer_is_bounced_once_with_the_missing_part_named(monkeypatch):
+    import json
+    from hepcoveragekg.query import graph as G
+    monkeypatch.setenv("REFLECT_MODE", "model")
+    conn = _conn()
+    session = P.Session(question=Q)
+    session.known_entity_ids = {"e1"}
+    session.steps.append(P.Step(1, "search", {"text": "b-jet"}, rows=47))
+    chat = _chat(VERDICT_NOT_READY)
+    state = {"session": session, "round": 2, "max_rounds": 6, "max_rows": 25, "max_places": 3,
+             "messages": [], "pending_calls": [{"id": "c1", "name": "answer",
+                                                "arguments": json.dumps({"text": "The analyses are 2001.06899.",
+                                                                         "reason": "answered"})}]}
+    runtime = {"conn": conn, "chat": chat, "execute": lambda n, a: None,
+               "persist": False, "push_further": False, "answer_critic": False}
+    G.execute(state, {"configurable": runtime})
+    sent = state["messages"][-1]["content"]
+    assert "missing transverse momentum" in sent and "Retrieve that first" in sent
+    assert "not a judgement of your answer" in sent
+    assert session.reflections_used == 1 and session.reflect_checks == 1
+    assert state["reflect_note"].startswith("PART:")

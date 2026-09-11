@@ -105,6 +105,7 @@ def _runtime(config) -> dict:
 
 def plan(state: PlannerState, config=None) -> PlannerState:
     """Ask the model what to do next."""
+    from hepcoveragekg.query import reflect as reflect_mod
     from hepcoveragekg.query import planner
 
     runtime = _runtime(config)
@@ -183,6 +184,14 @@ def plan(state: PlannerState, config=None) -> PlannerState:
                         and ("SUB-OBJECTIVES" in (m.get("content") or "")
                              or "PROGRESS ON THE QUESTION" in (m.get("content") or "")))]
         state["messages"] = msgs + [{"role": "system", "content": block}]
+    note = state.get("reflect_note", "")
+    if note and reflect_mod.mode() in ("model", "both"):
+        v = reflect_mod.completeness_from_raw(note)
+        if v is not None:
+            msgs = [m for m in state["messages"]
+                    if not (m.get("role") == "system"
+                            and "HOW MUCH OF THE QUESTION IS ANSWERED" in (m.get("content") or ""))]
+            state["messages"] = msgs + [{"role": "system", "content": reflect_mod.render_verdict(v)}]
     state["_reviewing"] = bool(runtime.get("reviewer"))
     tools = runtime["tools"]
     if state["round"] >= state["max_rounds"]:
@@ -765,11 +774,35 @@ def execute(state: PlannerState, config=None) -> PlannerState:
             # edit or re-judge the answer, so a right answer cannot be turned
             # into a wrong one (Pan et al. 2024's warning about post-hoc
             # correction degrading correct responses).
-            if claimed != "not_in_graph":
+            if claimed != "not_in_graph" and reflect.mode() in ("model", "both"):
+                # THE ASKED CHECK (D-178). One call looks at the rows and says
+                # which parts of the question they establish; if a part has
+                # nothing behind it and there are rounds left, the answer is
+                # bounced once with that part named.
+                if session.reflections_used < reflect.MAX_REFLECTIONS and rounds_left >= reflect.MIN_ROUNDS_LEFT:
+                    v = reflect.completeness(runtime["chat"], session.question,
+                                             runtime.get("conn"), session,
+                                             previous=state.get("reflect_note", ""))
+                    if v is not None:
+                        session.llm_calls += 1
+                        session.reflect_checks += 1
+                        state["reflect_note"] = v.raw
+                        state["reflect_ready"] = v.ready
+                        if not v.ready and v.missing:
+                            session.reflections_used += 1
+                            session.reflect_defects.append(
+                                {"kind": "unfulfilled", "detail": "; ".join(v.missing)})
+                            state["messages"].append({
+                                "role": "tool", "tool_call_id": call["id"],
+                                "content": reflect.bounce_message(v, rounds_left)})
+                            session.steps.append(planner.Step(
+                                state["round"], "reflect", {"missing": v.missing}))
+                            continue
+            if claimed != "not_in_graph" and reflect.mode() in ("graph", "both"):
                 defects = reflect.should_reflect(
                     session.question, str(args.get("text") or session.answer or ""),
                     runtime.get("conn"), session, rounds_left,
-                    enabled=bool(runtime.get("post_reflect")))
+                    enabled=True)
                 if defects:
                     session.reflections_used += 1
                     for d in defects:

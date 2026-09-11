@@ -120,6 +120,7 @@ class Answer:
     constrained_critic_dropped: int = 0
     subgoal_status_calls: int = 0
     reflections_used: int = 0
+    reflect_checks: int = 0
     reflect_defects: list = field(default_factory=list)
     #: Enumeration expansion (D-131).
     enum_concepts: int = 0
@@ -438,6 +439,7 @@ def from_session(session, conn=None) -> Answer:
         constrained_critic_dropped=int(getattr(session, "constrained_critic_dropped", 0) or 0),
         subgoal_status_calls=int(getattr(session, "subgoal_status_calls", 0) or 0),
         reflections_used=int(getattr(session, "reflections_used", 0) or 0),
+        reflect_checks=int(getattr(session, "reflect_checks", 0) or 0),
         reflect_defects=list(getattr(session, "reflect_defects", []) or []),
         enum_concepts=getattr(session, "enum_concepts", 0),
         enum_added=getattr(session, "enum_added", 0),
