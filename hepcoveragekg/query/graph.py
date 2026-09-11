@@ -146,10 +146,25 @@ def plan(state: PlannerState, config=None) -> PlannerState:
     # grows every round, so appending would leave one stale copy per round and
     # the model would have to work out which status is current.
     goals = state.get("sub_objectives") or []
+    split_status = (runtime.get("subgoal_status")
+                    and os.environ.get("SUBGOAL_STATUS_CALL", "") == "1")
     if goals:
         from hepcoveragekg.query import subgoals as _sg
-        block = (_sg.render(goals, state.get("subgoal_status", ""))
-                 if runtime.get("subgoal_status") else _sg.goals_only(goals))
+        if split_status and session.steps:
+            # ONE CALL THAT ONLY JUDGES COMPLETENESS (D-173), before the call
+            # that plans. The combined version asks the planner to report on
+            # the last results and choose the next ones in the same breath.
+            fresh = _sg.status_call(runtime["chat"], state["question"], goals,
+                                    state.get("subgoal_status", ""), session.steps)
+            session.llm_calls += 1
+            session.subgoal_status_calls += 1
+            if fresh:
+                state["subgoal_status"] = fresh
+        if runtime.get("subgoal_status"):
+            block = (_sg.render_readonly(goals, state.get("subgoal_status", ""))
+                     if split_status else _sg.render(goals, state.get("subgoal_status", "")))
+        else:
+            block = _sg.goals_only(goals)
         msgs = [m for m in state["messages"]
                 if not (m.get("role") == "system" and "SUB-OBJECTIVES" in (m.get("content") or ""))]
         state["messages"] = msgs + [{"role": "system", "content": block}]
@@ -194,7 +209,7 @@ def plan(state: PlannerState, config=None) -> PlannerState:
     state["last_content"] = planner.clean_content(message.content)
     if runtime.get("state_objective") and reasoning:
         state["objective"] = reasoning
-    if runtime.get("subgoal_status"):
+    if runtime.get("subgoal_status") and not split_status:
         from hepcoveragekg.query import subgoals as _sg
         fresh = _sg.extract_status(reasoning)
         if fresh:

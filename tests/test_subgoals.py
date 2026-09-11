@@ -122,3 +122,33 @@ def test_the_mathup_case_becomes_matchable():
               r"{\mathup{{{Z}}}}$ control region is used")
     out = _normalised(mathup)
     assert "ttbar" in out and "mathup" not in out
+
+
+def test_status_call_only_updates_status_and_fails_open(monkeypatch):
+    """D-173: a dedicated call judges completeness; the planner then only plans."""
+    from types import SimpleNamespace as NS
+    from hepcoveragekg.query import subgoals as SG
+    seen = {}
+
+    def chat(msgs, tools=None):
+        seen["prompt"] = msgs[0]["content"]; seen["tools"] = tools
+        return NS(choices=[NS(message=NS(content="1. done: 2001.06899\n2. not started"))])
+
+    steps = [NS(tool="search", args={"text": "b-jet"}, rows=12, error=None, preview="entity_id | label"),
+             NS(tool="papers_of", args={"entity_set": "set_1"}, rows=0, error=None, preview="")]
+    out = SG.status_call(chat, "which analyses use b-jets?", ["find b-jet entities", "get their papers"], "", steps)
+    assert out.splitlines() == ["  1. done: 2001.06899", "  2. not started"]
+    assert seen["tools"] is None                       # it must not be given tools
+    assert "search({'text': 'b-jet'}) -> 12 rows" in seen["prompt"] and "papers_of" in seen["prompt"]
+    assert "You do NOT plan" in seen["prompt"]
+
+    def broken(msgs, tools=None): raise RuntimeError("judge down")
+    assert SG.status_call(broken, "q", ["a"], "  1. earlier", steps) == ""
+
+
+def test_readonly_block_does_not_ask_the_planner_to_rewrite():
+    from hepcoveragekg.query import subgoals as SG
+    rw = SG.render(["a", "b"], "  1. done")
+    ro = SG.render_readonly(["a", "b"], "  1. done")
+    assert "REWRITE THIS BLOCK" in rw and "REWRITE THIS BLOCK" not in ro
+    assert "do not rewrite it" in ro and "1. done" in ro
