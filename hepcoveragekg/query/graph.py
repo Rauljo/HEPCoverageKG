@@ -150,7 +150,15 @@ def plan(state: PlannerState, config=None) -> PlannerState:
                     and os.environ.get("SUBGOAL_STATUS_CALL", "") == "1")
     if goals:
         from hepcoveragekg.query import subgoals as _sg
-        if split_status and session.steps:
+        question_scope = runtime.get("subgoal_scope") == "question"
+        if split_status and session.steps and question_scope:
+            fresh = _sg.status_call_question(runtime["chat"], state["question"],
+                                             state.get("subgoal_status", ""), session.steps)
+            session.llm_calls += 1
+            session.subgoal_status_calls += 1
+            if fresh:
+                state["subgoal_status"] = fresh
+        elif split_status and session.steps:
             # ONE CALL THAT ONLY JUDGES COMPLETENESS (D-173), before the call
             # that plans. The combined version asks the planner to report on
             # the last results and choose the next ones in the same breath.
@@ -160,13 +168,20 @@ def plan(state: PlannerState, config=None) -> PlannerState:
             session.subgoal_status_calls += 1
             if fresh:
                 state["subgoal_status"] = fresh
-        if runtime.get("subgoal_status"):
+        if runtime.get("subgoal_status") and question_scope:
+            block = _sg.render_question(state.get("subgoal_status", ""), readonly=split_status)
+        elif runtime.get("subgoal_status"):
             block = (_sg.render_readonly(goals, state.get("subgoal_status", ""))
                      if split_status else _sg.render(goals, state.get("subgoal_status", "")))
         else:
             block = _sg.goals_only(goals)
+        # Both markers: the whole-question block (D-176) carries no
+        # "SUB-OBJECTIVES" heading, so filtering on that alone would leave one
+        # stale progress block per round -- the exact failure this replaces.
         msgs = [m for m in state["messages"]
-                if not (m.get("role") == "system" and "SUB-OBJECTIVES" in (m.get("content") or ""))]
+                if not (m.get("role") == "system"
+                        and ("SUB-OBJECTIVES" in (m.get("content") or "")
+                             or "PROGRESS ON THE QUESTION" in (m.get("content") or "")))]
         state["messages"] = msgs + [{"role": "system", "content": block}]
     state["_reviewing"] = bool(runtime.get("reviewer"))
     tools = runtime["tools"]
@@ -211,7 +226,9 @@ def plan(state: PlannerState, config=None) -> PlannerState:
         state["objective"] = reasoning
     if runtime.get("subgoal_status") and not split_status:
         from hepcoveragekg.query import subgoals as _sg
-        fresh = _sg.extract_status(reasoning)
+        fresh = (_sg.extract_progress(reasoning)
+                 if runtime.get("subgoal_scope") == "question"
+                 else _sg.extract_status(reasoning))
         if fresh:
             state["subgoal_status"] = fresh
     state["pending_calls"] = [

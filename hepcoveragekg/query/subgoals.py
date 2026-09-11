@@ -114,6 +114,15 @@ def render(goals: list[str], status: str = "") -> str:
     return STATUS_INSTRUCTION.format(goals=numbered, blank=status.strip())
 
 
+_PROGRESS = re.compile(r"PROGRESS:\s*(.+?)(?=\n\s*\n|\Z)", re.S | re.I)
+
+
+def extract_progress(text: str) -> str:
+    """The PROGRESS block the model just wrote (whole-question scope)."""
+    m = _PROGRESS.search(text or "")
+    return m.group(1).strip() if m else ""
+
+
 def extract_status(text: str) -> str:
     """The STATUS block the model just wrote, to be handed back next round."""
     m = _STATUS.search(text or "")
@@ -205,6 +214,51 @@ def render_readonly(goals: list[str], status: str = "") -> str:
             "answer:\n" + numbered
             + "\n\nPROGRESS SO FAR (kept for you; do not rewrite it):\n" + body
             + "\n\nMake the calls that advance the sub-objectives still outstanding.")
+
+
+#: The whole-question variant of the status block (SUBGOAL_SCOPE=question).
+QUESTION_STATUS_INSTRUCTION = """
+
+PROGRESS ON THE QUESTION
+
+{status}
+
+EVERY TURN, BEFORE YOUR TOOL CALLS, REWRITE THIS BLOCK:
+
+PROGRESS:
+  what part of the question you can already answer from what you have
+  retrieved, and what is still missing. Name the missing part concretely --
+  "no papers yet for the MET condition" rather than "incomplete". Carry
+  forward what you established; nothing may be dropped. Then make your calls."""
+
+
+def render_question(status: str = "", readonly: bool = False) -> str:
+    """Progress on the whole question, with no sub-objectives."""
+    body = status.strip() or "  (nothing established yet)"
+    if readonly:
+        return ("\n\nPROGRESS ON THE QUESTION (kept for you; do not rewrite it):\n"
+                + body + "\n\nMake the calls that close what is still missing.")
+    return QUESTION_STATUS_INSTRUCTION.format(status=body)
+
+
+def status_call_question(chat: Callable, question: str, previous: str, steps) -> str:
+    """The dedicated progress call, whole-question scope. Empty on failure."""
+    body = STATUS_CALL_PROMPT.format(
+        question=question,
+        goals="  (no sub-objectives: judge the question as a whole)",
+        previous=(previous.strip() or "  (nothing established yet)"),
+        results=describe_results(steps)).replace(
+        "Rewrite the status, one line per sub-objective, numbered.",
+        "Write two or three lines: what of the question can now be answered, "
+        "and what is still missing, named concretely.")
+    try:
+        response = chat([{"role": "user", "content": body}], None)
+        text = (response.choices[0].message.content or "").strip()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(f"progress call failed, keeping the previous status: {exc}")
+        return ""
+    lines = [l.strip() for l in text.splitlines() if l.strip()][:4]
+    return "\n".join(f"  {l}" for l in lines)
 
 
 def goals_only(goals: list[str]) -> str:

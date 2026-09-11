@@ -152,3 +152,48 @@ def test_readonly_block_does_not_ask_the_planner_to_rewrite():
     ro = SG.render_readonly(["a", "b"], "  1. done")
     assert "REWRITE THIS BLOCK" in rw and "REWRITE THIS BLOCK" not in ro
     assert "do not rewrite it" in ro and "1. done" in ro
+
+
+def test_question_scope_tracks_progress_without_decomposing(monkeypatch):
+    """D-176: the missing cell -- remembering without splitting. No decomposition
+    call is made, the block talks about the question, and it is replaced each
+    round rather than appended."""
+    import os
+    from types import SimpleNamespace as NS
+    from hepcoveragekg.query import graph as G, planner as P, subgoals as SG
+    monkeypatch.setenv("SUBGOAL_STATUS_CALL", "1")
+    calls = {"n": 0, "prompts": []}
+
+    def chat(msgs, tools=None):
+        calls["n"] += 1; calls["prompts"].append("\n".join(m.get("content") or "" for m in msgs))
+        if tools is None:
+            return NS(choices=[NS(message=NS(content="Papers for the b-jet part found.\nStill missing: the MET condition."))], usage=None)
+        return NS(choices=[NS(message=NS(content="AIM: search MET", tool_calls=[]))], usage=None)
+
+    s = P.Session(question="which analyses use b-jets and MET?")
+    s.steps = [P.Step(1, "search", {"text": "b-jet"}, rows=12, preview="rows")]
+    state = {"session": s, "question": s.question,
+             "messages": [{"role": "user", "content": "q"},
+                          {"role": "system", "content": "\n\nPROGRESS ON THE QUESTION (kept for you; do not rewrite it):\n  stale"}],
+             "round": 2, "max_rounds": 6, "max_places": 3,
+             "sub_objectives": [s.question], "subgoal_status": "", "objective": "",
+             "review_cycles": 0, "pending_calls": [], "last_content": ""}
+    runtime = {"chat": chat, "tools": [{"type": "function", "function": {"name": "answer"}}],
+               "subgoal_status": True, "subgoal_scope": "question", "reviewer": False, "state_objective": False}
+    G.plan(state, {"configurable": runtime})
+    planner_prompt = [p for p in calls["prompts"] if "PROGRESS ON THE QUESTION" in p][-1]
+    assert "SUB-OBJECTIVES" not in planner_prompt                 # nothing was split
+    assert "Still missing: the MET condition." in planner_prompt   # the progress call's text reached it
+    assert planner_prompt.count("PROGRESS ON THE QUESTION") == 1   # the stale copy was dropped
+    assert s.subgoal_status_calls == 1 and calls["n"] == 2
+
+
+def test_question_scope_skips_the_decomposition_call(monkeypatch):
+    from hepcoveragekg.query import subgoals as SG
+    from hepcoveragekg.query import planner as P
+    monkeypatch.setenv("SUBGOAL_SCOPE", "question")
+    called = {"n": 0}
+    monkeypatch.setattr(SG, "decompose", lambda *a, **k: called.__setitem__("n", called["n"] + 1) or ["x"])
+    block = SG.render_question("  1. nothing yet")
+    assert "REWRITE THIS BLOCK" in block and "SUB-OBJECTIVES" not in block
+    assert called["n"] == 0

@@ -2558,7 +2558,16 @@ def _prepare(conn, index, question, max_rounds, max_places, max_rows,
     runtime["subgoal_status"] = bool(subgoal_status)
     if subgoals or subgoal_status:
         from hepcoveragekg.query import subgoals as _sg
-        state["sub_objectives"] = _sg.decompose(chat, question)
+        # SUBGOAL_SCOPE=question (D-176): keep the progress tracking and drop
+        # the decomposition. The two arms were built nested -- status contains
+        # the split -- so "remembering" has never been measured without
+        # "splitting", and the missing cell is the one that asks only how much
+        # of the QUESTION is answered. No decomposition call is made here.
+        if subgoal_status and os.environ.get("SUBGOAL_SCOPE", "") == "question":
+            state["sub_objectives"] = [question]
+            runtime["subgoal_scope"] = "question"
+        else:
+            state["sub_objectives"] = _sg.decompose(chat, question)
         state["subgoal_status"] = ""
 
     # THE PLAN REVIEWER (arm). Defaults to the PLANNER'S OWN model: the point is
