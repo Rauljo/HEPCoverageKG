@@ -2616,6 +2616,40 @@ def _prepare(conn, index, question, max_rounds, max_places, max_rows,
 
         runtime["answer_critic_chat"] = _answer_critic_chat
     runtime["post_reflect"] = os.environ.get("POST_REFLECT", "") == "1"
+    # THE CHECK IS NOT A REASONING TASK, AND MUST NOT COST LIKE ONE.
+    #
+    # 2026-09-11: the first two model-mode arms timed out on 83% and 75% of
+    # records while every other job on the same server errored at 0-19%. The
+    # completeness check ran on the planner's own client -- QwQ-32B, a
+    # reasoning model -- once per round, on a free-form prompt it will happily
+    # think for thousands of tokens about. That is the whole difference.
+    #
+    # The task is extraction: read rows, name the parts of a question, say
+    # which have nothing behind them. It is the same shape as the answer
+    # critic's, so it gets the same treatment -- its own endpoint, defaulting
+    # to the critic's, defaulting to the planner's. Reflexion's Evaluator is a
+    # separate component for a separate reason, but it lands in the same
+    # place: the thing that checks is not the thing that reasons.
+    _rf_base = os.environ.get("REFLECT_BASE_URL") or os.environ.get("CRITIC_BASE_URL")
+    if _rf_base:
+        from openai import OpenAI as _OpenAI
+
+        _rf_client = _OpenAI(
+            base_url=_rf_base,
+            api_key=os.environ.get("REFLECT_API_KEY")
+                     or os.environ.get("CRITIC_API_KEY")
+                     or os.environ.get("LLM_API_KEY", "dummy"),
+            timeout=float(os.environ.get("REFLECT_TIMEOUT", 90)),
+            max_retries=int(os.environ.get("LLM_MAX_RETRIES", 3)))
+        _rf_model = (os.environ.get("REFLECT_MODEL")
+                     or os.environ.get("CRITIC_MODEL")
+                     or "NousResearch/Meta-Llama-3.1-8B-Instruct")
+        _rf_cap = completion_cap(_rf_model)
+
+        def _reflect_chat(messages, tools=None):  # noqa: E306
+            return answer_critic_call(_rf_client, _rf_model, messages, _rf_cap)
+
+        runtime["reflect_chat"] = _reflect_chat
     runtime["persist"] = bool(persist)
     runtime["push_further"] = bool(push_further)
     runtime["simple_answer"] = bool(simple_answer)

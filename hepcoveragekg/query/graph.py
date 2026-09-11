@@ -98,6 +98,16 @@ class PlannerState(TypedDict, total=False):
 # nodes
 # --------------------------------------------------------------------------
 
+def _reflect_chat(runtime):
+    """The client the completeness check uses: its own, or the planner's.
+
+    Set up in `planner._prepare` when REFLECT_BASE_URL or CRITIC_BASE_URL is
+    present. Falling back to the planner's client keeps every existing run and
+    every test behaving exactly as before.
+    """
+    return runtime.get("reflect_chat") or runtime["chat"]
+
+
 def _runtime(config) -> dict:
     """The callables for this run, from config rather than from state."""
     return (config or {}).get("configurable", {})
@@ -193,7 +203,7 @@ def plan(state: PlannerState, config=None) -> PlannerState:
     if (reflect_mod.mode() in ("model", "both") and session.steps
             and state["round"] > 1 and not state.get("_reflect_fresh")):
         fresh = reflect_mod.completeness(
-            runtime["chat"], session.question, runtime.get("conn"), session,
+            _reflect_chat(runtime), session.question, runtime.get("conn"), session,
             previous=state.get("reflect_note", ""))
         if fresh is not None:
             session.llm_calls += 1
@@ -803,7 +813,7 @@ def execute(state: PlannerState, config=None) -> PlannerState:
                     # check had been made.
                     v = reflect.completeness_from_raw(state.get("reflect_note", ""))
                     if v is None:
-                        v = reflect.completeness(runtime["chat"], session.question,
+                        v = reflect.completeness(_reflect_chat(runtime), session.question,
                                                  runtime.get("conn"), session)
                         if v is not None:
                             session.llm_calls += 1
@@ -1216,7 +1226,7 @@ def reflect_check(state: PlannerState, config=None) -> PlannerState:
     rounds_left = state["max_rounds"] - state["round"]
     v = reflect.completeness_from_raw(state.get("reflect_note", ""))
     if v is None:
-        v = reflect.completeness(runtime["chat"], session.question,
+        v = reflect.completeness(_reflect_chat(runtime), session.question,
                                  runtime.get("conn"), session)
         if v is None:
             return state

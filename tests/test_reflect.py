@@ -330,3 +330,26 @@ def test_a_merely_unconfident_verdict_still_lets_the_planner_stop():
     done = R.Verdict(ready=True, next_step="-",
                      parts=[("analyses", "3 rows"), ("the variable", "1 row")])
     assert "Everything the question asks for has something behind it" in R.render_verdict(done)
+
+
+def test_the_check_uses_its_own_client_when_there_is_one(monkeypatch):
+    """The first two model-mode arms timed out on 83% and 75% of records.
+
+    The check ran on the planner's reasoning model, once a round. It is an
+    extraction task and belongs on the small endpoint, like the answer critic.
+    """
+    from hepcoveragekg.query import graph as G
+    monkeypatch.setenv("REFLECT_MODE", "model")
+    small = _chat(VERDICT_READY)
+    session = P.Session(question=Q)
+    session.steps.append(P.Step(1, "search", {"text": "b"}, rows=4))
+    state = {"session": session, "round": 2, "max_rounds": 6, "messages": [],
+             "pending_calls": [], "last_content": "prose"}
+    G.reflect_check(state, {"configurable": {
+        "chat": _boom, "reflect_chat": small, "conn": _conn()}})
+    assert small.prompts, "the small client was never called"
+    assert session.reflect_checks == 1
+
+    # with no separate endpoint it falls back to the planner's client
+    assert G._reflect_chat({"chat": "planner"}) == "planner"
+    assert G._reflect_chat({"chat": "planner", "reflect_chat": "small"}) == "small"
