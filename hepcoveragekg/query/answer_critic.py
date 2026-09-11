@@ -113,6 +113,22 @@ satisfies the condition, answer no.
 Reply with JSON and nothing else:
 {"verdicts": [{"paper": "<arxiv id>", "keep": true|false, "why": "<8 words>"}]}"""
 
+#: CRITIC_MULTICLAUSE=1 (D-167). The judges reject compound questions clause by
+#: clause: on Gabriel's gf-01 ("searches whose selection uses b-tagged jets AND
+#: missing transverse momentum") the 9B judge dropped gold with "no MET
+#: requirement in quotes" while the paper's own matched LABELS carried MET. The
+#: material for different clauses lives in different places, and nothing in the
+#: prompt said a label may establish one.
+MULTICLAUSE = """
+
+SEVERAL CONDITIONS AT ONCE. When the question asks for more than one thing, check each condition separately and name in your reason which ones are met. The evidence for different conditions comes from different places: a retrieved LABEL can establish one ("b-tagged jet" means the analysis uses b-tagged jets) while a QUOTE establishes another. A condition counts as met if the labels or the quotes establish it. Answer no only when a condition has no support of either kind."""
+
+
+def prompt() -> str:
+    """The judge's prompt, with the multi-condition calibration when asked."""
+    import os
+    return PROMPT + (MULTICLAUSE if os.environ.get("CRITIC_MULTICLAUSE", "") == "1" else "")
+
 
 _WORD = re.compile(r"[a-z0-9][a-z0-9+\-]{1,}")
 _STOP = frozenset("the a an of in on for to and or with which that this these those use uses used using analyses analysis paper papers their its is are was were be by as at from into than".split())
@@ -316,7 +332,7 @@ def judge_papers(chat: Callable, question: str, evidence: dict,
         blocks = "\n\n".join(_render(p, *evidence[p], question=question) for p in batch)
         user = f"QUESTION: {question}\n\n{blocks}"
         try:
-            response = chat([{"role": "system", "content": PROMPT},
+            response = chat([{"role": "system", "content": prompt()},
                              {"role": "user", "content": user}])
             review.calls += 1
             raw = (response.choices[0].message.content or "")

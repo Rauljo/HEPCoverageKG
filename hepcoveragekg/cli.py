@@ -595,7 +595,7 @@ def _cmd_eval(args) -> int:
             sql = free_sql.FreeSQLSystem(templates.read_only(args.db), index,
                                          max_rounds=args.max_rounds,
                                          persist=not args.no_persist)
-            return _ens.EnsembleSystem(typed, sql)
+            return _ens.EnsembleSystem(typed, sql, conn=templates.read_only(args.db))
         system = make_system()
     elif args.system == "planner":
         from hepcoveragekg.query import retrieve, templates

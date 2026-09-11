@@ -338,3 +338,14 @@ def test_paper_wide_evidence_reaches_sentences_on_unretrieved_entities():
     assert wide["P1"][0] == {"b-tagged jet"}          # labels stay the retrieved ones
     block = AC._render("P1", *wide["P1"], question="Which analyses use b-tagged jets in their event selection?")
     assert block.splitlines()[2] == "  quote: Events are required to have at least one b-tagged jet."
+
+
+def test_multiclause_calibration_is_off_unless_asked(monkeypatch):
+    """D-167: an env-gated paragraph, so every earlier arm keeps its prompt."""
+    from hepcoveragekg.query import answer_critic as AC
+    monkeypatch.delenv("CRITIC_MULTICLAUSE", raising=False)
+    assert AC.prompt() == AC.PROMPT
+    monkeypatch.setenv("CRITIC_MULTICLAUSE", "1")
+    out = AC.prompt()
+    assert out.startswith(AC.PROMPT) and "SEVERAL CONDITIONS AT ONCE" in out
+    assert "labels or" in out.lower()
