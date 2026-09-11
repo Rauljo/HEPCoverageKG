@@ -8156,3 +8156,53 @@ the conclusion there (reachable is not retrieved) is unchanged.
 **Rule for the write-up:** report the clean-cell count beside every arm on
 these small sets. Twenty-one records is small enough that four timeouts move
 a mean by 0.06, which is larger than most of the effects being compared.
+
+## D-173 outcome, correction -- the same timeout artefact on the supervisor's nine
+
+The correction made to the value questions applies to the set questions too,
+and it was found the same way: by excluding records that never received a
+response. The pooled control (54355+54356+54378) lost **3 of 42** records to
+the 1200s ceiling, all three in 54378, all with `rounds 0`. Scored as zero,
+they pushed the control down to 0.522 and inflated every arm's advantage.
+
+Clean cells only, paired by question:
+
+| arm | judged F1 | P | R | rounds | calls | records (errored) | vs control |
+|---|---|---|---|---|---|---|---|
+| control | 0.570 | 0.764 | 0.527 | 3.24 | 3.2 | 42 (3) | -- |
+| `--subgoals` alone (54359) | 0.594 | 0.787 | 0.518 | 3.39 | 3.4 | 18 (0) | **+0.023 (0.010)** |
+| `--reviewer` (54432) | 0.584 | 0.791 | 0.534 | 2.83 | 2.8 | 18 (0) | +0.013 (0.016) |
+| status, own call (54436) | 0.584 | 0.757 | 0.533 | 3.83 | 6.6 | 18 (0) | +0.013 (0.022) |
+| status, inline (54365) | 0.578 | 0.706 | 0.565 | 4.00 | 4.0 | 18 (0) | +0.008 (0.034) |
+| `--reviewer`, earlier (54357) | 0.509 | 0.758 | 0.426 | 3.06 | 6.0 | 18 (0) | -0.062 (0.035) |
+
+**What I reported earlier tonight is withdrawn.** I said the reviewer and the
+status arms were each worth about +0.06 and that this was the first time a
+planning mechanism had moved anything. On clean cells the whole spread is
+**+0.008 to +0.023**, which is the same noise floor the sixteen-arm screen
+found. The three timed-out control records were carrying the result.
+
+What survives is thinner and should be written that way:
+
+- **Sub-goal decomposition alone is the best of them** at +0.023, and it is
+  the only one whose paired standard error (0.010) puts it clearly away from
+  zero. It is also the cheapest change on the list: 3.4 calls against the
+  control's 3.2.
+- **The reviewer is +0.013 at 2.8 calls**, below the control's 3.2, because a
+  reviewed plan needs fewer rounds. Cheap, and not distinguishable from zero.
+- **Splitting the status into its own call costs 6.6 calls for +0.013.**
+  Twice the budget for an effect inside its own standard error. On the value
+  questions the same arm is void (52% timeouts, relaunched as 54445), so
+  there is no set on which the split call has yet earned its cost.
+- **54357, the earlier reviewer run, is -0.062 at 6.0 calls** -- a different
+  configuration of the same mechanism, and a reminder that the reviewer's
+  sign is not stable across runs.
+
+**Nine questions cannot resolve 0.02.** The power analysis (D-063) wanted 200
+questions for a 0.0008 effect. These numbers belong in the chapter as a
+consistency check against the 84-question set, not as a result in their own
+right.
+
+**Method rule, now applied everywhere:** exclude records that never received
+a response before comparing arms, and print the errored count beside every
+mean. Three timeouts in a pooled control moved a headline by 0.05.
