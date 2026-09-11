@@ -51,3 +51,9 @@ def test_critic_selects_papers_judges_free_sql_ids_on_paper_wide_evidence():
     assert picked == ["2001.00001"] and rv["kept"] == 1
     assert "b-tagged jet" in seen["prompt"] and "Events are required to have at least one b-jet." in seen["prompt"]
     assert "2099.09999" not in seen["prompt"]        # not in the graph: never a candidate
+
+
+def test_module_level_os_alias_exists():
+    """The exit path uses `_os.environ` at module scope; a local import inside
+    __init__ hid its absence from the test suite once (24 of 27 records errored)."""
+    assert hasattr(F, "_os")
