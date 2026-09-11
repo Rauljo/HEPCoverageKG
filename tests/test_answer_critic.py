@@ -349,3 +349,25 @@ def test_multiclause_calibration_is_off_unless_asked(monkeypatch):
     out = AC.prompt()
     assert out.startswith(AC.PROMPT) and "SEVERAL CONDITIONS AT ONCE" in out
     assert "labels or" in out.lower()
+
+
+def test_dense_quote_ranking_uses_the_encoder_and_falls_back_to_lexical(monkeypatch):
+    """D-170: with CRITIC_QUOTE_RANK=dense the paraphrase outranks the word match;
+    without the flag the lexical order is unchanged."""
+    import numpy as np
+    from hepcoveragekg.query import answer_critic as AC
+    from hepcoveragekg.aliases import semantics
+    question = "Which analyses use b-tagged jets in their event selection?"
+    para = "At least one jet identified as originating from a b-hadron must be present."
+    word = "The b-tagged jets in the event selection have their energy scale uncertainty evaluated."
+    quotes = [word, para, "Muons are isolated."]
+    vecs = {question: np.array([1.0, 0.0]), para: np.array([0.95, 0.31]), word: np.array([0.5, 0.87]), "Muons are isolated.": np.array([0.0, 1.0])}
+    monkeypatch.setattr(semantics, "embed", lambda texts: [vecs[t] for t in texts])
+    AC._DENSE_CACHE.clear()
+    monkeypatch.delenv("CRITIC_QUOTE_RANK", raising=False)
+    lex_first = AC._render("P", ["b-tagged jet"], quotes, question=question).splitlines()[2]
+    assert lex_first == f"  quote: {word}"
+    monkeypatch.setenv("CRITIC_QUOTE_RANK", "dense")
+    dense_first = AC._render("P", ["b-tagged jet"], quotes, question=question).splitlines()[2]
+    assert dense_first == f"  quote: {para}"
+    assert question in AC._DENSE_CACHE and para in AC._DENSE_CACHE

@@ -38,6 +38,7 @@ cannot be answered from an entity name alone -- gf-01-condition turns on
 from __future__ import annotations
 
 import json
+import os
 import logging
 import re
 import time
@@ -147,6 +148,35 @@ def _overlap(text: str, terms: set) -> int:
     return sum(1 for w in terms if w in t)
 
 
+_DENSE_CACHE: dict = {}
+
+
+def _dense_scores(question: str, quotes: list) -> Optional[list]:
+    """Cosine similarity of each quote to the question, with the retrieval
+    index's own encoder (CRITIC_QUOTE_RANK=dense, D-170).
+
+    The lexical ranking finds a quote that repeats the question's words or
+    the matched entity's aliases; it cannot find "events are required to
+    contain at least one jet identified as originating from a b-hadron" for
+    a question about b-tagged jets. The encoder can. Vectors are cached per
+    process by text -- the graph holds ~8,300 quotes in total and the same
+    papers recur across records -- so the cost is paid once.
+    """
+    if os.environ.get("CRITIC_QUOTE_RANK", "") != "dense" or not quotes:
+        return None
+    try:
+        from hepcoveragekg.aliases import semantics
+        missing = [q for q in dict.fromkeys([question] + quotes) if q not in _DENSE_CACHE]
+        if missing:
+            for text, vec in zip(missing, semantics.embed(missing)):
+                _DENSE_CACHE[text] = vec
+        qv = _DENSE_CACHE[question]
+        return [float(qv @ _DENSE_CACHE[q]) for q in quotes]
+    except Exception as exc:  # noqa: BLE001 -- ranking must not kill a run
+        logger.warning("dense quote ranking unavailable (%s); lexical order kept", exc)
+        return None
+
+
 def _render(paper_id: str, labels: Iterable[str], quotes: Iterable[str],
             aliases: Optional[Iterable[str]] = None, *,
             question: str = "", n_quotes: int = 8) -> str:
@@ -180,8 +210,19 @@ def _render(paper_id: str, labels: Iterable[str], quotes: Iterable[str],
     # object (D-165): on Gabriel's questions 17 of 111 gold papers the 9B
     # judge dropped had their selection sentence beyond the window, under
     # definitions that matched more question words.
-    qs = sorted(qs, key=lambda q: (-_overlap(q, qterms) * 2 - _overlap(q, cterms)
-                                   - (1 if _REQ.search(q) else 0), qs.index(q)))
+    lex = {q: _overlap(q, qterms) * 2 + _overlap(q, cterms) + (1 if _REQ.search(q) else 0) for q in qs}
+    dense = _dense_scores(question, qs)
+    if dense is not None:
+        # Similarity carries the ranking; the lexical score stays as a small
+        # bonus so an alias the encoder cannot spell ("Higgs" splits into
+        # sub-tokens for bge, D-087) still lifts the quote that names it.
+        # Normalised to at most 0.1: raw word counts run to 14 on a sentence
+        # that repeats the question, and would bury a 0.4 similarity gap.
+        top = max(lex.values()) or 1
+        score = {q: d + 0.1 * lex[q] / top for q, d in zip(qs, dense)}
+        qs = sorted(qs, key=lambda q: (-score[q], qs.index(q)))
+    else:
+        qs = sorted(qs, key=lambda q: (-lex[q], qs.index(q)))
     out = [f"PAPER {paper_id}", f"  retrieved: {lab}"]
     for q in qs[:n_quotes]:
         out.append(f"  quote: {q[:QUOTE_CHARS]}")
