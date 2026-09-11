@@ -152,6 +152,10 @@ READY: yes
 NEXT: -"""
 
 
+def _boom(msgs, tools=None):
+    raise AssertionError("the verdict for this round should have been reused")
+
+
 def _chat(reply):
     def chat(msgs, tools=None):
         chat.prompts.append(msgs[0]["content"])
@@ -216,3 +220,88 @@ def test_the_answer_is_bounced_once_with_the_missing_part_named(monkeypatch):
     assert "not a judgement of your answer" in sent
     assert session.reflections_used == 1 and session.reflect_checks == 1
     assert state["reflect_note"].startswith("PART:")
+
+
+def test_the_prose_exit_is_checked_too_and_routes_back(monkeypatch):
+    """30-45% of answers never call answer(); the check must see those as well."""
+    from hepcoveragekg.query import graph as G
+    monkeypatch.setenv("REFLECT_MODE", "model")
+    session = P.Session(question=Q)
+    session.known_entity_ids = {"e1"}
+    session.steps.append(P.Step(1, "search", {"text": "b-jet"}, rows=47))
+    state = {"session": session, "round": 2, "max_rounds": 6, "messages": [],
+             "pending_calls": [], "last_content": "The analyses are 2001.06899."}
+    assert G.after_plan(state) == "reflect_check"
+    G.reflect_check(state, {"configurable": {"chat": _chat(VERDICT_NOT_READY), "conn": _conn()}})
+    assert G.after_reflect(state) == "plan"
+    assert state["messages"][-1]["role"] == "user"
+    assert "missing transverse momentum" in state["messages"][-1]["content"]
+    assert session.reflections_used == 1
+
+    # the verdict belongs to the round, so a second exit in the same round
+    # reuses it instead of paying for another call
+    calls = session.llm_calls
+    G.reflect_check(state, {"configurable": {"chat": _boom, "conn": _conn()}})
+    assert session.llm_calls == calls
+
+    # a ready verdict lets the prose answer through
+    session2 = P.Session(question=Q)
+    session2.known_entity_ids = {"e1"}
+    session2.steps.append(P.Step(1, "search", {"text": "b"}, rows=4))
+    state2 = {"session": session2, "round": 2, "max_rounds": 6, "messages": [],
+              "pending_calls": [], "last_content": "The analyses are 2001.06899."}
+    G.reflect_check(state2, {"configurable": {"chat": _chat(VERDICT_READY), "conn": _conn()}})
+    assert G.after_reflect(state2) == "finish" and state2["messages"] == []
+
+
+def test_the_prose_exit_is_untouched_when_the_budget_is_out(monkeypatch):
+    from hepcoveragekg.query import graph as G
+    monkeypatch.setenv("REFLECT_MODE", "model")
+    session = P.Session(question=Q)
+    session.steps.append(P.Step(1, "search", {"text": "b"}, rows=4))
+    session.reflections_used = R.MAX_REFLECTIONS
+    state = {"session": session, "round": 2, "max_rounds": 6, "messages": [],
+             "pending_calls": [], "last_content": "answer"}
+    assert G.after_plan(state) == "finish"
+
+
+def test_the_check_runs_per_round_and_the_gate_reuses_it(monkeypatch):
+    """One call per round, not one per exit: the planner sees the verdict before
+    it decides, and the answer gate reuses the same verdict."""
+    import json
+    from hepcoveragekg.query import graph as G
+    monkeypatch.setenv("REFLECT_MODE", "model")
+    conn = _conn()
+    session = P.Session(question=Q)
+    session.known_entity_ids = {"e1"}
+    session.steps.append(P.Step(1, "search", {"text": "b-jet"}, rows=47))
+    chat = _chat(VERDICT_NOT_READY)
+
+    def planner_chat(msgs, tools=None):
+        if tools is None:
+            return chat(msgs, None)
+        planner_chat.seen.append("\n".join(m.get("content") or "" for m in msgs))
+        return NS(choices=[NS(message=NS(content="AIM: keep going", tool_calls=[]))], usage=None)
+    planner_chat.seen = []
+
+    state = {"session": session, "question": Q, "round": 2, "max_rounds": 6,
+             "max_places": 3, "max_rows": 25,
+             "messages": [{"role": "user", "content": "q"}], "pending_calls": [],
+             "last_content": "", "objective": "", "review_cycles": 0}
+    runtime = {"chat": planner_chat, "conn": conn, "tools": [{"type": "function", "function": {"name": "answer"}}],
+               "subgoal_status": False, "reviewer": False, "state_objective": False}
+    G.plan(state, {"configurable": runtime})
+    assert session.reflect_checks == 1                       # one check for the round
+    assert "HOW MUCH OF THE QUESTION IS ANSWERED" in planner_chat.seen[0]
+    assert "missing transverse momentum: nothing yet" in planner_chat.seen[0]
+
+    # the gate now reuses it: no second call
+    state["pending_calls"] = [{"id": "c1", "name": "answer",
+                               "arguments": json.dumps({"text": "2001.06899", "reason": "answered"})}]
+    runtime.update({"execute": lambda n, a: None, "persist": False,
+                    "push_further": False, "answer_critic": False})
+    G.execute(state, {"configurable": runtime})
+    assert session.reflect_checks == 1                       # still one
+    assert session.reflections_used == 1
+    assert "Retrieve that first" in state["messages"][-1]["content"]
+    assert state["_reflect_fresh"] is False                  # next round re-checks

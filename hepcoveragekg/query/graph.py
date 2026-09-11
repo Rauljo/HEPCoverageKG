@@ -184,6 +184,24 @@ def plan(state: PlannerState, config=None) -> PlannerState:
                         and ("SUB-OBJECTIVES" in (m.get("content") or "")
                              or "PROGRESS ON THE QUESTION" in (m.get("content") or "")))]
         state["messages"] = msgs + [{"role": "system", "content": block}]
+    # THE CHECK RUNS WHEN A ROUND'S RESULTS ARE IN, NOT WHEN AN ANSWER IS
+    # TRIED (D-178). One call reads the rows retrieved so far and says which
+    # parts of the question they establish; the planner sees that verdict
+    # before it decides what to do next, and the answer gate later reuses it
+    # rather than asking again. Devil's Advocate runs its alignment after
+    # every action; this is the same cadence at the granularity of a round.
+    if (reflect_mod.mode() in ("model", "both") and session.steps
+            and state["round"] > 1 and not state.get("_reflect_fresh")):
+        fresh = reflect_mod.completeness(
+            runtime["chat"], session.question, runtime.get("conn"), session,
+            previous=state.get("reflect_note", ""))
+        if fresh is not None:
+            session.llm_calls += 1
+            session.reflect_checks += 1
+            session.reflect_note = fresh.raw
+            state["reflect_note"] = fresh.raw
+            state["reflect_ready"] = fresh.ready
+            state["_reflect_fresh"] = True
     note = state.get("reflect_note", "")
     if note and reflect_mod.mode() in ("model", "both"):
         v = reflect_mod.completeness_from_raw(note)
@@ -780,13 +798,19 @@ def execute(state: PlannerState, config=None) -> PlannerState:
                 # nothing behind it and there are rounds left, the answer is
                 # bounced once with that part named.
                 if session.reflections_used < reflect.MAX_REFLECTIONS and rounds_left >= reflect.MIN_ROUNDS_LEFT:
-                    v = reflect.completeness(runtime["chat"], session.question,
-                                             runtime.get("conn"), session,
-                                             previous=state.get("reflect_note", ""))
+                    # Reuse the verdict this round already produced; only ask
+                    # here if the run answered on its first round, before any
+                    # check had been made.
+                    v = reflect.completeness_from_raw(state.get("reflect_note", ""))
+                    if v is None:
+                        v = reflect.completeness(runtime["chat"], session.question,
+                                                 runtime.get("conn"), session)
+                        if v is not None:
+                            session.llm_calls += 1
+                            session.reflect_checks += 1
+                            session.reflect_note = v.raw
+                            state["reflect_note"] = v.raw
                     if v is not None:
-                        session.llm_calls += 1
-                        session.reflect_checks += 1
-                        state["reflect_note"] = v.raw
                         state["reflect_ready"] = v.ready
                         if not v.ready and v.missing:
                             session.reflections_used += 1
@@ -797,6 +821,7 @@ def execute(state: PlannerState, config=None) -> PlannerState:
                                 "content": reflect.bounce_message(v, rounds_left)})
                             session.steps.append(planner.Step(
                                 state["round"], "reflect", {"missing": v.missing}))
+                            state["_reflect_fresh"] = False
                             continue
             if claimed != "not_in_graph" and reflect.mode() in ("graph", "both"):
                 defects = reflect.should_reflect(
@@ -1115,6 +1140,8 @@ def finish(state: PlannerState, config=None) -> PlannerState:
                            verdict.kind, len(session.answer))
         _answer_exit(runtime, session)
 
+    # A new round of rows means the last verdict is stale (D-178).
+    state["_reflect_fresh"] = False
     session.evidence_ids = sorted(set(session.evidence_ids))
     session.verification = verify.verify_session(session)
     return state
@@ -1173,6 +1200,47 @@ def after_review(state: PlannerState) -> str:
     return "plan" if state.get("replan") else "execute"
 
 
+def reflect_check(state: PlannerState, config=None) -> PlannerState:
+    """The asked completeness check on the PROSE exit (D-178).
+
+    About 30-45% of answers never call `answer()` -- the model writes prose and
+    the loop ends -- so the check placed in the tool-call branch could not see
+    them. A routing function gets no config and cannot call a model, so the
+    decision is made here, in a node, and routed afterwards.
+    """
+    from hepcoveragekg.query import planner, reflect
+
+    runtime = _runtime(config)
+    session = state["session"]
+    state["_reflect_bounce"] = False
+    rounds_left = state["max_rounds"] - state["round"]
+    v = reflect.completeness_from_raw(state.get("reflect_note", ""))
+    if v is None:
+        v = reflect.completeness(runtime["chat"], session.question,
+                                 runtime.get("conn"), session)
+        if v is None:
+            return state
+        session.llm_calls += 1
+        session.reflect_checks += 1
+        session.reflect_note = v.raw
+        state["reflect_note"] = v.raw
+    if v.ready or not v.missing:
+        return state
+    session.reflections_used += 1
+    session.reflect_defects.append({"kind": "unfulfilled", "detail": "; ".join(v.missing)})
+    # No tool call to reply to on this exit, so the bounce is a user turn.
+    state["messages"] = state["messages"] + [
+        {"role": "user", "content": reflect.bounce_message(v, rounds_left)}]
+    session.steps.append(planner.Step(state["round"], "reflect", {"missing": v.missing}))
+    state["_reflect_fresh"] = False        # the next round re-checks
+    state["_reflect_bounce"] = True
+    return state
+
+
+def after_reflect(state: PlannerState) -> str:
+    return "plan" if state.get("_reflect_bounce") else "finish"
+
+
 def after_plan(state: PlannerState) -> str:
     """Tool calls to run, a prose answer to accept, or a nudge to send."""
     session = state["session"]
@@ -1201,6 +1269,12 @@ def after_plan(state: PlannerState) -> str:
     # call to reply to and the graph is on its way to `finish` -- but it can
     # record what it found, which is the difference between a known 18% and an
     # invisible one.
+    from hepcoveragekg.query import reflect as _reflect
+    if (_reflect.mode() in ("model", "both") and session.steps
+            and session.reflections_used < _reflect.MAX_REFLECTIONS
+            and state["max_rounds"] - state["round"] >= _reflect.MIN_ROUNDS_LEFT):
+        return "reflect_check"
+
     session.answer = (state.get("last_content") or "").strip()
     session.stopped_because = ("answered from memory, no tool calls"
                                if not session.steps
@@ -1260,9 +1334,12 @@ def build(checkpointer=None):
     g.add_conditional_edges("plan", after_plan,
                             {"review": "review", "execute": "execute",
                              "nudge": "nudge", "ranked_ask": "ranked_ask",
-                             "finish": "finish"})
+                             "finish": "finish", "reflect_check": "reflect_check"})
+    g.add_conditional_edges("reflect_check", after_reflect,
+                            {"plan": "plan", "finish": "finish"})
     g.add_conditional_edges("review", after_review,
                             {"plan": "plan", "execute": "execute"})
+    g.add_node("reflect_check", reflect_check)
     g.add_edge("nudge", "plan")
     g.add_edge("ranked_ask", "plan")
     g.add_conditional_edges("execute", after_execute, {"plan": "plan", "finish": "finish"})

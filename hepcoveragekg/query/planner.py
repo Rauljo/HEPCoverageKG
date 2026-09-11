@@ -791,6 +791,7 @@ class Session:
     #: the conditions already raised, so one is never raised twice.
     reflections_used: int = 0
     reflect_checks: int = 0
+    reflect_note: str = ""
     reflect_offered: set = field(default_factory=set)
     reflect_defects: list = field(default_factory=list)
     widenings_taken: int = 0
