@@ -8206,3 +8206,49 @@ right.
 **Method rule, now applied everywhere:** exclude records that never received
 a response before comparing arms, and print the errored count beside every
 mean. Three timeouts in a pooled control moved a headline by 0.05.
+
+## D-173 outcome, provenance check -- the base is the answer critic, and the four builds are equivalent
+
+Two questions had to be settled before the supervisor's-nine table can be
+published, both raised by Raul asking what the runs actually ran.
+
+**1. Every arm sits on the answer-critic base, not on a bare planner.** All
+seven carry `--answer-critic` and point at the 9B on port 8001, and the
+traffic confirms it fired rather than merely being configured: 39-248 requests
+to 8001 per job, against 28-120 to the planner on 8000. That is roughly twelve
+critic chunks per answer. The table's control is therefore
+`--answer-critic`, and the mechanisms are measured **on top of** the largest
+single effect in the project, not instead of it. The caption must say so.
+
+The `--critic` search critic is OFF throughout (`use_critic False` in every
+config dump), which is the intended configuration: one axis at a time.
+
+**2. The four git SHAs are not a confound, checked rather than assumed.** The
+arms did not all run on the same commit:
+
+| build | arms |
+|---|---|
+| 41a7738 | control x2 (54355, 54356), sub-goals (54359), status inline (54365) |
+| c3464f9 | control (54378) |
+| af4d411 | reviewer (54432) |
+| f4af99c | status, own call (54436) |
+
+This is the shape of D-169, where an arm ran three commits before a change to
+the thing it was measuring. Here it is clean, and each step was read rather
+than trusted:
+
+- `c3464f9` adds dense quote ranking to the answer critic, gated on
+  `CRITIC_QUOTE_RANK=dense`. Unset in every one of these jobs, so the control's
+  two builds are behaviourally identical.
+- `af4d411` adds the split status call. Every line of it is inside `if goals:`
+  and `runtime.get("subgoal_status")`. The reviewer arm has neither flag, so
+  `goals` is empty and none of it executes.
+- `f4af99c` adds the whole-question scope. Every line is behind
+  `question_scope`, which is false for 54436. Its one unconditional change
+  adds a second marker to the stale-block filter, inert when no such block
+  exists.
+
+So each arm's build is equivalent to the control's **for that arm's
+configuration**, and the comparison stands. Recording the check because
+"the SHAs differ" is the kind of thing that is noticed at viva and cannot be
+answered from memory.
