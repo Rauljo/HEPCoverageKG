@@ -7934,3 +7934,88 @@ What is left is a hallucination check with a 8-10% hit rate, catching runs
 of invented ids (1606.05945, 1512.08019, 1608.03888 ... on one record). That
 is worth measuring: arms 54438 (84 retrieval questions) and 54439
 (Gabriel's nine), both on the judge-selects base, against 54346 and 54355.
+
+## D-178 -- asking the model how much of the question is answered, once a round (REFLECT_MODE=model)
+
+D-177 is a computed audit: it compares the question's tokens against the
+entities retrieved, and it fires almost never (8-10%, and only ever on the
+invented-paper branch). Raul's verdict on it was blunt and correct -- "just a
+deterministic thing that does pretty much never fire" -- and the thing he
+asked for instead is the mechanism the literature actually describes: a
+self-reflection that **looks at what has been retrieved and says how much of
+the objective it fulfils**, whose output is then **handed to the planner to
+keep going**.
+
+So there are now two modes, selected by `REFLECT_MODE`:
+
+| mode | what it is |
+|---|---|
+| `graph` | D-177's computed audit (also `POST_REFLECT=1`) |
+| `model` | the asked check described here |
+| `both` | audit first, then the asked check |
+| `off` | default |
+
+**What is asked.** One call, `COMPLETENESS_PROMPT`, shown the question and a
+rendering of the rows retrieved so far -- never the draft answer. It is told
+in the first line that it is not answering, not planning, and not judging
+whether the rows are correct. It returns one line per part of the question:
+
+```
+PART: <the part, in a few words> -- HAVE: <what the rows give, or "nothing yet">
+READY: yes|no
+NEXT: <the single most useful thing to retrieve next>
+```
+
+Not seeing the draft is the whole design. Pan et al. (TACL 2024) and Huang et
+al. (ICLR 2024) both show that intrinsic self-correction -- a model asked to
+grade its own output with no external signal -- degrades answers that were
+already right. Reflexion's Evaluator is external for the same reason. Here
+the external signal is the retrieved rows, which the model did not write, and
+the verdict is about coverage of the question rather than quality of the
+answer. It cannot say "that answer is wrong", only "nothing retrieved speaks
+to this part yet".
+
+**Where it runs, and this is the part that changed.** The first version put
+the check on the `answer()` call, which is where D-177 lives. Two things are
+wrong with that. It speaks after the model has decided it is finished, so it
+can only veto, and vetoing is the move Pan et al. warn about; and 30-45% of
+records never call `answer()` at all -- they write prose and the loop ends --
+so the gate could not see them.
+
+It now runs **once per round, inside `plan()`**, as soon as a round's results
+are in and before the planner decides anything. The verdict goes into the
+planner's prompt as a system block. This is Devil's Advocate's post-action
+alignment at the granularity of a round: the point is to steer the next
+action, not to reject the last one. Both exits then **reuse** that round's
+verdict rather than paying for a second call -- `answer()` reads it through
+`completeness_from_raw`, and the prose exit reads it in a new `reflect_check`
+node, which exists because a LangGraph routing function receives no config
+and so cannot call a model. `execute()` clears `_reflect_fresh`, so every new
+round of retrieval is checked again.
+
+The bounce is still bounded exactly as in D-177 -- `MAX_REFLECTIONS=2`,
+`MIN_ROUNDS_LEFT=2`, never on an abstention -- and it still may not edit,
+score, or rewrite an answer. `session.reflect_note` is recorded on every
+answer, so the verdicts can be read afterwards whether or not they changed
+anything.
+
+Arms 54440 (Gabriel's nine) and 54441 (84 retrieval questions), both
+`REFLECT_MODE=model` on the answer-critic base.
+
+## D-179 -- a job named `-reflect` refuses to start without reflection
+
+54438 and 54439 were submitted as `r84-reflect` and `g9-reflect` and ran for
+an hour as plain controls. `hpc/gabriel_arm_job.sh` selects behaviour from
+`ARM`, and reflection is not an `ARM` -- it is an environment variable the
+script had never heard of, so it was never in the `--export` line. The header
+printed `arm=off`, which was true, and which is exactly what made it look
+deliberate.
+
+This is the fourth instance of the same class on this project (D-082 the
+model name, 2026-09-01 the critic model, 2026-09-05 the server lifetime): a
+run completes, scores, and reports, having not run the thing it is named
+after. The guard is the same shape as the others -- assert the intent, refuse
+rather than proceed. The header now prints `reflect=`, `subgoals=` and
+`status_call=`, and a job whose `SLURM_JOB_NAME` contains `reflect` exits 6
+if the mode is off. The job name is the only place the intent was written
+down, so it is the only thing available to check against.
