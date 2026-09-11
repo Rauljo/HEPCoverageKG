@@ -1,5 +1,11 @@
 #!/usr/bin/env bash
 #SBATCH --job-name=orarm
+# compute-0-1 ACCEPTS WORK AND DOES NONE -- every other job script in this
+# directory excludes it and this one did not. 2026-09-12: two OpenRouter arms
+# landed there, showed RUNNING in squeue for eight minutes, and produced no
+# log file, no process and no run file. The node takes the allocation and
+# never starts the step.
+#SBATCH --exclude=compute-0-1
 #SBATCH --output=/home/xucabrjs/HEPCoverageKG/logs/orarm_%j.out
 #SBATCH --time=10:00:00
 #SBATCH --nodes=1
