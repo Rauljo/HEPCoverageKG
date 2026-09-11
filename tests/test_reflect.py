@@ -116,3 +116,24 @@ def test_the_answer_handler_sends_the_run_back_once_and_then_lets_it_answer(monk
     G.execute(state, {"configurable": runtime})
     assert session.reflections_used == 1
     assert len(state["messages"]) == before or "missing transverse momentum" not in state["messages"][-1].get("content", "")
+
+
+def test_or_alternatives_count_as_one_condition():
+    """gf-04: 'correct them back to particle level or truth level' is satisfied by
+    either, and demanding both made the audit fire on a sound answer."""
+    q = ("Which analyses unfold their measured distributions -- that is, correct "
+         "them back to particle level or truth level?")
+    groups = R.condition_groups(q)
+    assert any(len(g) > 1 for g in groups), groups
+    c = _conn()
+    c.execute("INSERT INTO entity_occurrence VALUES('e9','2001.06899','particle level unfolding','[]')")
+    c.execute("INSERT INTO entity_occurrence VALUES('e10','2001.06899','unfold measured distributions','[]')")
+    # both groups covered: the OR group by ONE of its alternatives
+    assert R.uncovered_conditions(q, c, _session(("e9", "e10"))) == []
+    # and the OR group alone is never the thing reported
+    assert "truth level" not in R.uncovered_conditions(q, c, _session(("e9",)))
+
+
+def test_and_conditions_are_still_demanded_separately():
+    c = _conn()
+    assert R.uncovered_conditions(Q, c, _session(("e1",))) == ["missing transverse momentum"]

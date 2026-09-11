@@ -117,12 +117,49 @@ def _retrieved_labels(conn, entity_ids) -> list:
     return out
 
 
-def uncovered_conditions(question: str, conn, session) -> list:
-    """Conditions the question names that nothing retrieved covers."""
+def condition_groups(question: str, limit: int = 4) -> list:
+    """The question's conditions, as groups of alternatives.
+
+    AND and OR are not the same demand and the enumeration splitter (D-131)
+    does not distinguish them, because for RETRIEVAL both are worth searching.
+    For an audit the difference decides correctness: gf-04 asks for analyses
+    that "correct them back to particle level or truth level", and a run that
+    retrieved particle level has covered that condition. Treating the two
+    halves as separate demands made the audit fire on a sound answer, which is
+    the false positive this mechanism can least afford.
+
+    So: split on AND and commas into groups, then split each group on OR into
+    alternatives. A group is covered when ANY alternative is.
+    """
     from hepcoveragekg.query import planner as _p
 
-    concepts = _p.enumerated_concepts(question or "")
-    if len(concepts) < 2:
+    t = re.sub(r"\(.*?\)", "", question or "")
+    t = re.sub(r"\b(rather than|instead of)\b.*$", "", t, flags=re.IGNORECASE)
+    groups = []
+    for chunk in re.split(r",\s+|\s+and\s+", t):
+        alts = []
+        for part in re.split(r",\s*or\s+|\s+or\s+|\bor\b", chunk):
+            words = [w for w in re.findall(r"[A-Za-z][A-Za-z\-\+\u2192>]*", part)
+                     if w.lower() not in _p._ENUM_STOP]
+            if 1 <= len(words) <= 5:
+                phrase = " ".join(words)
+                if len(phrase) > 3 and phrase not in alts:
+                    alts.append(phrase)
+        if alts and alts not in groups:
+            groups.append(alts)
+    return groups[:limit]
+
+
+def uncovered_conditions(question: str, conn, session) -> list:
+    """Conditions the question names that nothing retrieved covers.
+
+    Reported by the group's first alternative, which is the wording the
+    question leads with.
+    """
+    from hepcoveragekg.query import planner as _p
+
+    groups = condition_groups(question or "")
+    if len(groups) < 2:
         # A single-condition question has nothing to be partially covered:
         # if it retrieved nothing at all that is an abstention, which is the
         # ladder's business, not this one.
@@ -131,7 +168,7 @@ def uncovered_conditions(question: str, conn, session) -> list:
     if not labels:
         return []
     blob = " ".join(labels)
-    return [c for c in concepts if not _p._covers(blob, c)]
+    return [g[0] for g in groups if not any(_p._covers(blob, alt) for alt in g)]
 
 
 def invented_papers(text: str, conn) -> list:
