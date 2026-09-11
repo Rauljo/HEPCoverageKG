@@ -115,9 +115,25 @@ def main(argv):
         for label in per:
             if label == base:
                 continue
-            d = [per[label][k] - per[base][k] for k in per[label] if k in per[base]]
+            shared = [k for k in per[label] if k in per[base]]
+            how = "by record"
+            if len(shared) < min(len(per[label]), len(per[base])):
+                # The two arms do not share repeat labels (a pooled control of
+                # two one-repeat jobs against a two-repeat arm). Pairing by
+                # record would silently drop half the data, so pair the
+                # per-question means instead and say so.
+                how = "by question"
+                qa, qb = {}, {}
+                for (qid, _), v in per[label].items():
+                    qa.setdefault(qid, []).append(v)
+                for (qid, _), v in per[base].items():
+                    qb.setdefault(qid, []).append(v)
+                d = [st.mean(qa[q]) - st.mean(qb[q]) for q in qa if q in qb]
+            else:
+                d = [per[label][k] - per[base][k] for k in shared]
             if len(d) > 1:
-                print(f"  {label:20s} vs {base}: {st.mean(d):+.3f} (se {st.stdev(d) / math.sqrt(len(d)):.3f}, n={len(d)})")
+                print(f"  {label:20s} vs {base}: {st.mean(d):+.3f} "
+                      f"(se {st.stdev(d) / math.sqrt(len(d)):.3f}, n={len(d)}, {how})")
 
 
 if __name__ == "__main__":
