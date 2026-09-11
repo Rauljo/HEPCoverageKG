@@ -8,6 +8,7 @@ draft alone added ten wrong ids per answer). This scores each record on
 `constrained_ids` minus whatever the answer critic struck.
 
 Usage: python eval/analysis/score_constrained_list.py LABEL=JOB [LABEL=JOB ...]
+       [BASE=LABEL] [FILTER=<qid prefix>]
 Jobs are looked up in eval/runs/dias/*-JOB.jsonl. Retrieval questions are
 scored against the exact truth set; Gabriel's questions against his verdicts
 (precision on the judged set, recall over gold). Pass BASE=LABEL to get paired
@@ -21,13 +22,41 @@ G = {json.loads(l)["qid"]: json.loads(l) for l in open("eval/questions/gabriel-g
 
 
 def load(job):
-    f = sorted(glob.glob(f"eval/runs/dias/*-{job}.jsonl"))[-1]
-    return [json.loads(l) for l in open(f).read().splitlines()[1:]]
+    """Records for one job, or for several pooled with `+`.
+
+    Pooling matters: the wave-2 control is two jobs of one repeat each, and
+    scoring only one of them against a two-repeat arm compares 84 answers with
+    168 and moves the control by 0.03 (0.118 vs 0.146 on the two repeats).
+    """
+    out = []
+    for part in str(job).split("+"):
+        hits = sorted(glob.glob(f"eval/runs/dias/*-{part.strip()}.jsonl"))
+        if not hits:
+            raise SystemExit(f"no run file for job {part.strip()}")
+        out += [json.loads(l) for l in open(hits[-1]).read().splitlines()[1:]]
+    return out
 
 
 def listset(a):
     s = set(map(str, a.get("constrained_ids") or []))
     return s - {str(d["id"]) for d in (a.get("answer_review") or {}).get("dropped_papers") or []}
+
+
+def scores_on_text(records) -> bool:
+    """True when this run has no selected list anywhere, so its answers must be
+    read from the text instead.
+
+    A control that predates constrained selection carries no `constrained_ids`
+    at all, and scoring it by the list rule gave F1 0.000 with an undefined
+    precision -- a whole column of zeros that looked like a result. The test is
+    run-wide on purpose: inside a constrained run, a record whose selector
+    chose nothing scored zero and must keep scoring zero.
+    """
+    return not any((r.get("answer") or {}).get("constrained_ids") for r in records)
+
+
+def answer_set(a, on_text: bool) -> set:
+    return set(ARX.findall(a.get("text") or "")) if on_text else listset(a)
 
 
 def prf(named, gold, universe=None):
@@ -40,22 +69,30 @@ def prf(named, gold, universe=None):
 
 def main(argv):
     base = None
+    prefix = ""
     arms = []
     for a in argv:
         k, v = a.split("=", 1)
         if k == "BASE":
             base = v
+        elif k == "FILTER":
+            # A run file can hold several question types (the 164-question set
+            # mixes retrieval, per-paper, counts and the supervisor's nine).
+            # Comparing it with an 84-question run without this filter scores
+            # different populations and reads as a difference between arms.
+            prefix = v
         else:
             arms.append((k, v))
     m = lambda v: st.mean(v) if v else float("nan")
     per = {}
     print(f"{'arm':22s} {'F1':>6s} {'P':>5s} {'R':>5s} {'size':>5s} {'right':>6s} {'wrong':>6s} {'n':>4s}")
     for label, job in arms:
-        R = load(job)
+        R = [r for r in load(job) if r["qid"].startswith(prefix)] if prefix else load(job)
+        on_text = scores_on_text(R)
         f1 = []; P = []; Rc = []; sz = []; ri = []; wr = []
         per[label] = {}
         for r in R:
-            a = r["answer"]; L = listset(a)
+            a = r["answer"]; L = answer_set(a, on_text)
             if r["qid"] in G:
                 q = G[r["qid"]]; g = set(q["truth"]["papers"]); u = set(q["truth"].get("universe") or []) | g
                 p, rc, f = prf(L, g, u); wrong = len((L & u) - g)
@@ -66,7 +103,8 @@ def main(argv):
             f1.append(f); sz.append(len(L)); ri.append(len(L & g)); wr.append(wrong); per[label][(r["qid"], r["repeat"])] = f
             if L:
                 P.append(p); Rc.append(rc)
-        print(f"{label:22s} {m(f1):6.3f} {m(P):5.2f} {m(Rc):5.2f} {m(sz):5.1f} {m(ri):6.1f} {m(wr):6.1f} {len(f1):4d}")
+        tag = " (text)" if on_text else ""
+        print(f"{label + tag:22s} {m(f1):6.3f} {m(P):5.2f} {m(Rc):5.2f} {m(sz):5.1f} {m(ri):6.1f} {m(wr):6.1f} {len(f1):4d}")
     if base and base in per:
         for label in per:
             if label == base:
