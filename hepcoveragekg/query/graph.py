@@ -388,7 +388,10 @@ def _constrained_ids(runtime, session) -> None:
     if os.environ.get("CRITIC_SELECTS", "") == "1" and runtime.get("answer_critic_chat"):
         from hepcoveragekg.query import answer_critic as AC
         try:
-            evidence = AC.evidence_by_paper(conn, ids, cands)
+            if os.environ.get("CRITIC_EVIDENCE", "") == "paper":
+                evidence = AC.evidence_by_paper_wide(conn, cands, ids)
+            else:
+                evidence = AC.evidence_by_paper(conn, ids, cands)
             review = AC.judge_papers(runtime["answer_critic_chat"], session.question, evidence)
         except Exception as exc:  # noqa: BLE001 -- a judge must not kill a run
             logger.warning("critic-selects failed, no list written: %s", exc)
@@ -568,7 +571,10 @@ def _answer_critic(runtime, session) -> None:
     if conn is None or chat is None or not named:
         return
     try:
-        evidence = AC.evidence_by_paper(conn, session.known_entity_ids, named)
+        if os.environ.get("CRITIC_EVIDENCE", "") == "paper":
+            evidence = AC.evidence_by_paper_wide(conn, named, session.known_entity_ids)
+        else:
+            evidence = AC.evidence_by_paper(conn, session.known_entity_ids, named)
         review = AC.judge_papers(chat, session.question, evidence)
     except Exception as exc:  # noqa: BLE001 -- a judge must not kill a run
         logger.warning("answer-critic failed, keeping the answer as is: %s", exc)

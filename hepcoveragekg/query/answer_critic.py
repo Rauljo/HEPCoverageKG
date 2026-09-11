@@ -118,6 +118,10 @@ _WORD = re.compile(r"[a-z0-9][a-z0-9+\-]{1,}")
 _STOP = frozenset("the a an of in on for to and or with which that this these those use uses used using analyses analysis paper papers their its is are was were be by as at from into than".split())
 
 
+_REQ = re.compile(r"\b(require[sd]?|requiring|requirement|select(?:ed|ion)?|at least|exactly|must|veto(?:ed)?|"
+                  r"greater than|above|threshold|candidate events|events are)\b", re.I)
+
+
 def _question_terms(question: str) -> set:
     return {w for w in _WORD.findall((question or "").lower()) if w not in _STOP}
 
@@ -129,7 +133,7 @@ def _overlap(text: str, terms: set) -> int:
 
 def _render(paper_id: str, labels: Iterable[str], quotes: Iterable[str],
             aliases: Optional[Iterable[str]] = None, *,
-            question: str = "", n_quotes: int = 5) -> str:
+            question: str = "", n_quotes: int = 8) -> str:
     """The block the judge reads for one paper.
 
     RANKED BY THE QUESTION (D-163). Until 2026-09-10 the labels were the
@@ -156,7 +160,12 @@ def _render(paper_id: str, labels: Iterable[str], quotes: Iterable[str],
         cterms |= _question_terms(l)
     cterms |= {str(a).lower() for a in (aliases or []) if a}
     qs = list(dict.fromkeys(str(q).strip().replace("\n", " ") for q in quotes if str(q or "").strip()))
-    qs = sorted(qs, key=lambda q: (-_overlap(q, qterms) * 2 - _overlap(q, cterms), qs.index(q)))
+    # A sentence that states a REQUIREMENT outranks one that defines the
+    # object (D-165): on Gabriel's questions 17 of 111 gold papers the 9B
+    # judge dropped had their selection sentence beyond the window, under
+    # definitions that matched more question words.
+    qs = sorted(qs, key=lambda q: (-_overlap(q, qterms) * 2 - _overlap(q, cterms)
+                                   - (1 if _REQ.search(q) else 0), qs.index(q)))
     out = [f"PAPER {paper_id}", f"  retrieved: {lab}"]
     for q in qs[:n_quotes]:
         out.append(f"  quote: {q[:QUOTE_CHARS]}")
@@ -261,6 +270,34 @@ def evidence_by_paper(conn, entity_ids: Iterable[str],
             for a_ in (parsed or []):
                 if a_:
                     aliases.add(str(a_))
+    return out
+
+
+def evidence_by_paper_wide(conn, papers: Iterable[str], entity_ids: Iterable[str] = ()) -> dict:
+    """{paper_id: (labels, quotes, aliases)} from EVERYTHING the graph holds
+    for the paper, not only the entities this run retrieved (D-165).
+
+    `evidence_by_paper` judges a paper on what the run surfaced. For a judge
+    deciding whether a paper satisfies a condition that is the wrong
+    restriction: on Gabriel's questions 14 of the 26 gold papers the judge
+    dropped "for lack of a requirement" had the requirement sentence in the
+    graph, attached to a final-state or region entity the search never
+    touched. Labels stay those of the retrieved entities (they say why the
+    paper is a candidate); quotes come from every assertion of the paper,
+    and the ranking in `_render` picks the ones that bear on the question.
+    """
+    base = evidence_by_paper(conn, entity_ids, papers) if entity_ids else {}
+    out: dict = {}
+    for pid in {str(p) for p in papers}:
+        labels, _, aliases = base.get(pid, (set(), [], set()))
+        rows = conn.execute(
+            """SELECT DISTINCT ev.quote FROM assertion a
+               JOIN assertion_evidence ae ON ae.assertion_id = a.assertion_id
+               JOIN evidence ev ON ev.evidence_id = ae.evidence_id
+               WHERE a.paper_id = ?""", (pid,)).fetchall()
+        quotes = [(r[0] if isinstance(r, tuple) else r["quote"]) for r in rows]
+        quotes = [q for q in quotes if q]
+        out[pid] = (set(labels), quotes, set(aliases))
     return out
 
 

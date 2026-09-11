@@ -275,7 +275,7 @@ def test_evidence_shown_is_ranked_by_the_question():
     lines = block.splitlines()
     assert lines[1].startswith("  retrieved: HistFitter framework")
     assert lines[2] == "  quote: The statistical analysis uses the HistFitter framework."
-    assert len([l for l in lines if l.startswith("  quote:")]) == 5
+    assert len([l for l in lines if l.startswith("  quote:")]) == 5  # six quotes given, window is 8
 
 
 def test_quote_ranking_uses_the_matched_labels_and_aliases():
@@ -316,3 +316,25 @@ def test_judge_call_falls_back_to_a_small_cap_when_the_server_rejects_the_big_on
     out = planner.answer_critic_call(_C(), "m", [{"role": "user", "content": "q"}], 8000)
     assert out.choices[0].message.content == '{"verdicts": []}'
     assert calls == [8000, 8000, 1500]
+
+
+def test_paper_wide_evidence_reaches_sentences_on_unretrieved_entities():
+    """D-165: the requirement sentence hung on an entity the run never retrieved."""
+    conn = sqlite3.connect(":memory:"); conn.row_factory = sqlite3.Row
+    conn.execute("CREATE TABLE entity_occurrence (entity_id TEXT, paper_id TEXT, label TEXT, aliases TEXT)")
+    conn.execute("CREATE TABLE assertion (assertion_id TEXT, paper_id TEXT, subject_id TEXT, object_id TEXT)")
+    conn.execute("CREATE TABLE assertion_evidence (assertion_id TEXT, evidence_id TEXT)")
+    conn.execute("CREATE TABLE evidence (evidence_id TEXT, quote TEXT)")
+    conn.execute("INSERT INTO entity_occurrence VALUES ('E1','P1','b-tagged jet','[]')")
+    conn.execute("INSERT INTO entity_occurrence VALUES ('E2','P1','signal region SR-A','[]')")
+    conn.execute("INSERT INTO assertion VALUES ('a1','P1','E1',NULL)"); conn.execute("INSERT INTO assertion VALUES ('a2','P1','E2',NULL)")
+    conn.execute("INSERT INTO assertion_evidence VALUES ('a1','ev1')"); conn.execute("INSERT INTO assertion_evidence VALUES ('a2','ev2')")
+    conn.execute("INSERT INTO evidence VALUES ('ev1','Jets containing b-hadrons are identified.')")
+    conn.execute("INSERT INTO evidence VALUES ('ev2','Events are required to have at least one b-tagged jet.')")
+    narrow = AC.evidence_by_paper(conn, ["E1"], ["P1"])
+    wide = AC.evidence_by_paper_wide(conn, ["P1"], ["E1"])
+    assert "Events are required to have at least one b-tagged jet." not in narrow["P1"][1]
+    assert "Events are required to have at least one b-tagged jet." in wide["P1"][1]
+    assert wide["P1"][0] == {"b-tagged jet"}          # labels stay the retrieved ones
+    block = AC._render("P1", *wide["P1"], question="Which analyses use b-tagged jets in their event selection?")
+    assert block.splitlines()[2] == "  quote: Events are required to have at least one b-tagged jet."
