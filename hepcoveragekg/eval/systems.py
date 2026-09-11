@@ -35,6 +35,13 @@ from typing import Any, Callable, Optional, Protocol, runtime_checkable
 from .questions import Question
 
 
+def _reflect_mode() -> str:
+    """The reflection mode as the run actually saw it, not as it was labelled."""
+    from hepcoveragekg.query import reflect
+
+    return reflect.mode()
+
+
 @dataclass
 class Answer:
     """What a system returns, and everything the scorers can look at.
@@ -122,6 +129,16 @@ class Answer:
     reflections_used: int = 0
     reflect_checks: int = 0
     reflect_note: str = ""
+    #: THE ARM'S OWN SETTINGS, WRITTEN ON EVERY RECORD.
+    #:
+    #: 2026-09-11: three paper36 runs carried `--subgoal-status` and the same
+    #: config hash, and nothing in the record said which was inline, which
+    #: split the status into its own call, and which scoped it to the whole
+    #: question. Two were told apart only by counting status calls; the third
+    #: could not be identified at all. These knobs live in the environment, so
+    #: the flag string and the config hash both miss them.
+    subgoal_scope: str = ""
+    reflect_mode: str = ""
     reflect_defects: list = field(default_factory=list)
     #: Enumeration expansion (D-131).
     enum_concepts: int = 0
@@ -442,6 +459,8 @@ def from_session(session, conn=None) -> Answer:
         reflections_used=int(getattr(session, "reflections_used", 0) or 0),
         reflect_checks=int(getattr(session, "reflect_checks", 0) or 0),
         reflect_note=str(getattr(session, "reflect_note", "") or "")[:1200],
+        subgoal_scope=os.environ.get("SUBGOAL_SCOPE", ""),
+        reflect_mode=_reflect_mode(),
         reflect_defects=list(getattr(session, "reflect_defects", []) or []),
         enum_concepts=getattr(session, "enum_concepts", 0),
         enum_added=getattr(session, "enum_added", 0),

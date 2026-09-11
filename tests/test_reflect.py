@@ -353,3 +353,24 @@ def test_the_check_uses_its_own_client_when_there_is_one(monkeypatch):
     # with no separate endpoint it falls back to the planner's client
     assert G._reflect_chat({"chat": "planner"}) == "planner"
     assert G._reflect_chat({"chat": "planner", "reflect_chat": "small"}) == "small"
+
+
+def test_the_record_says_which_arm_it_was(monkeypatch):
+    """Three paper36 runs carried --subgoal-status and the same config hash.
+
+    The knobs live in the environment, so the flag string and the config hash
+    both miss them and the arm cannot be identified after the fact.
+    """
+    from hepcoveragekg.eval import systems
+
+    monkeypatch.setenv("REFLECT_MODE", "model")
+    monkeypatch.setenv("SUBGOAL_SCOPE", "question")
+    session = P.Session(question=Q)
+    rec = systems.from_session(session)
+    assert rec.reflect_mode == "model"
+    assert rec.subgoal_scope == "question"
+
+    monkeypatch.delenv("REFLECT_MODE")
+    monkeypatch.delenv("SUBGOAL_SCOPE")
+    rec = systems.from_session(P.Session(question=Q))
+    assert rec.reflect_mode == "off" and rec.subgoal_scope == ""
