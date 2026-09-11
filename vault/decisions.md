@@ -8019,3 +8019,84 @@ rather than proceed. The header now prints `reflect=`, `subgoals=` and
 `status_call=`, and a job whose `SLURM_JOB_NAME` contains `reflect` exits 6
 if the mode is off. The job name is the only place the intent was written
 down, so it is the only thing available to check against.
+
+## D-172 outcome -- the index prediction fails, and the mechanism that helps is not an index
+
+The seven value questions, 3 repeats, 21 records per arm, zero errors
+anywhere, scored by facts stated (numbers verbatim) against
+`provenance.facts`. Base is 54421.
+
+| arm | facts stated | silent | rounds | vs base (se) |
+|---|---|---|---|---|
+| **sub-goal status (54425)** | **0.44** | 0 | 4.33 | **+0.075 (0.041)** |
+| base (54421) | 0.36 | 0 | 2.90 | -- |
+| `--index-quotes` (54427) | 0.35 | 0 | 2.71 | -0.008 (0.047) |
+| ladder + both indexes (54430) | 0.35 | 0 | 2.81 | -0.008 (0.028) |
+| both indexes (54428) | 0.34 | 0 | 2.76 | -0.024 (0.032) |
+| `--index-values` (54426) | 0.31 | 0 | 2.67 | -0.056 (0.052) |
+| all three mechanisms (54422) | 0.29 | 5 | 2.71 | -0.068 (0.076) |
+| widening ladder (54429) | 0.25 | 2 | 3.05 | -0.110 (0.059) |
+
+**The prediction on record is wrong, and by a lot.** D-172 measured that the
+default index can reach 26% of the 23 facts, quotes 52%, values 70%, both
+96%, and predicted the index arms would separate from the mechanism arms by
+more than the mechanisms separate from each other. Every index arm is flat or
+negative, and the largest effect in the table belongs to a mechanism.
+
+The per-question table says where the prediction broke:
+
+| q | base | all3 | status | values | quotes | both | ladder | ladder+idx |
+|---|---|---|---|---|---|---|---|---|
+| gf-06 | 0.28 | 0.39 | 0.33 | 0.22 | 0.28 | 0.22 | 0.11 | 0.22 |
+| gf-10 | 0.00 | 0.00 | 0.00 | 0.00 | **0.17** | 0.00 | 0.00 | 0.00 |
+| gf-11 | 0.87 | 1.00 | **1.00** | 0.87 | 0.87 | 0.87 | 0.93 | 0.87 |
+| gf-12 | 0.22 | 0.11 | 0.22 | **0.33** | 0.22 | 0.22 | 0.22 | 0.33 |
+| gf-13 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 |
+| gf-14 | 0.67 | 0.22 | 0.67 | 0.22 | 0.44 | 0.56 | 0.00 | 0.56 |
+| gf-15 | 0.50 | 0.33 | **0.83** | 0.50 | 0.50 | 0.50 | 0.50 | 0.50 |
+
+**Reachable is not retrieved.** The 26/52/70/96 figures came from asking
+whether a fact *can* be matched by a search over that field. What the arms
+measure is whether the planner, given the wider index, actually issues a
+search that lands on it. Widening the index enlarges the space the planner
+must search without telling it to search there, and on a 60-paper corpus that
+mostly adds rows it does not read. gf-12 (+0.11 under values) and gf-10
+(+0.17 under quotes, from zero) are the only two cells where the wider index
+paid, and they are single-fact movements.
+
+**gf-13 is zero in all eight arms and gf-10 is zero in seven.** They are not
+noise-limited, they are unreachable, and the chapter should name them rather
+than average them away. They are 2 of 7 questions -- a ceiling of about 0.71
+on this set before any mechanism is considered.
+
+**The sub-goal status arm buys its gain with rounds** (4.33 against 2.90). It
+is the only arm that keeps the run going when the run would otherwise stop
+short, which is what a question whose answer is a number needs. It is also
+the only mechanism positive on all three question sets.
+
+**Composition is not free.** All three mechanisms together score -0.068 and
+produce five silent answers, against +0.075 for the status alone.
+
+## D-171 correction -- the widening ladder was never measurable, in three arms that measured it
+
+The `-0.005 (0.020)` on the D-171 outcome table and the `-0.110 (0.059)` and
+`-0.008 (0.028)` above are **not mechanism results and must not be reported
+as such**. The ladder's counters -- `widenings_offered`, `widenings_taken`,
+`widenings_used` -- live on the Session and stopped there. Nothing reached
+the record and nothing was logged, so 54403, 54429 and 54430 cannot say
+whether the ladder executed a single time.
+
+That leaves two readings the run files cannot separate: the ladder ran and
+did not help, or the ladder never ran. The rule this project applies to a
+mechanism that never fires is to report it as a no-op rather than a null
+result; the rule here has to be weaker, because no-op has not been
+established either. **Unmeasured**, and the three arms are withdrawn from the
+mechanism comparison until they are re-run.
+
+The counters are now on every record (`widenings_offered`, `widenings_taken`,
+`widening_rungs`) and every offer is logged, so a ladder arm can be checked
+while it runs. Not pulled on DIAS -- jobs are running there; the re-run waits
+for the queue to clear.
+
+This is the same class as D-179 and the `subgoal_scope` gap: an arm whose
+behaviour cannot be read back off its own run file. Three of them in one day.
