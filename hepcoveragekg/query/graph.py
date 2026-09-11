@@ -636,7 +636,7 @@ def _answer_critic(runtime, session) -> None:
 
 def execute(state: PlannerState, config=None) -> PlannerState:
     """Run this round's batch of tool calls and feed the results back."""
-    from hepcoveragekg.query import planner, widen
+    from hepcoveragekg.query import planner, reflect, widen
 
     runtime = _runtime(config)
     session = state["session"]
@@ -757,6 +757,31 @@ def execute(state: PlannerState, config=None) -> PlannerState:
                             suggestion=widened.message)})
                     session.steps.append(planner.Step(state["round"], "push",
                                                       {"rung": widened.rung}))
+                    continue
+
+            # POST-ANSWER REFLECTION (D-177), checked against the GRAPH, not
+            # against the model's opinion of its own answer. It may send the
+            # run back to retrieve a condition nothing covers; it may never
+            # edit or re-judge the answer, so a right answer cannot be turned
+            # into a wrong one (Pan et al. 2024's warning about post-hoc
+            # correction degrading correct responses).
+            if claimed != "not_in_graph":
+                defects = reflect.should_reflect(
+                    session.question, str(args.get("text") or session.answer or ""),
+                    runtime.get("conn"), session, rounds_left,
+                    enabled=bool(runtime.get("post_reflect")))
+                if defects:
+                    session.reflections_used += 1
+                    for d in defects:
+                        session.reflect_offered.add(
+                            d.detail if d.kind == reflect.UNCOVERED else d.kind)
+                        session.reflect_defects.append({"kind": d.kind, "detail": d.detail})
+                    state["messages"].append({
+                        "role": "tool", "tool_call_id": call["id"],
+                        "content": reflect.message(defects, rounds_left)})
+                    session.steps.append(planner.Step(
+                        state["round"], "reflect",
+                        {"defects": [d.kind for d in defects]}))
                     continue
                 widened = None
             if widened is not None:

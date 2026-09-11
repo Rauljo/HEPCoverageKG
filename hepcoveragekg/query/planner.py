@@ -787,6 +787,11 @@ class Session:
     # suggestion was made rather than whether it helped.
     widenings_used: set = field(default_factory=set)
     widenings_offered: int = 0
+    #: Post-answer reflection (POST_REFLECT=1, D-177). `reflect_offered` holds
+    #: the conditions already raised, so one is never raised twice.
+    reflections_used: int = 0
+    reflect_offered: set = field(default_factory=set)
+    reflect_defects: list = field(default_factory=list)
     widenings_taken: int = 0
 
     # An `answer` call carrying neither text nor a citation was asked to try
@@ -2608,6 +2613,7 @@ def _prepare(conn, index, question, max_rounds, max_places, max_rows,
             return answer_critic_call(_ac_client, _ac_model, messages, _ac_cap)
 
         runtime["answer_critic_chat"] = _answer_critic_chat
+    runtime["post_reflect"] = os.environ.get("POST_REFLECT", "") == "1"
     runtime["persist"] = bool(persist)
     runtime["push_further"] = bool(push_further)
     runtime["simple_answer"] = bool(simple_answer)
