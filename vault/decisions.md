@@ -8252,3 +8252,68 @@ So each arm's build is equivalent to the control's **for that arm's
 configuration**, and the comparison stands. Recording the check because
 "the SHAs differ" is the kind of thing that is noticed at viva and cannot be
 answered from memory.
+
+## D-172 outcome, second correction -- an accidental replicate control, and it is 0.087 away from the first
+
+54433 was submitted as "the reviewer on the 9B" (D-175's question: is the
+reviewer's gain about reviewing, or about a second look from a big model). It
+is not that arm. **All 25 reviewer calls returned 400 "maximum context length
+is 8192" and all 25 approved by default**, so no plan was ever revised. The
+run file recorded 25 review calls and 0 rejections, which reads exactly like a
+reviewer that never objects -- the reading I gave the user an hour ago, and it
+was wrong. It was a reviewer that never ran. Same bug as D-164, one component
+over, on the same 8192-token window.
+
+**What that accidentally produced is more valuable than the arm.** A run with
+`--reviewer` whose reviewer never fires is a **replicate of the base**: 2.62
+rounds against the base's 2.90, 13.6 entities against 14.4, zero revisions.
+And it scores **0.275 facts stated against the base's 0.362**.
+
+| | facts stated | clean cells |
+|---|---|---|
+| base (54421) | 0.362 | 21/21 |
+| de facto replicate (54433) | 0.275 | 21/21 |
+| **difference** | **0.087** | |
+
+**So the noise floor on these seven questions is about 0.09, and every effect
+in D-172 outcome is inside it, including the one I called a result.** The
+sub-goal status arm's +0.075 is smaller than the gap between two runs of the
+same configuration. D-093 already established this for the supervisor's set
+questions -- two identical QwQ runs differed by 0.113 while the whole arm
+spread was 0.048 -- and the lesson did not get carried to the value questions,
+which are a *smaller* set.
+
+What survives about the status arm is consistency rather than size: it is
+positive in three independent readings (+0.075 combined call, +0.107 and
++0.092 in the two split-call runs), and no other arm is positive twice. That
+is worth a sentence and is not worth a number.
+
+**The reruns, for the record** (clean cells, paired):
+
+| arm | clean | facts (clean) | vs base |
+|---|---|---|---|
+| status, own call (54445 rerun) | 13/21 | 0.562 | +0.092 (0.086) |
+| reviewer (54444 rerun) | 12/21 | 0.258 | -0.100 (0.060) |
+| 9B reviewer -- **void, never ran** (54433) | 21/21 | 0.275 | -0.087 (0.045) |
+
+The reruns did **not** recover their error rates: 8 and 9 of 21 records still
+timed out after the server was cleared to four jobs, and the first failure in
+54444 came at 486s, not at the 1800s ceiling -- these are per-request
+timeouts against QwQ, not the per-record budget. The value questions are the
+slowest thing on the cluster and the lane is not reliable for them. The
+OpenRouter lane on the same night returned 0 errors in 31 records.
+
+**Consequence for the write-up.** The seven value questions cannot carry a
+mechanism comparison. They can carry the two statements that survive: which
+facts are reachable at all (gf-13 zero in every arm, gf-10 in seven), and that
+widening the index does not help the planner find them. The mechanism ranking
+has to come from the 84-question set.
+
+## D-175 outcome -- withdrawn before it was ever run
+
+The reviewer-on-a-different-model arm has still never executed. 54433 is void.
+Relaunching it needs the fix committed tonight (a context overflow retries with
+the history dropped and the schema truncated, and a call that still fails sets
+`Review.failed`, counted as `review_failures` on every record). Until then the
+question D-175 asks -- is the reviewer's effect about reviewing or about model
+size -- is open and unmeasured.
