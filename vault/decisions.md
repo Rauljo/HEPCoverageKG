@@ -7707,3 +7707,100 @@ Cost note for both: the reviewer arm already measured 4.4 review calls and
 2.7 rejections per answer, taking model calls from 3.5 to 6.0 and spending
 ~10.8k tokens per answer on review alone, all on the answerer's own model
 (QwQ). The split status call adds one call per round on the same model.
+
+## D-171 outcome -- the planning mechanisms on per-paper questions: the hypothesis does not hold
+
+36 per-paper questions x 2 repeats (72 records each), QwQ, no constrained
+selection and no judge (the selector is gated off for this shape), zero
+errors anywhere. Scored by label recall: retrieved (did the tools return the
+paper's truth labels) and mentioned, with the fuzzy variant as the headline.
+
+| arm | retrieved | mentioned (fuzzy) | rounds | LLM calls | review calls / rejections | vs base (se) |
+|---|---|---|---|---|---|---|
+| base | 0.97 | 0.78 | 2.69 | 2.7 | -- | -- |
+| reviewer | 1.00 | **0.82** | 2.62 | 2.7 | 75 / 3 | +0.036 (0.022) |
+| reviewer + stated objective | 1.00 | 0.78 | 2.65 | 2.7 | 74 / 2 | -0.002 (0.035) |
+| widening ladder | 0.99 | 0.78 | 2.60 | 2.6 | -- | -0.005 (0.020) |
+| all three | 1.00 | 0.77 | 2.79 | 3.1 | 102 / 21 | -0.013 (0.044) |
+| sub-goal status (combined call) | 1.00 | 0.74 | 2.97 | 3.0 | -- | -0.041 (0.033) |
+
+The user's hypothesis was that these mechanisms, used in the literature to
+get a specific answer right, would pay on questions whose answer is a fact
+about one paper rather than a set. They do not. The best is the reviewer at
++0.036, one and a half standard errors; the sub-goal status arm is the worst
+at -0.041, as it was on set questions; everything else is zero.
+
+Three observations that matter more than the ranking.
+
+**Retrieval is already perfect here and stays perfect.** Every arm sits at
+0.97-1.00 retrieved. The gap between retrieved and mentioned (0.19 at base)
+is the whole loss on this question type, and no planning mechanism closes
+it: the model retrieves the paper's labels and then writes an answer that
+says four fifths of them. That is the same handoff failure the citation
+section is about, in a question shape where constrained selection is gated
+off and therefore cannot fix it.
+
+**The reviewer barely fires here.** 75 review calls and 3 rejections across
+72 answers, against 102 calls and 21 rejections for the all-three arm on the
+same questions, and 4.4 calls with 2.7 rejections per answer on the
+supervisor's set questions. A per-paper plan is one search and one hop, so
+there is nothing for a plan reviewer to object to. Its +0.036 comes from
+three rejections, which is not a mechanism working, it is noise with a
+plausible story attached.
+
+**Adding the stated objective removed the reviewer's gain** (+0.036 ->
+-0.002) while leaving the rejection rate unchanged (3 -> 2). So the reviewer
+run as designed, which is the configuration D-173 said had never been
+tested, is not better than the weaker version; on this question type the
+objective block costs the planner prompt space and buys nothing.
+
+Consequence for the write-up: per-paper questions are a handoff problem, not
+a planning problem, and the mechanisms section can say so with the retrieved
+/ mentioned pair as evidence. The answer-shape fix (constrained selection)
+is gated off for this shape by D-156, and the honest future-work line is a
+per-paper equivalent of it -- forcing the answer to enumerate the labels it
+retrieved -- rather than any of the planning arms.
+
+## D-174 -- the held-out batch was opened, deliberately, for all eleven arms
+
+The seven value questions are batch 2, which the message sent to Gabriel on
+2026-09-03 called the held-out one: "I would rather not look at it until the
+configuration is frozen, and then report it as the headline number". The
+loader enforces that -- Gabriel's questions are the TEST split and the
+runner refuses them without `--unlock-test` and a logged reason. The unlock
+log was empty until today; these seven are the first questions of his ever
+opened.
+
+I recommended opening them for the three index arms only, because those ask
+whether the system can reach the facts at all (a capability question)
+rather than which mechanism is best (a selection question, which is what
+spends a held-out set). The user instructed all eleven arms. Logged in
+eval/TEST_OPENED.log with the reason
+`batch2-value-questions-all-mechanism-arms-2026-09-11-user-instructed`.
+
+**What this costs, stated plainly for the write-up.** After today these
+seven questions can no longer serve as an unbiased estimate of system
+quality, for exactly the reason batch 1 cannot: eleven configurations were
+compared on them and the best will be reported. The chapter should say so
+where it reports them, and the honest framing is that the project now has
+no unopened held-out set -- a limitation of the evaluation, not of the
+system. If a further batch is ever collected, the discipline to apply is
+the one written in questions.py: generated questions are dev, the
+supervisor's are test, and the runner refuses them without an unlock that
+gets logged.
+
+Arms (7 questions x 3 repeats = 21 records each, QwQ, no constrained
+selection, three lanes): 54421 base, 54422 all three mechanisms, 54423
+reviewer, 54424 reviewer + stated objective, 54425 sub-goal status
+(combined call), 54426 --index-values, 54427 --index-quotes, 54428 both
+indexes, 54429 widening ladder, 54430 ladder + both indexes, 54431 sub-goal
+status as its own call. The prediction on record from D-172: the default
+index can search its way to 26% of the 23 facts, quotes take it to 52%,
+values to 70%, both to 96%, so the index arms should separate from the
+mechanism arms by much more than the mechanisms separate from each other.
+
+Two launch failures on the way, both mine: the file carried `split:
+held-out` (the loader takes only dev or test) and a `truth_source` outside
+the allowed four, and then the unlock reason contained spaces, which the
+arm script word-splits -- eleven jobs died at argparse. Reasons are now a
+single token.
