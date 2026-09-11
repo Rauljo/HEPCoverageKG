@@ -29,11 +29,17 @@ def load(job):
     168 and moves the control by 0.03 (0.118 vs 0.146 on the two repeats).
     """
     out = []
-    for part in str(job).split("+"):
+    for i, part in enumerate(str(job).split("+")):
         hits = sorted(glob.glob(f"eval/runs/dias/*-{part.strip()}.jsonl"))
         if not hits:
             raise SystemExit(f"no run file for job {part.strip()}")
-        out += [json.loads(l) for l in open(hits[-1]).read().splitlines()[1:]]
+        for line in open(hits[-1]).read().splitlines()[1:]:
+            rec = json.loads(line)
+            # Two one-repeat jobs both call their records repeat 0, so a
+            # (question, repeat) key collides and half the pairs vanish from
+            # the paired comparison. Offset by the job's position.
+            rec["repeat"] = rec.get("repeat", 0) + i * 1000
+            out.append(rec)
     return out
 
 
