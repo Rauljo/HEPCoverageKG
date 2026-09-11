@@ -273,6 +273,33 @@ esac
 echo "host=$(hostname)  arm=$ARM  questions=$QUESTIONS  repeats=$REPEATS"
 echo "flags='$FLAGS $EXTRA'  critic_endpoint='${CRITIC_BASE_URL:-<planner client, 72B>}'"
 
+# WHAT THE JOB IS CALLED IS NOT WHAT THE JOB RUNS.
+#
+# 2026-09-11: two jobs named `r84-reflect` and `g9-reflect` ran for an hour
+# before anyone looked. They were controls. Reflection is gated on an
+# environment variable this script has never known about, so it was never in
+# the sbatch --export line, and nothing in the header said so -- the header
+# prints ARM, and ARM was `off`, which was true and useless.
+#
+# So the mode is printed, and a job whose NAME claims reflection refuses to
+# start without it. The name is the only place the intent was ever written
+# down, so it is the only thing available to check the intent against.
+_REFLECT_MODE="${REFLECT_MODE:-}"
+if [ -z "$_REFLECT_MODE" ]; then
+  _REFLECT_MODE=$([ "${POST_REFLECT:-}" = "1" ] && echo graph || echo off)
+fi
+echo "reflect=$_REFLECT_MODE  subgoals=${SUBGOAL_SCOPE:-<none>}  status_call=${SUBGOAL_STATUS_CALL:-0}"
+case "${SLURM_JOB_NAME:-}" in
+  *reflect*)
+    if [ "$_REFLECT_MODE" = "off" ]; then
+      echo "FATAL: this job is named '${SLURM_JOB_NAME}' but reflection is OFF."
+      echo "       Pass REFLECT_MODE=model (or graph) in --export, or rename the"
+      echo "       job. Refusing to spend a 24h slot producing a control that"
+      echo "       will be read as a reflection arm (2026-09-11, 54438/54439)."
+      exit 6
+    fi ;;
+esac
+
 # SYSTEM and WORKERS are parameters now. The script hardcoded `--system
 # planner`, so the free-SQL control could not be run against a local vLLM at
 # all -- and the runner was serial until D-094. vLLM BATCHES concurrent
