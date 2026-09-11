@@ -123,17 +123,24 @@ def constrained_papers(client, model, question: str, draft: str, touched: set,
             "List every candidate that answers the question. Leave out candidates that merely "
             "mention the concept without satisfying the question.")}]
     content, mode = "", ""
-    try:
-        r = client.chat.completions.create(model=model, messages=messages, temperature=0.0, max_tokens=2000,
-                                           extra_body={"guided_json": schema, "chat_template_kwargs": {"enable_thinking": False}})
-        content, mode = r.choices[0].message.content or "", "guided_json"
-    except Exception:  # noqa: BLE001
+    # Standard form first: vLLM 0.18 accepts the legacy `guided_json` field
+    # and ignores it (D-159); `response_format` json_schema is enforced.
+    attempts = (
+        ("json_schema", dict(response_format={"type": "json_schema", "json_schema": {
+            "name": "papers", "schema": schema, "strict": True}},
+            extra_body={"chat_template_kwargs": {"enable_thinking": False}})),
+        ("guided_json", dict(extra_body={"guided_json": schema, "chat_template_kwargs": {"enable_thinking": False}})),
+        ("json_object", dict(response_format={"type": "json_object"})),
+    )
+    for mode_, kw in attempts:
         try:
-            r = client.chat.completions.create(model=model, messages=messages, temperature=0.0, max_tokens=2000,
-                                               response_format={"type": "json_object"})
-            content, mode = r.choices[0].message.content or "", "json_object"
+            r = client.chat.completions.create(model=model, messages=messages, temperature=0.0, max_tokens=2000, **kw)
+            content, mode = r.choices[0].message.content or "", mode_
+            break
         except Exception:  # noqa: BLE001
-            return [], ""
+            continue
+    else:
+        return [], ""
     picked: list = []
     m = re.search(r"\{.*\}", content, re.S)
     if m:
@@ -145,6 +152,59 @@ def constrained_papers(client, model, question: str, draft: str, touched: set,
         except (ValueError, AttributeError):
             pass
     return picked, mode
+
+
+def critic_selects_papers(conn, question: str, touched: set, named=(), chat=None) -> tuple[list, dict]:
+    """The judge decides free-SQL's list (CRITIC_SELECTS=1 + CONSTRAINED_IDS=1; D-166).
+
+    Candidates are the arXiv ids free-SQL's queries returned plus any it
+    named that the graph holds. Free-SQL retrieves no entities, so the
+    judge's material is built per paper from the graph: every quote the
+    paper has (paper-wide evidence, D-165), and as "retrieved" labels the
+    paper's own entity labels that share a word with the question, with
+    their aliases -- the corpus vocabulary the quote ranking needs. Same
+    prompt, same judge as the typed side. Returns (kept ids, review dict).
+    """
+    from hepcoveragekg.query import answer_critic as AC
+    from hepcoveragekg.query import planner as _p
+    cands = sorted({str(p) for p in touched} | {str(p) for p in (named or [])})[:300]
+    if not cands or conn is None:
+        return [], {}
+    try:
+        held = {str(r[0]) for r in conn.execute(
+            f"SELECT arxiv_id FROM paper WHERE arxiv_id IN ({','.join('?' * len(cands))})", cands).fetchall()}
+        cands = [c for c in cands if c in held]
+    except Exception:  # noqa: BLE001 -- no paper table: judge them all
+        pass
+    if not cands:
+        return [], {}
+    terms = AC._question_terms(question)
+    evidence = AC.evidence_by_paper_wide(conn, cands)
+    for pid in cands:
+        labels, quotes, aliases = evidence.get(pid, (set(), [], set()))
+        try:
+            rows = conn.execute("SELECT label, aliases FROM entity_occurrence WHERE paper_id = ?", (pid,)).fetchall()
+        except Exception:  # noqa: BLE001
+            rows = conn.execute("SELECT label, NULL FROM entity_occurrence WHERE paper_id = ?", (pid,)).fetchall()
+        for label, raw in rows:
+            if label and AC._overlap(str(label), terms):
+                labels.add(str(label))
+                try:
+                    for a_ in (json.loads(raw) if isinstance(raw, str) and raw else (raw or [])):
+                        if a_:
+                            aliases.add(str(a_))
+                except ValueError:
+                    pass
+        evidence[pid] = (labels, quotes, aliases)
+    if chat is None:
+        client, model = _p._critic_client()
+        cap = _p.completion_cap(model)
+        chat = lambda messages: _p.answer_critic_call(client, model, messages, cap)  # noqa: E731
+    review = AC.judge_papers(chat, question, evidence)
+    kept = set(review.kept)
+    picked = [p for p in cands if p in kept]
+    summary = review.summary() if hasattr(review, "summary") else {"kept": len(kept), "candidates": len(cands)}
+    return picked, summary
 
 
 SEARCH_TOOL = {
@@ -1018,9 +1078,14 @@ class FreeSQLSystem:
                     text_out = choice.content or ""
                     extra = {}
                     if self._constrained and touched:
-                        cl, mdl = self._client_pair()
-                        picked, mode = constrained_papers(cl, mdl, q.text, text_out, touched, where)
-                        extra = {"constrained_candidates": len(touched), "constrained_ids": picked, "constrained_mode": mode}
+                        if _os.environ.get("CRITIC_SELECTS", "") == "1":
+                            picked, rv = critic_selects_papers(self._conn, q.text, touched)
+                            extra = {"constrained_candidates": len(touched), "constrained_ids": picked,
+                                     "constrained_mode": "critic", "answer_review": rv}
+                        else:
+                            cl, mdl = self._client_pair()
+                            picked, mode = constrained_papers(cl, mdl, q.text, text_out, touched, where)
+                            extra = {"constrained_candidates": len(touched), "constrained_ids": picked, "constrained_mode": mode}
                         if picked:
                             text_out = text_out.rstrip() + "\n\nPapers: " + ", ".join(picked)
                     return Answer(
@@ -1069,10 +1134,15 @@ class FreeSQLSystem:
                         asserted = [x for x in asserted if re.fullmatch(r"\d{4}\.\d{4,5}", x)]
                         text_out = str(args.get("text") or "")
                         extra = {}
-                        if self._constrained and touched:
-                            cl, mdl = self._client_pair()
-                            picked, mode = constrained_papers(cl, mdl, q.text, text_out, touched, where)
-                            extra = {"constrained_candidates": len(touched), "constrained_ids": picked, "constrained_mode": mode}
+                        if self._constrained and (touched or asserted):
+                            if _os.environ.get("CRITIC_SELECTS", "") == "1":
+                                picked, rv = critic_selects_papers(self._conn, q.text, touched, asserted)
+                                extra = {"constrained_candidates": len(set(touched) | set(asserted)), "constrained_ids": picked,
+                                         "constrained_mode": "critic", "answer_review": rv}
+                            else:
+                                cl, mdl = self._client_pair()
+                                picked, mode = constrained_papers(cl, mdl, q.text, text_out, touched, where)
+                                extra = {"constrained_candidates": len(touched), "constrained_ids": picked, "constrained_mode": mode}
                             if picked:
                                 text_out = text_out.rstrip() + "\n\nPapers: " + ", ".join(picked)
                         return Answer(
