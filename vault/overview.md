@@ -21,8 +21,16 @@
 > and Gabriel's nine questions one by one. On 2026-09-09: the results chapter's baseline
 > section drafted with the user; free-SQL's plain control and constrained decoding built and
 > measured (D-155, D-156) -- constrained selection is the answer-side mechanism for set questions,
-> recall doubles at the footprint's precision. Logs: [`logs/2026-09-08.md`](logs/2026-09-08.md),
-> [`logs/2026-09-09.md`](logs/2026-09-09.md).
+> recall doubles at the footprint's precision. On 2026-09-10: the critics measured on top of
+> constrained selection on both lanes (D-158 + 3 addenda) -- the search critic filters entities
+> and does not reach the paper list; the answer critic strikes gold one time in four because the
+> evidence records mentions, not usage (D-150), and loses F1; the retrieval mechanisms are the
+> best arm. A vLLM-version trap (0.18 ignores `guided_json`) cost one launch and is fixed and
+> guarded (D-159). The final typed configuration -- constrained selection + kind fallback +
+> enumeration expansion, no critic -- ran once on the full 164 (D-160): Gabriel 0.598 vs 0.438
+> control, retrieval ties free-SQL with recall 0.64, at a cost on concept-set precision and on
+> counts. Nothing is running. Logs: [`logs/2026-09-08.md`](logs/2026-09-08.md),
+> [`logs/2026-09-09.md`](logs/2026-09-09.md), [`logs/2026-09-10.md`](logs/2026-09-10.md).
 
 > **→ [`system.md`](system.md) (v1.8, 2026-08-07) is now the reference document for what gets built
 > next**: the query system and the agent layers on top of the graph, the evaluation design, the

@@ -7602,3 +7602,108 @@ refuses to start against a server which will expire mid-run. The clean card
 was held by our own idle server from the previous day, so releasing it and
 resubmitting fixed it. Lesson: when the ECC guard requeues, check whether
 WE are holding the clean card with an idle server.
+
+## D-172 -- where the answers to the value questions actually live, and what that says about which mechanism to add
+
+The user asked whether the kind fallback should also be run on the per-paper
+and value questions. Checked before answering, and the answer is no for the
+fallback and yes for something else.
+
+**The fallback has no headroom on per-paper questions.** Their metric pair
+is retrieved label recall 0.97 and mentioned (fuzzy) 0.77 for the plain
+typed system: retrieval already returns almost every truth label and the
+loss is entirely in whether the ANSWER says them. A mechanism that fetches
+more rows cannot move a 0.97.
+
+**The value questions are the opposite, and the binding field is not the
+one we index.** For each of the 23 facts his seven questions ask for,
+where it exists in the graph for that paper:
+
+| | facts |
+|---|---|
+| in an entity label (searchable today) | 6 |
+| in an assertion's free-text `object_value` (searchable only with --index-values) | 10 |
+| in an evidence quote (searchable only with --index-quotes) | 6 |
+| nowhere in any field | 1 |
+
+So the search index, which holds labels alone in every run this project has
+ever made, can reach 26% of what he asks for; adding quotes reaches 52%,
+adding values 70%, both 96%. (A fact in a value or a quote can still reach
+the answer by walking from an entity retrieved by label, so these are
+bounds on SEARCH, not absolute ceilings -- but they say which lever to
+pull.) This is D-085 arriving from a new direction: value indexing was
+measured as the largest single effect in the project and has been off in
+every run since, because the chapter's questions were set questions where
+labels suffice.
+
+Two of his notes are explained by the table. On gf-11 he wrote that the
+CSVv2 algorithm "is correctly stated in the answer, but missing from the
+evidence presented" -- four of that question's five facts are in values,
+not quotes, so the evidence panel we showed him could not contain them. And
+the single fact that is nowhere is gf-06's, which is the one question he
+marked no.
+
+Arms added on the seven value questions, 3 repeats each, behind the four
+already queued: 54400 --index-values, 54401 --index-quotes, 54402 both.
+The caches for all three index configurations already exist on the cluster,
+so no build cost.
+
+## D-172 addendum -- the widening ladder added to both question sets
+
+The user asked for the widening ladder (`--persist`) on these questions.
+It was already screened on the supervisor's set questions and scored 0.514
+against a base of 0.540 (-0.025, se 0.013), but that was the wrong place
+for it: the ladder only fires when a run is ABOUT TO ABSTAIN while holding
+retrieved rows and with at least two rounds left, and on set questions with
+the judge selecting the list, abstention is rare. On per-paper questions,
+and even more on the value questions -- where 17 of 23 facts sit in fields
+the search index does not contain (D-172) -- a run that finds the paper and
+then cannot find the number is exactly the state the ladder was built for.
+
+Arms added: 54403 `--persist` on the 36 per-paper questions, 54404
+`--persist` on the seven value questions, 54405 `--persist` with both
+indexes on the value questions (the ladder's first rung drops a kind filter
+and its third shortens the search text, so it should compose with a wider
+index rather than substitute for it).
+
+What to read in the records, beyond the score: `widenings_used` per record
+and which rungs fired, and whether the abstention rate falls. A ladder that
+never fires is a no-op and must be reported as one rather than as a null
+result -- the same trap as a critic that approves everything.
+
+## D-173 -- two corrections to how the reviewer and the status arm were actually run
+
+Both came from the user reading the implementation back to me.
+
+**1. The reviewer has never been run as designed.** It is built to judge two
+things: "would running this plan serve the objective it states, and does
+that objective serve the question". The stated objective comes from the
+`--state-objective` arm, which makes the planner write two lines before its
+calls -- GOT (what the last result gave, and whether it met the objective
+set last round) and AIM (what this round is for). The reviewer's own code
+says the objective may be empty and that it then "falls back to judging the
+plan against the question alone, which is a weaker but still meaningful
+check". Every reviewer arm this project has run passed `--reviewer` alone,
+so every reviewer number -- including the screen's -0.052 -- measures the
+weaker version. Queued as designed: 54406 on the 36 per-paper questions and
+54407 on the seven value questions, both `--reviewer --state-objective`.
+
+**2. The status arm judges completeness and plans in the same call.** The
+status block is rewritten by the planner inside its own turn, so one call
+both reports on the last results and chooses the next ones. The user asked
+for them separated. Built as SUBGOAL_STATUS_CALL=1 (44a3dee): after
+execution a dedicated call receives the question, the sub-objectives, the
+previous status and what the last calls returned, with NO tools offered and
+an instruction that it does not plan or answer; it returns the rewritten
+status. The planner then gets that status read-only ("kept for you; do not
+rewrite it") and only plans. Counted per record as `subgoal_status_calls`,
+for the usual reason: a mechanism that never fires must be reported as a
+no-op rather than as a null result. Tested end to end through the plan node
+(two calls made, one recorded, the status reaching the planner's block, the
+rewrite instruction gone); suite 1040. Queued as 54408 (per-paper) and
+54409 (value questions), against the combined-call arms 54395 and 54399.
+
+Cost note for both: the reviewer arm already measured 4.4 review calls and
+2.7 rejections per answer, taking model calls from 3.5 to 6.0 and spending
+~10.8k tokens per answer on review alone, all on the answerer's own model
+(QwQ). The split status call adds one call per round on the same model.
