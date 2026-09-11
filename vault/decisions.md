@@ -8100,3 +8100,59 @@ for the queue to clear.
 
 This is the same class as D-179 and the `subgoal_scope` gap: an arm whose
 behaviour cannot be read back off its own run file. Three of them in one day.
+
+## D-172 outcome, correction -- an errored record is scored as zero, and two arms were read backwards because of it
+
+`score_value7.py` scores a record by the facts its answer states, and a
+record that errored has no answer, so it contributes 0.0 to the mean. That is
+the right default when errors are rare and even across arms. On 2026-09-11
+they were neither: the reviewer and split-status arms ran while eight eval
+jobs shared one vLLM server, and their records hit the 1200s ceiling with
+`rounds 0, llm_calls 0` -- the record never received a single response. Those
+are timeouts, not bad answers, and averaging them in measures contention.
+
+Scored on clean cells only, paired against the base:
+
+| arm | cells | clean | facts (all) | facts (clean) | paired delta on clean |
+|---|---|---|---|---|---|
+| base (54421) | 21 | 21 | 0.362 | 0.362 | -- |
+| sub-goal status (54425) | 21 | 21 | 0.437 | 0.437 | **+0.075 (0.041)** |
+| **status, own call (54431)** | 21 | **10** | 0.262 | 0.550 | **+0.107 (0.072)** |
+| all three (54422) | 21 | 17 | 0.294 | 0.363 | **-0.006 (0.078)** |
+| reviewer (54423) | 21 | 17 | 0.243 | 0.300 | -0.059 (0.032) |
+| `--index-quotes` (54427) | 21 | 21 | 0.354 | 0.354 | -0.008 (0.047) |
+| ladder + indexes (54430) | 21 | 21 | 0.354 | 0.354 | -0.008 (0.028) |
+| both indexes (54428) | 21 | 21 | 0.338 | 0.338 | -0.024 (0.032) |
+| `--index-values` (54426) | 21 | 21 | 0.306 | 0.306 | -0.056 (0.052) |
+| ladder (54429) | 21 | 21 | 0.252 | 0.252 | -0.110 (0.059) |
+
+**Two readings change, and one of them was reported to the user and has to be
+withdrawn.**
+
+**"Composition is not free" is not supported.** I wrote that all three
+mechanisms together score -0.068 against +0.075 for the status alone, and
+that the composition carries a penalty. On clean cells it is **-0.006**: flat.
+Four of its five "silent" answers were timeouts. The claim was an artefact of
+contention and is withdrawn. What survives is the weaker and duller statement
+that composing the three does not reproduce the status arm's gain.
+
+**The split-status arm was read backwards.** -0.100 including timeouts,
+**+0.107 on the ten clean cells** -- same sign as the combined-call status
+arm (+0.075) and as the same mechanism on the supervisor's nine (+0.062). It
+timed out on 52% of records, which is most of them, so by this project's own
+rule it is **void rather than negative**, and n=10 with se 0.072 cannot carry
+a conclusion either way. Relaunched as **54445** at four workers and a 1800s
+timeout, with `status_call=1` confirmed in the header.
+
+The reviewer arm is negative in both readings (-0.119 including timeouts,
+-0.059 clean), but it lost 4 of 21 records and its effect halved when they
+were removed, so it is relaunched too, as **54444**. Its mechanism did fire
+on the records it completed: 27 review calls, 11 rejections.
+
+**The index arms and the ladder are unaffected** -- zero errored records in
+all five, so their numbers stand exactly as recorded in D-172 outcome, and
+the conclusion there (reachable is not retrieved) is unchanged.
+
+**Rule for the write-up:** report the clean-cell count beside every arm on
+these small sets. Twenty-one records is small enough that four timeouts move
+a mean by 0.06, which is larger than most of the effects being compared.
