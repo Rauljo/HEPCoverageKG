@@ -11,6 +11,8 @@ import pytest
 from hepcoveragekg.query import graph, planner
 from hepcoveragekg.query import reviewer as R
 
+NS = types.SimpleNamespace
+
 
 def _reply(content="", tool_calls=None, pin=10, pout=5):
     msg = types.SimpleNamespace(content=content, tool_calls=tool_calls)
@@ -343,3 +345,40 @@ def test_inspecting_the_set_is_always_allowed():
     assert not u("SELECT COUNT(*) FROM search_1")
     assert not u("SELECT kind, COUNT(*) FROM search_1 GROUP BY kind")
     assert not u("SELECT COUNT(*) FROM entity")
+
+
+def test_a_context_overflow_retries_small_and_is_counted_as_a_failure():
+    """25 of 25 reviewer calls to the 9B returned 400 (context window) and every
+    one approved by default. The arm recorded 25 calls and 0 rejections, which
+    reads exactly like a reviewer that approves everything."""
+    from hepcoveragekg.query import reviewer as R
+
+    calls = []
+
+    def chat(messages, tools=None):
+        calls.append(messages[1]["content"])
+        if len(calls) == 1:
+            raise RuntimeError("Error code: 400 - This model's maximum context "
+                               "length is 8192 tokens")
+        return NS(choices=[NS(message=NS(content="REVISE\nsearch twice"))],
+                  usage=NS(prompt_tokens=10, completion_tokens=5))
+
+    v = R.review_plan(chat, "q", "S" * 9000, "find papers", "search(x)",
+                      history="h" * 4000)
+    assert len(calls) == 2, "the overflow must be retried, not given up on"
+    assert len(calls[1]) < len(calls[0]), "the retry must be smaller"
+    assert "h" * 100 not in calls[1], "the history is dropped on the retry"
+    assert v.approved is False and v.failed is False   # a real verdict came back
+
+    def always_400(messages, tools=None):
+        raise RuntimeError("Error code: 400 - maximum context length is 8192")
+
+    v = R.review_plan(always_400, "q", "S" * 9000, "o", "search(x)")
+    assert v.approved is True and v.failed is True, \
+        "a fail-open approval must be distinguishable from a real one"
+
+    def other_fault(messages, tools=None):
+        raise RuntimeError("Connection refused")
+
+    v = R.review_plan(other_fault, "q", "schema", "o", "search(x)")
+    assert v.approved is True and v.failed is True

@@ -1199,6 +1199,10 @@ def review(state: PlannerState, config=None) -> PlannerState:
     session.review_completion_tokens += verdict.completion_tokens
     if not verdict.parsed:
         session.review_unparsed += 1
+    # An approval the reviewer never gave. Counted separately so an arm where
+    # every call 400s can never again be read as "the reviewer never objected".
+    if getattr(verdict, "failed", False):
+        session.review_failures += 1
     if verdict.approved:
         state["replan"] = False
     else:

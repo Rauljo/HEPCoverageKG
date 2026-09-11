@@ -78,6 +78,7 @@ class Answer:
     # arm's cost is measurable rather than buried in the planner's.
     review_calls: int = 0
     reviews_rejected: int = 0
+    review_failures: int = 0
     review_prompt_tokens: int = 0
     review_completion_tokens: int = 0
     review_unparsed: int = 0
@@ -436,6 +437,7 @@ def from_session(session, conn=None) -> Answer:
         # price, and that has to be readable in the run, not inferred later.
         review_calls=getattr(session, "review_calls", 0),
         reviews_rejected=getattr(session, "reviews_rejected", 0),
+        review_failures=getattr(session, "review_failures", 0),
         review_prompt_tokens=getattr(session, "review_prompt_tokens", 0),
         review_completion_tokens=getattr(session, "review_completion_tokens", 0),
         review_unparsed=getattr(session, "review_unparsed", 0),

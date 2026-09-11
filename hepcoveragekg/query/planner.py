@@ -866,6 +866,12 @@ class Session:
     # approves everything is a no-op costing double.
     review_calls: int = 0
     reviews_rejected: int = 0
+    #: Calls that never produced a verdict and approved by default. 2026-09-12:
+    #: 25 of 25 reviewer calls to the 9B returned 400 (context window), the arm
+    #: recorded 25 calls and 0 rejections, and that reads exactly like a
+    #: reviewer that approves everything. Without this counter the two are
+    #: indistinguishable in the run file.
+    review_failures: int = 0
     review_prompt_tokens: int = 0
     review_completion_tokens: int = 0
     review_unparsed: int = 0

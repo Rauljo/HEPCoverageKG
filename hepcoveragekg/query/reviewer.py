@@ -48,6 +48,10 @@ class Review:
     prompt_tokens: int = 0
     completion_tokens: int = 0
     parsed: bool = True
+    #: The call never produced a verdict. An approval with `failed` set is the
+    #: fail-open default, NOT the reviewer choosing to approve, and the two
+    #: must never be averaged together -- see `review_failures` on the Session.
+    failed: bool = False
 
 
 _COMMON = """\
@@ -83,6 +87,13 @@ exist, that joins connect on the right keys, that a count is counting the right
 thing, and that it is a SELECT. Flag SQL that would error or return the wrong
 shape, even when the intent is right.
 """
+
+
+def _looks_like_context_overflow(exc: Exception) -> bool:
+    """Is this the prompt being too long for the model, rather than a real fault?"""
+    text = str(exc).lower()
+    return ("maximum context length" in text or "context_length_exceeded" in text
+            or "too long" in text or "reduce the length" in text)
 
 
 def _ask(chat: Callable, system: str, user: str) -> tuple[str, int, int]:
@@ -123,8 +134,30 @@ def review_plan(chat: Callable, question: str, schema: str, objective: str,
     try:
         text, pin, pout = _ask(chat, system, "\n".join(parts))
     except Exception as exc:  # noqa: BLE001 -- a broken reviewer must not kill the run
-        logger.warning(f"reviewer call failed, approving by default: {exc}")
-        return Review(True, "", 0, 0, parsed=False)
+        # A SMALL REVIEWER NEEDS A SMALL PROMPT (2026-09-12). Run against the
+        # 9B on port 8001, every one of 25 calls came back 400 "maximum context
+        # length exceeded" and every one approved by default. The arm scored as
+        # a reviewer that never objects; it was a reviewer that never ran. This
+        # is D-164 -- the 9B judge defaulting 1003/1003 verdicts on the same
+        # 8192-token window -- in a second component.
+        #
+        # The schema is the bulk of the prompt and the history is next, so the
+        # retry drops the history and truncates the schema. A reviewer judging
+        # a plan against a partial schema is weaker than one with all of it,
+        # and far better than one that is not consulted.
+        if not _looks_like_context_overflow(exc):
+            logger.warning(f"reviewer call failed, approving by default: {exc}")
+            return Review(True, "", 0, 0, parsed=False, failed=True)
+        small = [f"QUESTION\n{question}", f"\nSCHEMA (truncated)\n{schema[:1500]}"]
+        small.append("\nTHE AGENT'S STATED OBJECTIVE FOR THIS ROUND\n"
+                     + (objective.strip() or "(none stated)"))
+        small.append(f"\nWHAT IT PROPOSES TO RUN\n{plan}")
+        try:
+            text, pin, pout = _ask(chat, system, "\n".join(small))
+            logger.info("reviewer prompt trimmed to fit the context window")
+        except Exception as exc2:  # noqa: BLE001
+            logger.warning(f"reviewer call failed twice, approving by default: {exc2}")
+            return Review(True, "", 0, 0, parsed=False, failed=True)
     approved, parsed = _parse(text)
     if not parsed:
         logger.info("reviewer verdict unparseable, approving: %r", text[:120])
