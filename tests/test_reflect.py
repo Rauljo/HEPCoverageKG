@@ -305,3 +305,28 @@ def test_the_check_runs_per_round_and_the_gate_reuses_it(monkeypatch):
     assert session.reflections_used == 1
     assert "Retrieve that first" in state["messages"][-1]["content"]
     assert state["_reflect_fresh"] is False                  # next round re-checks
+
+
+def test_a_merely_unconfident_verdict_still_lets_the_planner_stop():
+    """READY:no with every part covered must not read as 'still missing'.
+
+    qwen3-32b returned READY:no on all eleven verdicts of the first live run
+    while naming an empty HAVE on four. Rendering all eleven as a gap gives
+    the planner a nudge every round and never a stopping signal.
+    """
+    covered = R.Verdict(ready=False, next_step="read the two ATLAS papers",
+                        parts=[("analyses", "3 rows, ATLAS SUSY 2019"),
+                               ("the variable", "1 row, E_T^miss")])
+    out = R.render_verdict(covered)
+    assert "you may answer" in out
+    assert "Nothing retrieved yet speaks to" not in out
+    assert "read the two ATLAS papers" in out      # NEXT is still offered
+
+    gap = R.Verdict(ready=False, next_step="search for the generator",
+                    parts=[("analyses", "3 rows"), ("the generator", "nothing yet")])
+    assert "Nothing retrieved yet speaks to: the generator" in R.render_verdict(gap)
+    assert "you may answer" not in R.render_verdict(gap)
+
+    done = R.Verdict(ready=True, next_step="-",
+                     parts=[("analyses", "3 rows"), ("the variable", "1 row")])
+    assert "Everything the question asks for has something behind it" in R.render_verdict(done)

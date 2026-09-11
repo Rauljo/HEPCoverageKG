@@ -385,10 +385,30 @@ def completeness(chat, question: str, conn, session, previous: str = "") -> Opti
 
 
 def render_verdict(v: Verdict) -> str:
-    """The block the planner is shown between rounds."""
+    """The block the planner is shown between rounds.
+
+    THREE TAILS, NOT TWO. On the first live run against qwen3-32b the check
+    returned READY:no on all eleven verdicts while naming an empty HAVE on
+    only four -- the model reads "ready" as "this is a finished piece of
+    work", which it never is mid-run. Rendering that as "still missing" every
+    round gives the planner a nudge to keep going and never a signal to stop,
+    which is the over-triggering failure mode Pan et al. describe, arrived at
+    from the opposite side to D-177's never-firing.
+
+    So the tail distinguishes a part with NOTHING behind it -- the only thing
+    the bounce acts on -- from a merely unconfident READY. The second case
+    still offers NEXT, but says plainly that every part is covered, so the
+    planner may answer.
+    """
     lines = [f"  - {p}: {have}" for p, have in v.parts] or ["  - (no parts identified)"]
-    tail = ("\n  Everything the question asks for has something behind it."
-            if v.ready else f"\n  Still missing. Most useful next: {v.next_step}")
+    if v.missing:
+        tail = f"\n  Nothing retrieved yet speaks to: {'; '.join(v.missing)}." \
+               f"\n  Most useful next: {v.next_step}"
+    elif v.ready:
+        tail = "\n  Everything the question asks for has something behind it."
+    else:
+        tail = ("\n  Every part has something behind it, so you may answer."
+                f"\n  If you want more depth first: {v.next_step}")
     return ("\n\nHOW MUCH OF THE QUESTION IS ANSWERED SO FAR (checked after the last "
             "round, from what you retrieved):\n" + "\n".join(lines) + tail)
 
