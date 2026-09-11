@@ -714,3 +714,68 @@ Their framing of the problem: most KG approaches use the graph as an *auxiliary 
   the formatting failure entirely and leaves only the selection problem. Not
   available on the hosted endpoints we used; feasible on the vLLM server.
 
+
+## Reflection and self-correction (read 2026-09-11, for D-177)
+
+**Devil's Advocate: Anticipatory Reflection for LLM Agents** (Wang et al.,
+arXiv 2405.16334). Three introspective stages around a plan of subtasks.
+(1) BEFORE acting, the agent is asked a follow-up -- "If your answer above is
+not correct, instead, the next action should be:" -- producing R remedy
+actions; they go on a stack with the original action on top, so the original
+still executes first and the remedies are popped only on failure. (2) AFTER
+acting, an alignment function judges whether the new state serves the
+subtask; on misalignment the agent backtracks to the previous state and pops
+a remedy. (3) On plan failure (stack empty, task incomplete) a comprehensive
+review writes a new plan from the full history. WebArena, zero-shot: 23.5%
+vs 20%, and 45% fewer trials and plan revisions. No ablations, so the three
+stages are not separated.
+
+**Plan-on-Graph** (Chen et al., NeurIPS 2024, arXiv 2410.23875). Already
+cited in query/subgoals.py; read properly now. Decomposes the question into
+"as few sub-objectives as possible", explores relations then entities with
+LLM selection at each step, and keeps a Memory of three things: the
+retrieved subgraph, the reasoning paths, and the sub-objective status.
+Reflection asks whether the information so far is sufficient and, if not,
+"which entities in E_cand to backtrack to" -- backtracking is to a
+previously discovered candidate ENTITY, not to a previous state. Ablation
+(Hits@1, CWQ / WebQSP / GrailQA): full 63.2 / 82.0 / 76.5; w/o Guidance
+60.1 / 80.3 / 72.4; w/o Reflection 59.4 / 78.1 / 70.5; w/o Memory 58.9 /
+77.5 / 69.3. Memory is the most valuable component.
+
+**Reflexion** (Shinn et al., 2023, arXiv 2303.11366). Actor, Evaluator,
+Self-Reflection. The Evaluator is EXTERNAL -- unit tests, exact match, an
+environment reward -- and the self-reflection model turns that sparse signal
+into verbal feedback stored in episodic memory (a sliding window of 1-3
+reflections) which conditions the next trial. Triggered on failure or on a
+loop (same action and response three times, or over 30 actions). HumanEval
+91% pass@1, ALFWorld 130/134, HotPotQA +20%, with reflection worth +8% over
+episodic memory alone.
+
+**AdaPlanner** (Sun et al., 2023, arXiv 2305.16653). Closed-loop plan
+refinement from environment feedback, in-plan and out-of-plan; code-style
+plan prompts to cut hallucination; successful plans become few-shot
+exemplars (skill discovery). ALFWorld +3.73% with 2x fewer samples,
+MiniWoB++ +4.11% with 600x fewer.
+
+**Automatically Correcting Large Language Models** (Pan et al., TACL 2024).
+The survey that decides the design. Correction is characterised by what is
+corrected, the feedback SOURCE (internal vs external), its format, its
+timing (training-time, generation-time, post-hoc) and how it is
+incorporated. Their conclusion on intrinsic self-correction is negative:
+models "lack reliable self-evaluation capabilities", self-verification is
+circular -- "using the same model to verify its outputs offers minimal
+improvement over the original generation" -- and post-hoc correction risks
+"degrading initially correct responses". They recommend external signals:
+tools, verifiers, independent critics, ground truth.
+
+**Large Language Models Cannot Self-Correct Reasoning Yet** (Huang et al.,
+ICLR 2024, arXiv 2310.01798). The measurement behind that conclusion:
+without external feedback, self-correction often degrades performance.
+
+WHAT THIS PROJECT TAKES FROM THEM (D-177). The shape of Devil's Advocate's
+post-action alignment and PoG's reflection, with the judgement computed from
+the graph rather than asked of the model, because Pan and Huang say the
+asked version is unreliable and this project has external signals to hand.
+What it deliberately does not take: Reflexion's episodic memory across
+trials (there is one trial per question here) and the model-written critique
+of its own answer.
