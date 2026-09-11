@@ -7804,3 +7804,133 @@ held-out` (the loader takes only dev or test) and a `truth_source` outside
 the allowed four, and then the unlock reason contained spaces, which the
 arm script word-splits -- eleven jobs died at argparse. Reasons are now a
 single token.
+
+## D-175 -- the reviewer on a different model, which the arm was built to allow and never did
+
+Every reviewer number in this project is QwQ reviewing QwQ: `_reviewer_chat`
+falls back to the planner's own client and REVIEWER_MODEL has never been
+set. The arm's own comment says the override exists precisely so that "the
+reviewer helped" and "a second look from a big model helped" do not get
+confounded, and that confound has stood since the arm was built.
+
+The same comment states the design assumption to be tested: "a strong
+reasoning model judging the plan, and the 8B that judges search candidates
+cannot assess whether a route answers a question". That is an assumption,
+not a measurement, and it is worth one arm on each question set. If the 9B
+reviewer matches the QwQ reviewer, the reviewer's effect is not about the
+reviewer's strength, and the mechanism can be run for a fifth of the cost
+(the reviewer arm spends 4.4 calls and ~10.8k tokens per answer on the
+most expensive model in the stack). If it is much worse, the assumption is
+confirmed and the cost is justified.
+
+Arms: 54432 on the supervisor's nine set questions with the same base as
+the screen (constrained selection + the judge selecting), so it sits
+directly beside 54355 (no reviewer, 0.540) and 54357 (QwQ reviewer, 0.488);
+54433 on the seven value questions beside 54423 (QwQ reviewer). Both with
+REVIEWER_MODEL=Qwen/Qwen3.5-9B on port 8001, which is the same endpoint the
+answer critic uses, so the reviewer and the judge are then the same model
+doing two different jobs.
+
+What to read: the rejection rate first. On set questions the QwQ reviewer
+rejected 2.7 of 4.4 plans per answer; on per-paper questions 3 of 75. A 9B
+reviewer that approves everything is a no-op and must be reported as one,
+and a 9B reviewer that rejects everything is the failure mode the fail-open
+rule exists for.
+
+## D-176 -- remembering without splitting: the cell the nested design left out
+
+The user asked whether the status arm must always carry the decomposition,
+or whether it could be self-reflection on the main goal alone. It was
+always coupled: `_prepare` ran `decompose` whenever either flag was set,
+because the two arms were built nested to separate PoG's "splitting" from
+its "memory". That leaves a 2x2 with one cell empty:
+
+| | no memory | memory |
+|---|---|---|
+| **no split** | base | **never run** |
+| **split** | --subgoals | --subgoal-status |
+
+Built as SUBGOAL_SCOPE=question (f4af99c): the decomposition call is skipped
+entirely, and the run instead carries a PROGRESS block about the question as
+a whole -- what can already be answered from what has been retrieved, and
+what is still missing, named concretely ("no papers yet for the MET
+condition" rather than "incomplete"). It composes with D-173, so the
+progress can be written by the planner inside its turn or by a dedicated
+call with no tools; the second is the version the user described, a
+completeness check after execution followed by a separate planning call.
+
+A bug caught while building it: the routine that strips the previous block
+matched on the "SUB-OBJECTIVES" heading only, so the new block would have
+accumulated one stale copy per round -- the precise failure the original
+comment warns about. Now matches both headings; test asserts a single copy
+survives. Suite 1042.
+
+Why this cell is the interesting one on the evidence so far. Splitting alone
+does nothing (-0.003 on the supervisor's nine). Splitting plus memory is
+negative on both question types (-0.030 there, -0.041 on per-paper), and its
+anatomy shows why: it doubled the entities reached, which in a 60-paper
+graph buys nothing. Memory without splitting keeps the part that might
+matter -- noticing that a condition is still unanswered -- and drops the
+part that costs rounds and floods the footprint.
+
+## D-177 -- post-answer reflection, judged against the graph (POST_REFLECT=1)
+
+The user asked for a post-reflection mechanism, having read Devil's
+Advocate, Plan-on-Graph, Reflexion, AdaPlanner and Pan et al. Notes on all
+five are in literature.md; the design follows from one thing they disagree
+about.
+
+**The disagreement.** Reflexion's reflection is verbal feedback the model
+writes about its own trajectory -- but its Evaluator is EXTERNAL (unit
+tests, exact match, an environment reward), and the reflection only puts
+that signal into words. Pan et al. (TACL 2024) survey the field and conclude
+that when the signal is internal too, the loop is circular: models "lack
+reliable self-evaluation capabilities" and post-hoc correction risks
+"degrading initially correct responses"; Huang et al. (ICLR 2024) measure
+the degradation. Devil's Advocate's alignment check and PoG's reflection are
+both asked of the model.
+
+**The design.** Keep their shape, replace the judgement with a computation,
+because this project has external signals the papers' benchmarks do not: the
+graph says which papers exist, the trace says which entities were retrieved,
+and the question names its own conditions. So at the answer exit, before the
+answer is accepted, an audit runs with no model call:
+
+- a condition the question names that NOT ONE retrieved entity covers,
+  using D-131's splitter, with OR-alternatives treated as one condition
+  (needed: the first version demanded both halves of gf-04's "particle
+  level or truth level" and fired on a sound answer);
+- an arXiv id in the answer that the graph does not hold.
+
+On a defect the run is sent back with the defect named and a concrete
+instruction. It may never edit the answer, score it, or ask the model
+whether the answer is good, so a correct answer can only be extended, never
+rewritten -- which is the property Pan et al.'s warning asks for. Bounded
+like the ladder: each condition once, MAX_REFLECTIONS=2 per run, two rounds
+required, never on an abstention (that is the ladder's job). Module
+query/reflect.py, 11 tests including an end-to-end bounce through the answer
+handler; suite 1053.
+
+**Replayed offline before running it live**, against the entities each
+recorded run retrieved:
+
+| run | fires on |
+|---|---|
+| 84 retrieval, constrained (54310) | 14 of 168 (8%) |
+| 84 retrieval, judge selects (54346) | 16 of 168 (10%) |
+| Gabriel's 9, judge selects (54355) | 1 of 18 (6%) |
+| 36 per-paper (54392) | 0 of 72 |
+
+Every firing is the invented-paper branch. **The uncovered-condition branch
+never fires on real traces**, and by my own rule that has to be reported as
+a no-op rather than as part of a working mechanism: runs retrieve 44
+entities per record, and at that breadth the token-level coverage test is
+always satisfied, even on gf-01 where the ANSWER plainly ignores the second
+condition. Making the test stricter would fire more and risk exactly the
+false positives the literature says are fatal, so it stays lenient and the
+branch is reported as untriggered.
+
+What is left is a hallucination check with a 8-10% hit rate, catching runs
+of invented ids (1606.05945, 1512.08019, 1608.03888 ... on one record). That
+is worth measuring: arms 54438 (84 retrieval questions) and 54439
+(Gabriel's nine), both on the judge-selects base, against 54346 and 54355.
