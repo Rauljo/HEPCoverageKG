@@ -372,8 +372,16 @@ def completeness(chat, question: str, conn, session, previous: str = "") -> Opti
         logger.info("completeness verdict unparseable, not interfering: %r", text[:120])
         return None
     ready = (ready_m.group(1).lower() == "yes") if ready_m else True
-    return Verdict(ready=ready, parts=parts,
-                   next_step=(next_m.group(1).strip() if next_m else "-"), raw=text)
+    v = Verdict(ready=ready, parts=parts,
+                next_step=(next_m.group(1).strip() if next_m else "-"), raw=text)
+    # Logged on every verdict, not only on failure. An arm that silently does
+    # nothing is indistinguishable from a control in the log, and that is how
+    # 54438/54439 burned an hour (D-179). One line per check makes the
+    # mechanism visible while the job is still running.
+    logger.info("completeness: ready=%s parts=%d missing=%s",
+                "yes" if v.ready else "no", len(v.parts),
+                "; ".join(v.missing)[:120] or "-")
+    return v
 
 
 def render_verdict(v: Verdict) -> str:
