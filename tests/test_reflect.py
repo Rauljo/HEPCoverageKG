@@ -396,3 +396,51 @@ def test_the_widening_ladder_reaches_the_record():
 
     quiet = systems.from_session(P.Session(question=Q))
     assert quiet.widenings_offered == 0 and quiet.widening_rungs == []
+
+
+def test_the_prose_exit_still_records_its_answer_when_reflection_is_on(monkeypatch):
+    """The bug that made the mechanism look like it suppressed answering.
+
+    `after_plan` recorded the prose answer on the two lines right after the
+    reflection's early `return "reflect_check"`. With REFLECT_MODE on, every
+    record leaving through the prose exit lost its answer: session.answer
+    empty, no stopping reason, scored as unanswered. `answered` fell 0.889 ->
+    0.167 and it looked like a result about the mechanism.
+    """
+    from hepcoveragekg.query import graph as G
+    monkeypatch.setenv("REFLECT_MODE", "model")
+    PROSE = "The analyses are 2001.06899 and 2004.14060."
+
+    # ready verdict: the run finishes, and the answer must survive the detour
+    session = P.Session(question=Q)
+    session.known_entity_ids = {"e1"}
+    session.steps.append(P.Step(1, "search", {"text": "b"}, rows=4))
+    state = {"session": session, "round": 2, "max_rounds": 6, "messages": [],
+             "pending_calls": [], "last_content": PROSE}
+    assert G.after_plan(state) == "reflect_check"
+    G.reflect_check(state, {"configurable": {"chat": _chat(VERDICT_READY), "conn": _conn()}})
+    assert G.after_reflect(state) == "finish"
+    assert session.answer == PROSE, "the prose exit lost its answer"
+    assert session.stopped_because == "answered without calling answer()"
+
+    # the check failing outright must not cost the answer either
+    s2 = P.Session(question=Q)
+    s2.steps.append(P.Step(1, "search", {"text": "b"}, rows=4))
+    st2 = {"session": s2, "round": 2, "max_rounds": 6, "messages": [],
+           "pending_calls": [], "last_content": PROSE}
+
+    def broken(msgs, tools=None):
+        raise RuntimeError("check is down")
+
+    G.reflect_check(st2, {"configurable": {"chat": broken, "conn": _conn()}})
+    assert G.after_reflect(st2) == "finish"
+    assert s2.answer == PROSE
+
+    # and with reflection OFF the behaviour is unchanged
+    monkeypatch.delenv("REFLECT_MODE")
+    s3 = P.Session(question=Q)
+    s3.steps.append(P.Step(1, "search", {"text": "b"}, rows=4))
+    st3 = {"session": s3, "round": 2, "max_rounds": 6, "messages": [],
+           "pending_calls": [], "last_content": PROSE}
+    assert G.after_plan(st3) == "finish"
+    assert s3.answer == PROSE

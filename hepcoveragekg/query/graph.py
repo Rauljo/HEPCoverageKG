@@ -1237,12 +1237,14 @@ def reflect_check(state: PlannerState, config=None) -> PlannerState:
         v = reflect.completeness(_reflect_chat(runtime), session.question,
                                  runtime.get("conn"), session)
         if v is None:
+            _accept_prose(state)
             return state
         session.llm_calls += 1
         session.reflect_checks += 1
         session.reflect_note = v.raw
         state["reflect_note"] = v.raw
     if v.ready or not v.missing:
+        _accept_prose(state)
         return state
     session.reflections_used += 1
     session.reflect_defects.append({"kind": "unfulfilled", "detail": "; ".join(v.missing)})
@@ -1253,6 +1255,28 @@ def reflect_check(state: PlannerState, config=None) -> PlannerState:
     state["_reflect_fresh"] = False        # the next round re-checks
     state["_reflect_bounce"] = True
     return state
+
+
+def _accept_prose(state: PlannerState) -> None:
+    """Record a prose exit's answer on the session.
+
+    EXTRACTED BECAUSE THE REFLECTION JUMPED OVER IT (2026-09-12). `after_plan`
+    recorded the answer on the two lines immediately after the reflection's
+    early `return "reflect_check"`, so with REFLECT_MODE on, every record
+    leaving through the prose exit lost its answer entirely -- `session.answer`
+    empty, no stopping reason, and the scorer reading it as unanswered. It cost
+    `answered` 0.889 -> 0.167 on the first clean pair, and I read that as the
+    mechanism discouraging the planner from committing. It was a node put in
+    front of an exit that did bookkeeping on the way out.
+
+    Both paths call this now, so an exit cannot be added in front of it again
+    without the answer coming too.
+    """
+    session = state["session"]
+    session.answer = (state.get("last_content") or "").strip()
+    session.stopped_because = ("answered from memory, no tool calls"
+                               if not session.steps
+                               else "answered without calling answer()")
 
 
 def after_reflect(state: PlannerState) -> str:
@@ -1293,10 +1317,7 @@ def after_plan(state: PlannerState) -> str:
             and state["max_rounds"] - state["round"] >= _reflect.MIN_ROUNDS_LEFT):
         return "reflect_check"
 
-    session.answer = (state.get("last_content") or "").strip()
-    session.stopped_because = ("answered from memory, no tool calls"
-                               if not session.steps
-                               else "answered without calling answer()")
+    _accept_prose(state)
 
     # The gate, the citation resolver and the critic all need `runtime`, and a
     # routing function receives no config -- the same constraint that put
