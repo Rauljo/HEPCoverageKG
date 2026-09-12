@@ -9012,3 +9012,68 @@ numbers are right; the label "the 32B" is used for two different models in
 this project and I did not disambiguate. The persistence argument in D-187
 stands on its own evidence (1.04 calls per round, 3.6 rounds, 15 of 18 exits
 written as prose) and is unaffected.
+
+## D-191 -- chaining sub-goals as N short runs: the mechanism QwQ can actually use
+
+Raul's design, after `SUBGOAL_SEQUENTIAL` collapsed on QwQ (0.134 against a
+0.570 control). Walking one agent through a list asks for persistence QwQ does
+not have: 12 rounds available, 2-5 used, every record ending by answering
+rather than hitting the cap, and **not one record ever reached the final
+objective**, so not one ever saw the instruction permitting an answer.
+
+The chain asks the opposite. Each sub-objective is its own SHORT run -- four
+rounds, which is what QwQ does unprompted -- and the orchestration carries the
+original question, each earlier sub-goal with its answer text, and the papers
+established so far into the next leg. Only the final leg is told to answer the
+overall question. `eval/chain.py`, `SUBGOAL_CHAIN=1`.
+
+**Supervisor's nine, QwQ, constrained decoding + judge selects, 14 clean
+records each (four and three lost to per-request timeouts):**
+
+| | control (54487) | chained (54488) |
+|---|---|---|
+| papers retrieved | 25.9 | **34.8** |
+| candidates judged | 25.9 | 34.8 |
+| candidates rejected | 14.8 | 23.2 |
+| papers in the answer | 19.1 | **30.9** |
+| of which right | 12.8 | **22.5** |
+| of which wrong | 6.3 | 8.4 |
+| recall (named-only) | 0.55 | **0.67** |
+| precision (named-only) | 0.79 | **0.81** |
+| **judged F1** | 0.585 | **0.691** |
+| rounds / LLM calls | 2.9 / 2.9 | **7.8 / 8.7** |
+| seconds | 167 | **581** |
+
+Paired: **+0.091 (se 0.067)**, recall **+0.178 (se 0.097)**, precision -0.055
+(se 0.054).
+
+**It works, and it works the way the design predicted.** QwQ spends 7.8 rounds
+across the chain against 2.9 in a single run -- more than double, from a model
+that will not spend more than about three on one task however much budget it
+is given. The orchestration supplies the persistence; the agent never has to.
+Retrieval rises 25.9 to 34.8 and right papers 12.8 to 22.5, and unusually for
+this project **precision does not pay for it** (0.79 to 0.81).
+
+**Across three models the ordering is now clear, and it tracks headroom:**
+
+| model | reach at control | sequential | chained |
+|---|---|---|---|
+| QwQ-32B-AWQ | 0.70 | **-0.436** | **+0.091** |
+| qwen3-32b | 0.67 | +0.085 | **+0.095** |
+| qwen3.8-flash | 0.978 | **+0.062** | +0.050 |
+
+The mechanism that wins is the one matched to the agent's willingness to keep
+going. QwQ cannot sustain a list and needs the list sustained for it; 3.8-flash
+sustains anything and is already at reach 1.000, so neither helps much and
+chaining's overhead makes it slightly worse; qwen3-32b sits between and takes
+either.
+
+**What is NOT in the chain, and is the obvious next thing.** Nothing summarises
+between legs. The handoff is the previous leg's raw answer text truncated at
+600 characters plus the accumulated ids -- no status call, no compression, no
+reconciliation of one leg's set against another's. The chain adds exactly ONE
+call of its own, the decomposition. That it already wins with the crudest
+possible handoff is the reason a status call between legs is worth an arm.
+
+**Cost is the honest counterweight**: 581 seconds against 167, and 8.7 LLM
+calls against 2.9, for +0.091 on nine questions.
