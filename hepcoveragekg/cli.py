@@ -639,6 +639,8 @@ def _cmd_eval(args) -> int:
         system = make_system()
     else:
         make_system = None
+        print(f"unknown system {args.system!r}", file=sys.stderr)
+        return 2
 
     # SEQUENTIAL CHAINING (SUBGOAL_CHAIN=1), applied to WHICHEVER system was
     # built. It began inside the planner branch and therefore could not be run
@@ -669,8 +671,6 @@ def _cmd_eval(args) -> int:
                 name="chain")
 
         system = make_system()
-        print(f"unknown system {args.system!r}", file=sys.stderr)
-        return 2
 
     done = {"n": 0}
 

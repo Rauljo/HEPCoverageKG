@@ -172,3 +172,20 @@ def test_the_chain_is_not_bolted_to_the_planner_branch():
     i_chain = src.index('SUBGOAL_CHAIN', src.index('def '))
     i_else = src.index("make_system = None")
     assert i_chain > i_else, "the chain must wrap whichever system was built"
+
+
+def test_a_chained_run_reaches_the_runner_at_all():
+    """Lifting the chain wrapper out of the planner branch split the `else:`
+    that reports an unknown system, so `print(...); return 2` ended up INSIDE
+    the chain block. Every chained arm built its system and then exited 2:
+    four arms, thirteen seconds each, zero records."""
+    import inspect
+    from hepcoveragekg import cli
+
+    src = inspect.getsource(cli.cmd_eval) if hasattr(cli, "cmd_eval") else inspect.getsource(cli)
+    i_unknown = src.index("unknown system")
+    i_chain = src.index("SUBGOAL_CHAIN")
+    assert i_unknown < i_chain, \
+        "the unknown-system exit must stay in its else, before the chain wrapper"
+    after = src[i_chain:]
+    assert "unknown system" not in after, "the exit leaked into the chain block again"
