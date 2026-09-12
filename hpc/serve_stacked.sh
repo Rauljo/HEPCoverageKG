@@ -55,6 +55,18 @@ if [ -f .env ]; then set -a; . ./.env; set +a; fi
 export HF_HUB_OFFLINE=1
 
 BIG="${_OVERRIDE_BIG:-${LLM_MODEL_NAME:-Qwen/QwQ-32B-AWQ}}"
+# THE .env PINS THE 72B, AND THE DEFAULT ABOVE NEVER GETS A CHANCE.
+# 2026-09-12: submitted with no --export, this loaded Qwen2.5-72B-Instruct-AWQ
+# because `set -a; . ./.env` had already exported LLM_MODEL_NAME. Stacked with
+# the 9B it does not fit -- "Available KV cache memory: -7.07 GiB" -- and the
+# job died six minutes in, after the eval arms had already started against it.
+# The default here is the intended model, so say so rather than fail obscurely.
+case "$BIG" in
+  *72B*)
+    echo "WARNING: serving $BIG. Stacked with $SMALL this has historically"
+    echo "         failed with negative KV cache. Pass LLM_MODEL_NAME on the"
+    echo "         sbatch line if you meant the 32B." ;;
+esac
 SMALL="${_OVERRIDE_SMALL:-${CRITIC_MODEL:-Qwen/Qwen3.5-9B}}"
 IMG="${VLLM_IMAGE:-$HOME/hepcoveragekg_setup/images/vllm-openai-v0.18.0}"
 BIG_UTIL="${BIG_UTIL:-0.45}"
