@@ -9077,3 +9077,67 @@ possible handoff is the reason a status call between legs is worth an arm.
 
 **Cost is the honest counterweight**: 581 seconds against 167, and 8.7 LLM
 calls against 2.9, for +0.091 on nine questions.
+
+## D-192 -- the 2x7 grid: decomposition on the typed agent and on free-SQL, one judge throughout
+
+Fourteen arms, supervisor's nine, 2 repeats, **`qwen/qwen3.5-9b` judging every
+one of them** -- the first cross-model comparison in this project without a
+judge confound (D-082's third instance, fixed in `or_arm_job.sh` the same day).
+
+| | clean | found | selected | F1 (text) | F1 (list) | secs |
+|---|---|---|---|---|---|---|
+| **qwen3-32b** | | | | | | |
+| typed control | 18 | 27.9 | 23.1 | 0.594 | 0.575 | 397 |
+| typed sequential | 18 | 34.8 | 31.3 | 0.613 | 0.602 | 471 |
+| typed chained | **12** | 25.9 | 22.2 | **0.658** | 0.657 | 578 |
+| free-SQL plain | 18 | 8.8 | -- | 0.453 | n/a | 102 |
+| free-SQL + judge | 18 | 7.8 | 7.3 | 0.438 | 0.517 | 223 |
+| free-SQL sequential | 18 | **0.7** | 0.3 | **0.022** | 0.130 | 229 |
+| free-SQL chained | 18 | 12.6 | 11.2 | 0.457 | 0.477 | 616 |
+| **qwen3.8-flash** | | | | | | |
+| typed control | 18 | 57.8 | 38.9 | 0.531 | 0.640 | 576 |
+| typed sequential | 17 | 56.9 | 39.0 | 0.627 | 0.667 | 562 |
+| typed chained | **5** | 54.6 | 31.6 | 0.831 | 0.835 | 822 |
+| free-SQL plain | 18 | 24.3 | -- | 0.612 | n/a | 138 |
+| free-SQL + judge | 18 | 22.7 | 44.1 | 0.679 | 0.679 | 547 |
+| free-SQL sequential | 18 | 19.9 | 30.4 | 0.699 | 0.700 | 393 |
+| free-SQL chained | 14 | 28.9 | 28.4 | **0.746** | 0.706 | 749 |
+
+Paired against each typed control (32b): sequential **+0.123 (se 0.061)**,
+chained **+0.164 (se 0.081)**.
+
+**Raul's hypothesis holds on 3.8-flash and only there.** He predicted free-SQL
+would be cautious and precise, and that the agentic mechanisms would add
+recall on top. On 3.8-flash the free-SQL column is monotonic: 0.612 plain,
+0.679 with the judge, 0.699 sequential, **0.746 chained** -- each mechanism
+adding on the one before. On 32b it is flat or broken: 0.453, 0.438, 0.022,
+0.457.
+
+**Two arms must not be read as results.**
+
+**free-SQL + sequential on 32b is a broken combination, and the reason is
+specific and interesting.** 68 of its 110 tool calls failed (62%, against 11%
+for the same system unchained), and the errors are all of one kind:
+
+    15  no such table: analysis
+    11  no such table: analyses
+     4  no such table: analysis_objects
+
+The model is **inventing table names out of the sub-objective's wording**. The
+sequential block is appended to the system prompt, so a sub-goal reading "find
+analyses that use b-tagged jets" primes `SELECT ... FROM analyses`. Unchained,
+the same model sees only the schema and the question and writes correct SQL
+(5 errors in 44 calls). Decomposition contaminates the query vocabulary of an
+agent that writes queries -- a failure mode the typed agent cannot have,
+because its tools are fixed names it cannot invent. 3.8-flash does not fall
+for it (30 errors in 304 calls), so it is a capability threshold rather than a
+law.
+
+**The two typed chained arms lost most of their records to the 1200s ceiling**
+-- 6 of 18 on 32b and **13 of 18** on 3.8-flash. Chaining runs three full
+planner runs per question, so per-record wall time triples. 0.831 on five
+records is not a number, and 0.658 on twelve is weak. Both need re-running
+with a longer per-record timeout before either is quoted.
+
+**What survives cleanly**: the typed sequential arms (18 and 17 clean, +0.123
+and +0.096 over their controls) and the whole free-SQL column on 3.8-flash.
