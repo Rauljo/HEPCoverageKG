@@ -8807,3 +8807,56 @@ are ones where the *other* arm also scores badly (0.127 and 0.166, against
 0.265-0.298 on the questions kept), so the timeouts fall on hard questions for
 both arms, roughly symmetrically (5 and 3 questions lost). The surviving set
 flatters both arms equally and the paired delta is not obviously biased.
+
+## D-187 -- the retrieval ceiling was real: 3.8-flash converts it once the judge selects and the rounds allow
+
+D-181 found qwen3.8-flash reaching **0.989** of the supervisor's gold papers --
+the best retrieval measured anywhere in this project -- and scoring 0.431,
+below the 32B's 0.472, because it named nine papers out of the fifty-four it
+had touched. The diagnosis on record was that the round budget bound it (it
+hit `max_rounds` 6 on every question) and that judge-selects is the mechanism
+that converts retrieval into a named list. Both halves were tested together:
+`--max-rounds 12` and `CRITIC_SELECTS=1`, 2 repeats, 18 records per arm, zero
+errors.
+
+| | 3.8-flash, 6 rounds, model writes list | **3.8-flash, 12 rounds, judge selects** | 32B, 12 rounds, judge selects |
+|---|---|---|---|
+| judged F1 | 0.431 | **0.603** | 0.520 |
+| precision | 0.633 | 0.561 | 0.649 |
+| **recall** | 0.381 | **0.753** | 0.552 |
+| reach | 0.989 | 0.978 | 0.668 |
+| **papers named** | 9.2 | **43.6** | 23.8 |
+| entities retrieved | 214 | 388 | 31.9 |
+| rounds / tool calls | 6.0 / 9.7 | 11.4 / 22.8 | 3.6 / 2.7 |
+| seconds | 71 | 227 | 91 |
+
+**+0.172 over its own previous configuration**, and the mechanism is visible in
+one row: papers named goes from 9.2 to 43.6 while reach barely moves (0.989 to
+0.978). Nothing new was found; what was already found got written down. Recall
+follows, 0.381 to 0.753. Precision pays for it, 0.633 to 0.561.
+
+**0.603 is the highest judged F1 recorded on the supervisor's nine in this
+project** -- above the answer-critic control (0.570) and above the best
+planning mechanism (sub-goals, 0.594).
+
+The 32B gains from the same treatment too (0.472 to 0.520), so part of this is
+judge-selects rather than the model. The gap between the two boosted arms is
+**+0.083 (se 0.068)**, which nine questions cannot resolve (D-184: their
+replicate spread is ~0.11).
+
+**What this is evidence for.** The handoff, not the search, is the binding
+constraint -- the thesis the per-paper questions (D-171: retrieval 0.97,
+mentioned 0.33) and the value questions both pointed at, now demonstrated by
+fixing the handoff and watching the score move 0.17 with retrieval held
+constant.
+
+**Cost, measured rather than estimated**, from the prompt/completion split on
+the records against OpenRouter list prices: 3.8-flash is **$0.011 per record**
+at 6 rounds, 94% of it prompt tokens re-sent each round. The 18-record boosted
+run cost about $0.37; the 32B control about $0.05.
+
+**Next, and it is cheap: the same pair on the 84 retrieval questions, 2
+repeats, about $3.44 + $0.40.** Nine questions cannot resolve +0.083; the 84
+has a replicate floor of 0.005 (D-184) and is the only set in the project that
+can. Not launched -- it spends money on Raul's account and he has not asked
+for it.
