@@ -8413,3 +8413,68 @@ splitting is the weakest of the three**, which agrees with the supervisor's
 nine, where `--subgoals` alone was the best single mechanism. Plan-on-Graph's
 ablation ranks Memory above the rest; on this system the split is worth more
 than the memory of it, on both sets where both have been measured.
+
+## D-178 outcome, corrected -- the reflection measured on clean data, and it is a real negative
+
+The first outcome was void: the prose exit lost its answer whenever the
+reflection was on, so `answered` collapsed for plumbing reasons and I read it
+as the mechanism. Fixed in cfdefce with a regression test. Both lanes re-run,
+**18 records each, zero errors in both**.
+
+**OpenRouter lane, check on qwen3-32b (a model that can tell a retrievable
+condition from a relative clause):**
+
+| | control (54449) | reflection (54451) |
+|---|---|---|
+| judged F1 | 0.275 | 0.227 (**-0.048**, se 0.068) |
+| precision / recall | 0.469 / 0.227 | 0.469 / 0.192 |
+| answered | 0.889 | 0.833 |
+| papers named | 5.33 | 3.00 |
+| entities retrieved | 47.4 | 62.8 |
+| faithfulness | 0.792 | 0.818 |
+| unsupported claims | 1.28 | 1.17 |
+| LLM calls / seconds | 3.5 / 126 | 6.9 / 288 |
+
+**Cluster lane, check on Qwen3.5-9B:**
+
+| | control (pooled) | reflection (54452) |
+|---|---|---|
+| judged F1 | 0.570 | 0.252 (**-0.319**, se 0.081) |
+| precision / recall | 0.764 / 0.527 | 0.364 / 0.212 |
+| answered | 0.944 | 0.500 |
+| papers named | 17.41 | 3.33 |
+| entities retrieved | 43.8 | 60.7 |
+| faithfulness | 0.664 | 0.896 |
+| unsupported claims | 4.00 | 0.44 |
+
+**One consistent behaviour, two magnitudes.** In both lanes the mechanism
+makes the system retrieve MORE (entities +33% and +39%) and name FAR FEWER
+papers (5.3 to 3.0; 17.4 to 3.3). Faithfulness rises and unsupported claims
+fall in both, for the uninteresting reason that a system which names three
+papers instead of seventeen has less to be unfaithful about. The reflection
+does not make the system wrong. **It makes it cautious, and on a recall-bound
+task caution is the expensive direction.**
+
+With a competent check model the penalty is -0.048, inside its own standard
+error, for **twice the LLM calls and 2.3x the wall time**. That is the honest
+summary: no gain, double the cost. With a weak check model it is -0.319, and
+half the records never answer at all -- the 9B calls parts missing that are
+not missing, and the run bounces instead of committing.
+
+**Why this is worth a section rather than a footnote.** It is a faithful
+implementation of a mechanism the literature recommends -- Devil's Advocate's
+post-action alignment at round granularity, Reflexion's separated evaluator,
+Pan et al.'s constraint that the checker never sees the draft -- and it loses.
+It loses in the direction Pan et al. and Huang et al. predict for
+self-correction without a reliable external signal, and it exposes the
+dependency they do not emphasise: **the mechanism's sign is set by the
+capability of the checking model, not by the design of the check.** Same
+prompt, same graph, same questions: -0.048 on a 32B checker, -0.319 on a 9B.
+A paper reporting only the strong-checker number would report a null; only
+reporting both shows that the null is the ceiling.
+
+**Not pursued further.** The two available repairs -- suppress the verdict in
+the final rounds, force the answer path when the budget is spent -- would buy
+back the answered rate, not the named papers, and a mechanism that needs to be
+told when to stop talking is a different claim from the one the literature
+makes. Recorded as measured.
