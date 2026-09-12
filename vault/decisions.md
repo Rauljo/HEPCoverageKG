@@ -8528,3 +8528,44 @@ endpoint that silently fell back. All three were invisible in the run file and
 found only by counting requests per port in the log. The header line added in
 D-179 should print the resolved critic and reflect endpoints, not just the
 arm name.
+
+## D-180 -- four arms in one night ran something other than their label, and the run file said none of it
+
+Consolidated for the limitations section, because every instance was found the
+same way and a reader of the run files could have found none of them.
+
+| # | arm | label | what it ran | how it was caught |
+|---|---|---|---|---|
+| 1 | 54438, 54439 | `r84-reflect`, `g9-reflect` | reflection off -- the env var was never in `--export` | zero `reflect` lines in the log |
+| 2 | 54433 | reviewer on the 9B | 25 of 25 reviewer calls returned 400 (context window) and approved by default | `reviews_rejected` 0 looked like a no-op; the 400s are only in the log |
+| 3 | 54452 | reflection, critic on the 9B | critic fell back to the planner's client (`CRITIC_BASE_URL` unset) | 213 requests to port 8001 in the control against 62 in the arm |
+| 4 | 54450 | read by doc_writer as a control | the buggy reflection arm | `reflect_mode` absent from its records, and **absent read as off** |
+
+**The common shape.** In every case the run file recorded a plausible,
+self-consistent set of numbers, and the configuration that produced them was
+only visible by counting HTTP requests per port in a log that is not kept with
+the results. Three of the four produced a readable *finding* -- a no-op
+reviewer, a reflection that suppresses answering, a control -- and all three
+findings were wrong.
+
+**The fourth is the one worth the most care in the write-up**, because it is
+the failure mode that survives every fix. `reflect_mode` and `subgoal_scope`
+were added to the record at 21:31 on 2026-09-11 (1ef8bd6) precisely to stop
+this; 54450 ran before that, so its records simply lack the field, and a
+reader cannot distinguish "the mechanism was off" from "the field did not
+exist yet". Adding a field fixes the future and silently re-labels the past.
+Any run before 1ef8bd6 must be identified from its job log, not its record.
+
+**What to say in the chapter.** Not "we made mistakes" -- the useful version is
+that **a run file records what a system produced and not what it was asked to
+do**, and that the gap between the two is where agent evaluations go wrong
+without any of the usual signals firing. Every one of these four runs
+completed, scored, and reported. The mitigation actually adopted here is
+cheap and worth stating: assert the intent at launch and refuse (a job named
+`-reflect` exits 6 if the mode is off), write the resolved configuration onto
+every record, and check per-endpoint call counts before reading any arm whose
+mechanism is supposed to make calls.
+
+Still missing, and the honest next step rather than a claim of completeness:
+the header prints the arm name but not the *resolved* critic and reflect
+endpoints, which is what instance 3 turned on.
