@@ -1000,11 +1000,18 @@ class FreeSQLSystem:
             from ..query.planner import OBJECTIVE_BLOCK
             system += OBJECTIVE_BLOCK
         goals, status = [], ""
+        idx = spent = advances = forced_advances = 0
+        established: list = []
         if self._subgoals:
             from ..query import subgoals as _sg
             goals = _sg.decompose(chat, q.text)
-            system += (_sg.render(goals) if self._subgoal_status
-                       else _sg.goals_only(goals))
+            # SUBGOAL_SEQUENTIAL=1 lived only in the typed planner's graph, so
+            # free-SQL could not run the arm at all -- half of the comparison.
+            if _os.environ.get("SUBGOAL_SEQUENTIAL", "") == "1":
+                system += _sg.render_sequential(goals, 0, [], self._max_rounds)
+            else:
+                system += (_sg.render(goals) if self._subgoal_status
+                           else _sg.goals_only(goals))
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": system},
             {"role": "user", "content": q.text},
@@ -1049,7 +1056,23 @@ class FreeSQLSystem:
                     completion_tokens += getattr(usage, "completion_tokens", 0) or 0
 
                 choice = reply.choices[0].message
-                if self._subgoal_status and goals:
+                if _os.environ.get("SUBGOAL_SEQUENTIAL", "") == "1" and goals:
+                    from ..query import subgoals as _sg
+                    text = choice.content or ""
+                    spent += 1
+                    declared = _sg.wants_advance(text)
+                    if (declared or spent >= _sg.MAX_ROUNDS_PER_GOAL) and idx < len(goals) - 1:
+                        established.append(_sg.note_from(text, "advanced without a note"))
+                        idx += 1
+                        spent = 0
+                        advances += 1
+                        forced_advances += 0 if declared else 1
+                    messages = [m for m in messages
+                                if not (m.get("role") == "system"
+                                        and "SUB-OBJECTIVES" in (m.get("content") or ""))]
+                    messages.append({"role": "system", "content": _sg.render_sequential(
+                        goals, idx, established, self._max_rounds - rounds)})
+                elif self._subgoal_status and goals:
                     from ..query import subgoals as _sg
                     fresh = _sg.extract_status(choice.content or "")
                     if fresh and fresh != status:
@@ -1093,6 +1116,7 @@ class FreeSQLSystem:
                         text=text_out, answered=bool(text_out),
                         papers=sorted(touched), steps=steps, entity_ids=sorted(entities), **extra,
                         llm_calls=calls, rounds=rounds,
+                        subgoal_advances=advances, subgoal_forced_advances=forced_advances,
                         prompt_tokens=prompt_tokens, completion_tokens=completion_tokens,
                         seconds=time.time() - started, **self._review_fields())
 
@@ -1157,6 +1181,7 @@ class FreeSQLSystem:
                             cited="answer.papers" if asserted else "",
                             steps=steps, entity_ids=sorted(entities),
                             llm_calls=calls, rounds=rounds,
+                        subgoal_advances=advances, subgoal_forced_advances=forced_advances,
                             prompt_tokens=prompt_tokens,
                             completion_tokens=completion_tokens,
                             seconds=time.time() - started, **self._review_fields())
@@ -1194,6 +1219,7 @@ class FreeSQLSystem:
             return Answer(text="", answered=False, seconds=time.time() - started,
                           papers=sorted(touched), steps=steps, entity_ids=sorted(entities),
                           llm_calls=calls, rounds=rounds,
+                        subgoal_advances=advances, subgoal_forced_advances=forced_advances,
                           error=f"{type(exc).__name__}: {exc}")
 
         # Out of rounds with no prose. Not an error -- it looked and never

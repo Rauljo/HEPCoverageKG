@@ -146,3 +146,29 @@ def test_the_chain_survives_a_failing_selection(monkeypatch):
     inner._conn = object()
     out = C.ChainedSubgoalSystem(inner, _chat(GOALS)).answer(_q())
     assert out.chain_legs == 3 and out.text == "leg3 answer"
+
+
+def test_free_sql_renders_one_objective_at_a_time(monkeypatch):
+    """SUBGOAL_SEQUENTIAL lived only in the typed planner's graph, so free-SQL
+    could not run the arm at all -- half of the comparison the chapter needs."""
+    monkeypatch.setenv("SUBGOAL_SEQUENTIAL", "1")
+    from hepcoveragekg.query import subgoals as sg
+
+    first = sg.render_sequential(GOALS, 0, [], 6)
+    assert GOALS[0] in first and GOALS[1] not in first
+    import inspect
+    from hepcoveragekg.eval import free_sql
+    src = inspect.getsource(free_sql)
+    assert "render_sequential" in src, "free-SQL must render the sequential block"
+    assert "subgoal_advances=advances" in src, "free-SQL must record the pointer"
+
+
+def test_the_chain_is_not_bolted_to_the_planner_branch():
+    """It began inside `elif args.system == 'planner'`, so free-SQL could never
+    be chained. The chain only needs .answer(Question) -> Answer."""
+    import inspect
+    from hepcoveragekg import cli
+    src = inspect.getsource(cli)
+    i_chain = src.index('SUBGOAL_CHAIN', src.index('def '))
+    i_else = src.index("make_system = None")
+    assert i_chain > i_else, "the chain must wrap whichever system was built"

@@ -636,37 +636,39 @@ def _cmd_eval(args) -> int:
                 ranked_answer=args.ranked_answer,
                 enum_expand=args.enum_expand,
             )
-        # SEQUENTIAL CHAINING (SUBGOAL_CHAIN=1). N short runs instead of one
-        # long one, because QwQ answers after 2-5 rounds however large the
-        # budget is, and SUBGOAL_SEQUENTIAL asked it to sustain a list it was
-        # never going to reach the end of (0.134 against a 0.570 control).
-        # The chain wraps the planner rather than changing it, so every knob
-        # above applies unchanged to each leg.
-        if os.environ.get("SUBGOAL_CHAIN", "") == "1":
-            from hepcoveragekg.eval import chain as _chain
-            from hepcoveragekg.query import planner as _pl
-
-            _inner_factory = make_system
-
-            def make_system():
-                # _client() returns (client, model) -- unpacking it as one
-                # value cost the first chain run: every decomposition raised
-                # "'tuple' object has no attribute 'chat'", the chain failed
-                # open on all 27 records, and chain_legs=0 caught it.
-                client, model = _pl._client()
-
-                def chat(messages, tools=None):
-                    return client.chat.completions.create(
-                        model=model, messages=messages,
-                        temperature=float(os.environ.get("LLM_TEMPERATURE", 0.2)))
-
-                return _chain.ChainedSubgoalSystem(
-                    _inner_factory(), chat,
-                    max_goals=int(os.environ.get("SUBGOAL_CHAIN_MAX", "3")),
-                    name="chain")
         system = make_system()
     else:
         make_system = None
+
+    # SEQUENTIAL CHAINING (SUBGOAL_CHAIN=1), applied to WHICHEVER system was
+    # built. It began inside the planner branch and therefore could not be run
+    # on free-SQL at all, which is half the comparison the chapter needs. The
+    # chain only requires `.answer(Question) -> Answer`, so it wraps the typed
+    # planner, free-SQL and the ensemble alike.
+    if os.environ.get("SUBGOAL_CHAIN", "") == "1" and make_system is not None:
+        from hepcoveragekg.eval import chain as _chain
+        from hepcoveragekg.query import planner as _pl
+
+        _inner_factory = make_system
+
+        def make_system():
+            # _client() returns (client, model) -- unpacking it as one value
+            # cost the first chain run: every decomposition raised "'tuple'
+            # object has no attribute 'chat'", the chain failed open on all 27
+            # records, and chain_legs=0 caught it.
+            client, model = _pl._client()
+
+            def chat(messages, tools=None):
+                return client.chat.completions.create(
+                    model=model, messages=messages,
+                    temperature=float(os.environ.get("LLM_TEMPERATURE", 0.2)))
+
+            return _chain.ChainedSubgoalSystem(
+                _inner_factory(), chat,
+                max_goals=int(os.environ.get("SUBGOAL_CHAIN_MAX", "3")),
+                name="chain")
+
+        system = make_system()
         print(f"unknown system {args.system!r}", file=sys.stderr)
         return 2
 
