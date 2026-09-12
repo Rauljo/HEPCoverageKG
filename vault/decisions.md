@@ -8752,3 +8752,58 @@ cost (517s, 5.9 calls) are the trade.
 
 For the write-up this is the result that justifies keeping both systems, which
 until now had no evidence behind it beyond "they fail differently."
+
+## D-186 -- chATLAS embeddings: more retrieval, no more reach, slightly worse answers
+
+The comparison Raul asked for, run twice. **The second run supersedes the
+first**, and the two disagree by more than eight times the noise floor, which
+is itself the lesson.
+
+| | 1 repeat, 4 jobs sharing the server | **2 repeats, 2 jobs (54463 vs 54464)** |
+|---|---|---|
+| questions paired | 53 of 84 | **74 of 84** |
+| chATLAS vs bge, set F1 | +0.013 (se 0.023) | **-0.033 (se 0.017)** |
+
+The first attempt lost 31 questions to timeouts and read as a null. The second
+loses 10, and says chATLAS is **worse** by roughly two standard errors and
+6.6x the replicate floor of 0.005 (D-184). A null and a small negative are
+different findings, and the only thing separating them was how many questions
+survived.
+
+**The full picture, 74 questions, repeats averaged:**
+
+| | bge-base | chATLAS | paired delta |
+|---|---|---|---|
+| set F1 | 0.298 | 0.265 | **-0.033 (se 0.017)** |
+| retrieval reach | 0.774 | 0.745 | -0.029 (0.045) |
+| **entities retrieved** | 108.9 | **140.1** | **+31.2 (se 11.7)** |
+| papers named | 19.2 | 19.6 | +0.4 (1.3) |
+| faithfulness | 0.538 | **0.657** | |
+| unsupported claims | 7.63 | **6.01** | |
+| seconds | 289 | 316 | |
+
+**It retrieves 29% more and reaches no more gold.** That is the finding: the
+domain-tuned encoder pulls 31 more entities per question (2.7 standard errors)
+and converts none of them into additional gold papers reached (-0.029, flat).
+The extra material is not the right material, and on a 60-paper corpus drawn
+from one narrow domain that is plausible -- a HEP-tuned encoder makes
+everything look similar to everything.
+
+What it does buy is **caution**: faithfulness 0.657 against 0.538 and a fifth
+fewer unsupported claims. Same trade as the answer critic, from a different
+component, and on a recall-bound task it is the wrong direction -- which is
+what the -0.033 says.
+
+It is also **9% slower per record and times out more** (21% of records against
+15%), the operational cost of retrieving more.
+
+**Recommendation for the chapter: keep bge-base.** Report chATLAS as a
+measured negative rather than an untried option, with the retrieval volumes as
+the explanation, because "we tried the domain encoder and it retrieved more of
+the wrong thing" is a stronger sentence than "we used a general encoder".
+
+**Bias check, since chATLAS timed out more often.** The questions each arm lost
+are ones where the *other* arm also scores badly (0.127 and 0.166, against
+0.265-0.298 on the questions kept), so the timeouts fall on hard questions for
+both arms, roughly symmetrically (5 and 3 questions lost). The surviving set
+flatters both arms equally and the paired delta is not obviously biased.
