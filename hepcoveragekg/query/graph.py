@@ -80,6 +80,10 @@ class PlannerState(TypedDict, total=False):
     # and the arm would be measuring the penalty, not the review.
     sub_objectives: list
     subgoal_status: str
+    #: SUBGOAL_SEQUENTIAL=1: which objective the planner is currently shown,
+    #: and the one-line notes the finished ones left behind.
+    subgoal_index: int
+    subgoal_established: list
     objective: str
     review_feedback: str
     review_cycles: int
@@ -97,6 +101,42 @@ class PlannerState(TypedDict, total=False):
 # --------------------------------------------------------------------------
 # nodes
 # --------------------------------------------------------------------------
+
+def _advance_sequential(state: PlannerState, reasoning: str, message) -> None:
+    """Move the sequential pointer on when the current objective is finished.
+
+    The MODEL declares it, by writing OBJECTIVE COMPLETE, so the mechanism
+    stays in its hands rather than resting on a heuristic for "done" the graph
+    could not justify. Two guards stop a run stalling: MAX_ROUNDS_PER_GOAL
+    advances anyway, and the last objective never advances -- it is the one
+    carrying the instruction to answer.
+    """
+    if os.environ.get("SUBGOAL_SEQUENTIAL", "") != "1":
+        return
+    goals = state.get("sub_objectives") or []
+    if not goals:
+        return
+    from hepcoveragekg.query import subgoals as _sg
+
+    session = state["session"]
+    idx = int(state.get("subgoal_index") or 0)
+    spent = int(state.get("_subgoal_rounds") or 0) + 1
+    state["_subgoal_rounds"] = spent
+    text = reasoning or ""
+    content = getattr(message, "content", "") or ""
+    declared = _sg.wants_advance(text) or _sg.wants_advance(content)
+    forced = spent >= _sg.MAX_ROUNDS_PER_GOAL
+    if not (declared or forced) or idx >= len(goals) - 1:
+        return
+    note = _sg.note_from(text or content, "advanced without a note")
+    state["subgoal_established"] = list(state.get("subgoal_established") or []) + [note]
+    state["subgoal_index"] = idx + 1
+    state["_subgoal_rounds"] = 0
+    session.subgoal_advances += 1
+    session.subgoal_forced_advances += 0 if declared else 1
+    logger.info("sub-objective %d/%d done (%s): %s", idx + 1, len(goals),
+                "declared" if declared else "forced", note[:70])
+
 
 def _reflect_chat(runtime):
     """The client the completeness check uses: its own, or the planner's.
@@ -179,7 +219,15 @@ def plan(state: PlannerState, config=None) -> PlannerState:
             session.subgoal_status_calls += 1
             if fresh:
                 state["subgoal_status"] = fresh
-        if runtime.get("subgoal_status") and question_scope:
+        if os.environ.get("SUBGOAL_SEQUENTIAL", "") == "1" and not question_scope:
+            # ONE OBJECTIVE AT A TIME. The planner never sees the ones it has
+            # not reached, so it cannot satisfy itself on the first condition
+            # and answer -- the gf-01 failure this whole family targets.
+            idx = int(state.get("subgoal_index") or 0)
+            block = _sg.render_sequential(
+                goals, idx, state.get("subgoal_established") or [],
+                state["max_rounds"] - state["round"])
+        elif runtime.get("subgoal_status") and question_scope:
             block = _sg.render_question(state.get("subgoal_status", ""), readonly=split_status)
         elif runtime.get("subgoal_status"):
             block = (_sg.render_readonly(goals, state.get("subgoal_status", ""))
@@ -268,6 +316,7 @@ def plan(state: PlannerState, config=None) -> PlannerState:
                  else _sg.extract_status(reasoning))
         if fresh:
             state["subgoal_status"] = fresh
+    _advance_sequential(state, reasoning, message)
     state["pending_calls"] = [
         {"id": c.id, "name": c.function.name, "arguments": c.function.arguments or "{}"}
         for c in calls[: state["max_places"]]

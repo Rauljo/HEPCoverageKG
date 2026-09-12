@@ -856,6 +856,11 @@ class Session:
     #: Dedicated status calls made (SUBGOAL_STATUS_CALL=1, D-173). Counted so a
     #: mechanism that never fired cannot be reported as a null result.
     subgoal_status_calls: int = 0
+    #: SUBGOAL_SEQUENTIAL=1. Counted because an arm whose pointer never moves
+    #: is a plain --subgoals run wearing a sequential label, and D-180 is four
+    #: instances of exactly that going unnoticed.
+    subgoal_advances: int = 0
+    subgoal_forced_advances: int = 0
     answer_before_constrained: str = ""
 
     # THE PLAN REVIEWER (separate from the search critic, which judges retrieved

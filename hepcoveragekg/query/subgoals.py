@@ -269,3 +269,84 @@ def goals_only(goals: list[str]) -> str:
     return ("\n\nSUB-OBJECTIVES FOR THIS QUESTION -- every condition in the "
             "question appears in one of these, and all of them must be satisfied "
             "before you answer:\n" + numbered)
+
+
+# ---------------------------------------------------------------------------
+# SEQUENTIAL MODE (SUBGOAL_SEQUENTIAL=1)
+#
+# Every other variant in this file hands the planner ALL the sub-objectives at
+# once and lets it choose. That is a design choice, not a neutral default, and
+# it was never tested against the obvious alternative: show ONE at a time and
+# advance when it is satisfied.
+#
+# The case for trying it is gf-01. Precision is 0.90 on single-condition
+# questions and 0.30 on the two-condition one, and the failure is that the
+# model satisfies itself on the first condition and answers. Showing one
+# objective at a time removes the option of answering early, because the
+# answer instruction only appears once the last objective is reached.
+#
+# The case against, which the measurement has to settle, is that presenting
+# all three lets one well-chosen call serve two conditions at once. QwQ
+# already averages ~1.1 tool calls per round; forcing it to work one
+# objective at a time could cost more calls than the discipline buys.
+#
+# ADVANCING. The model declares it, in the same turn as its tool calls, by
+# writing OBJECTIVE COMPLETE. That keeps the mechanism in the model's hands
+# rather than inventing a heuristic for "done" that the graph cannot justify.
+# Two guards stop it deadlocking: MAX_ROUNDS_PER_GOAL forces an advance if the
+# model never declares one, and the final objective always carries the
+# instruction to answer, so a run cannot end with nothing written.
+
+#: Rounds spent on one objective before the graph advances without being asked.
+MAX_ROUNDS_PER_GOAL = 3
+
+_COMPLETE = re.compile(r"OBJECTIVE\s+COMPLETE", re.I)
+
+
+def wants_advance(text: str) -> bool:
+    """Did the model declare the current objective finished?"""
+    return bool(_COMPLETE.search(text or ""))
+
+
+def render_sequential(goals: list, index: int, established: list,
+                      rounds_left: int) -> str:
+    """The block for ONE objective. `established` is what earlier ones produced.
+
+    The planner never sees the objectives it has not reached. It does see what
+    the finished ones established, because dropping that would make the last
+    objective unanswerable -- "intersect the two sets" needs the two sets.
+    """
+    if not goals:
+        return ""
+    index = max(0, min(index, len(goals) - 1))
+    last = index == len(goals) - 1
+    done = "\n".join(f"  {i}. {g} -- {n}" for i, (g, n) in
+                      enumerate(zip(goals[:index], established), 1)) or "  (none yet)"
+    tail = (
+        "This is the LAST objective. When it is satisfied, answer the question "
+        "using everything established above."
+        if last else
+        "Work ONLY on this objective. Do not answer the question yet -- there "
+        f"are {len(goals) - index - 1} more after this one.\n"
+        "When it is satisfied, write OBJECTIVE COMPLETE on its own line, with "
+        "a short note of what it established, and make no further calls that "
+        "round.")
+    return (f"\n\nSUB-OBJECTIVES: working on {index + 1} of {len(goals)}"
+            f" ({rounds_left} rounds left)\n\n"
+            "ALREADY ESTABLISHED\n" + done +
+            f"\n\nCURRENT OBJECTIVE ({index + 1}/{len(goals)})\n  {goals[index]}\n\n"
+            + tail)
+
+
+def note_from(text: str, fallback: str = "done") -> str:
+    """The one-line summary the model wrote beside OBJECTIVE COMPLETE."""
+    for line in (text or "").splitlines():
+        if _COMPLETE.search(line):
+            rest = _COMPLETE.sub("", line).strip(" :-\t")
+            if rest:
+                return rest[:160]
+    for line in reversed((text or "").splitlines()):
+        line = line.strip()
+        if line and not _COMPLETE.search(line):
+            return line[:160]
+    return fallback
