@@ -106,3 +106,43 @@ def test_the_cli_unpacks_the_client_pair_correctly():
     src = inspect.getsource(cli)
     assert "client, model = _pl._client()" in src
     assert "_pl._client(), os.environ" not in src, "the tuple bug is back"
+
+
+def test_the_final_selection_sees_every_leg_not_just_the_last(monkeypatch):
+    """Constrained selection picks from session.known_entity_ids -- this leg's
+    retrieval. Each leg is a fresh session, so without a chain-level pass the
+    judge cannot select the papers earlier legs found: 4.3 named of 38.8."""
+    monkeypatch.setenv("CRITIC_SELECTS", "1")
+    monkeypatch.setenv("CONSTRAINED_IDS", "1")
+    seen = {}
+
+    def fake_select(conn, question, touched, named=(), chat=None):
+        seen["touched"] = set(touched)
+        return sorted(touched), {}
+
+    import hepcoveragekg.eval.free_sql as fs
+    monkeypatch.setattr(fs, "critic_selects_papers", fake_select)
+
+    inner = FakeInner()
+    inner._conn = object()
+    out = C.ChainedSubgoalSystem(inner, _chat(GOALS)).answer(_q())
+    assert seen["touched"] == {"2001.00001", "2002.00002", "2003.00003"}, \
+        "the judge must see all three legs' papers"
+    assert out.constrained_ids == ["2001.00001", "2002.00002", "2003.00003"]
+    assert out.constrained_mode == "chain-critic"
+    assert "Papers: 2001.00001, 2002.00002, 2003.00003" in out.text
+
+
+def test_the_chain_survives_a_failing_selection(monkeypatch):
+    monkeypatch.setenv("CRITIC_SELECTS", "1")
+    monkeypatch.setenv("CONSTRAINED_IDS", "1")
+
+    def boom(conn, question, touched, named=(), chat=None):
+        raise RuntimeError("judge is down")
+
+    import hepcoveragekg.eval.free_sql as fs
+    monkeypatch.setattr(fs, "critic_selects_papers", boom)
+    inner = FakeInner()
+    inner._conn = object()
+    out = C.ChainedSubgoalSystem(inner, _chat(GOALS)).answer(_q())
+    assert out.chain_legs == 3 and out.text == "leg3 answer"

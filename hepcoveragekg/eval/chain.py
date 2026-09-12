@@ -113,6 +113,37 @@ class ChainedSubgoalSystem:
             if a.error:
                 break
 
+        # THE JUDGE MUST SEE THE WHOLE CHAIN, NOT THE LAST LEG.
+        #
+        # Constrained selection picks from `session.known_entity_ids` -- what
+        # THIS session retrieved. Every leg is a fresh session, so the final
+        # leg's judge can only choose among papers the final leg touched, and
+        # the 30-odd papers earlier legs established are in its prompt as text
+        # but not in its candidate pool. It cannot select what it cannot see,
+        # which is why the first chain run named 4.3 papers out of 38.8 found.
+        #
+        # So the chain runs ONE more selection of its own, over the union. This
+        # is `critic_selects_papers`, the same judge and prompt free-SQL uses
+        # (D-166), which is paper-keyed and therefore already the right shape.
+        if (os.environ.get("CRITIC_SELECTS", "") == "1"
+                and os.environ.get("CONSTRAINED_IDS", "") == "1" and papers):
+            conn = getattr(self._inner, "_conn", None)
+            if conn is not None:
+                try:
+                    from .free_sql import critic_selects_papers
+
+                    picked, review = critic_selects_papers(conn, q.text, set(papers))
+                    if picked:
+                        last_answer.constrained_ids = list(picked)
+                        last_answer.constrained_candidates = len(papers)
+                        last_answer.constrained_mode = "chain-critic"
+                        last_answer.text = (last_answer.text or "").rstrip() \
+                            + "\n\nPapers: " + ", ".join(picked)
+                except Exception as exc:  # noqa: BLE001 -- never lose the chain
+                    import logging
+                    logging.getLogger(__name__).warning(
+                        "chain-level selection failed, keeping the last leg's: %s", exc)
+
         out = last_answer
         out.entity_ids = sorted(entities)
         out.evidence_ids = sorted(evidence)
