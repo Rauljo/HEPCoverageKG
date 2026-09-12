@@ -77,6 +77,42 @@ Say what you now know for each -- "not started", "18 papers found, set_1_kept",
 "done: 2001.06899, 2004.14060". Carry forward what you already established; the
 point is that nothing is dropped between rounds. Then make your calls."""
 
+#: SUBGOAL_SPLIT=strict. The default prompt says "Fewer is better. One is fine
+#: if the question is simple", and on the supervisor's nine -- where every
+#: question is compound -- it collapses them: the first sequential arm advanced
+#: its pointer on only 7 of 18 records and never twice, meaning decomposition
+#: returned ONE objective on eleven of them. A single objective makes the
+#: sequential arm identical to no decomposition at all, so the mechanism was
+#: measured mostly on records where it was not running.
+#:
+#: Opt-in rather than a replacement: changing the default would make every new
+#: run incomparable with the fifteen arms already scored against it.
+STRICT_DECOMPOSE_PROMPT = """\
+Break this question into the sub-objectives needed to answer it from a knowledge
+graph of high-energy-physics papers.
+
+Rules:
+  - ONE SUB-OBJECTIVE PER CONDITION. If the question asks for analyses that use
+    X and also Y, that is a sub-objective for X, a sub-objective for Y, and one
+    for combining them. Do NOT collapse two conditions into one sub-objective.
+  - AT MOST {n}. Use fewer ONLY if the question genuinely has fewer conditions.
+  - Order them. A later one may depend on an earlier one's result.
+  - Each is a retrieval or reasoning step, not a restatement of the question.
+  - A question with one condition gets one sub-objective. Most questions here
+    have more than one; read it carefully before deciding it has only one.
+
+Reply with a numbered list and nothing else.
+
+QUESTION: {question}"""
+
+
+def _decompose_prompt() -> str:
+    import os as _os
+    return (STRICT_DECOMPOSE_PROMPT
+            if _os.environ.get("SUBGOAL_SPLIT", "") == "strict"
+            else DECOMPOSE_PROMPT)
+
+
 _NUMBERED = re.compile(r"^\s*(\d+)[.)]\s*(.+?)\s*$", re.M)
 _STATUS = re.compile(r"STATUS:\s*(.+?)(?=\n\s*\n|\Z)", re.S | re.I)
 
@@ -90,7 +126,7 @@ def decompose(chat: Callable, question: str, max_n: int = MAX_SUBGOALS) -> list[
     """
     try:
         response = chat([{"role": "user",
-                          "content": DECOMPOSE_PROMPT.format(n=max_n, question=question)}],
+                          "content": _decompose_prompt().format(n=max_n, question=question)}],
                         None)
         text = (response.choices[0].message.content or "").strip()
     except Exception as exc:  # noqa: BLE001

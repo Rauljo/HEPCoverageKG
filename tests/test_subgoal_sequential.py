@@ -89,3 +89,29 @@ def test_off_by_default(monkeypatch):
     st = _state()
     G._advance_sequential(st, "OBJECTIVE COMPLETE", NS(content="", tool_calls=[]))
     assert st["subgoal_index"] == 0 and st["session"].subgoal_advances == 0
+
+
+def test_strict_split_is_opt_in(monkeypatch):
+    """Changing the default would make every scored arm incomparable."""
+    monkeypatch.delenv("SUBGOAL_SPLIT", raising=False)
+    assert sg._decompose_prompt() is sg.DECOMPOSE_PROMPT
+    monkeypatch.setenv("SUBGOAL_SPLIT", "strict")
+    assert sg._decompose_prompt() is sg.STRICT_DECOMPOSE_PROMPT
+    p = sg.STRICT_DECOMPOSE_PROMPT
+    assert "Do NOT collapse two conditions" in p
+    assert "Fewer is better" not in p
+    assert "{n}" in p and "{question}" in p
+
+
+def test_strict_prompt_is_the_one_sent(monkeypatch):
+    monkeypatch.setenv("SUBGOAL_SPLIT", "strict")
+    seen = {}
+
+    def chat(messages, tools=None):
+        seen["body"] = messages[0]["content"]
+        return NS(choices=[NS(message=NS(
+            content="1. find X papers\n2. find Y papers\n3. intersect them"))])
+
+    goals = sg.decompose(chat, "analyses using X and Y")
+    assert goals == ["find X papers", "find Y papers", "intersect them"]
+    assert "ONE SUB-OBJECTIVE PER CONDITION" in seen["body"]
