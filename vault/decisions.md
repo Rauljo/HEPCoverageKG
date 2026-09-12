@@ -8969,3 +8969,46 @@ this project.
 3. The chapter's mechanism tables must be re-checked against the table above
    before they are published, because two of the columns were wrong and the
    error was invisible in the run files.
+
+## D-190 -- the status block's real effect on QwQ is tool-call correctness, and it buys almost no score
+
+doc_writer observed that the status arm fixed a lot of malformed tool calls on
+the 32B. Checked both meanings of "wrong tool call", on the supervisor's nine,
+QwQ-32B-AWQ:
+
+| arm | tool error rate | calls written as PROSE and recovered | judged F1 |
+|---|---|---|---|
+| control a (54355) | 0.181 | 25 | 0.579 |
+| control b (54356) | 0.203 | 26 | -- |
+| control c (54378) | 0.167 | 11 | -- |
+| `--subgoals` alone (54359) | **0.236** | 22 | 0.594 |
+| **`--subgoal-status` inline (54365)** | **0.047** | 16 | 0.578 |
+| progress + split call (54436) | 0.098 | **4** | 0.584 |
+
+**The effect is large and doc_writer called it correctly.** The status block
+takes QwQ's tool error rate from ~18% to **4.7%**, a four-fold reduction, and
+the split-call variant takes prose-written tool calls from 25 to **4**.
+
+**Two things follow that matter more than the effect itself.**
+
+**1. It is the STATUS, not the decomposition.** `--subgoals` alone -- the same
+decomposition, no progress block -- has the WORST error rate in the table
+(0.236, above every control). So splitting the question does not help the
+model call tools correctly; being shown a running record of what it has
+already established does. That separates the two halves of the mechanism more
+cleanly than any score has.
+
+**2. Fixing it buys almost nothing.** 54365 cuts tool errors by four and
+scores 0.578 against the control's 0.570 -- inside the noise. A mechanism can
+repair a real, large, visible failure mode and leave answer quality where it
+was. Tool-call correctness was simply not the binding constraint, which is the
+same lesson the reach numbers keep giving from the other direction.
+
+**Correction to what I told Raul.** I said "it is not that the 32B calls tools
+improperly -- its error rate is 4% against 3.8-flash's 1%". That was measured
+on **qwen/qwen3-32b via OpenRouter** (54469, 1.9%), not on **QwQ-32B-AWQ**, the
+cluster model doc_writer works with, whose untreated rate is 18-20%. Both
+numbers are right; the label "the 32B" is used for two different models in
+this project and I did not disambiguate. The persistence argument in D-187
+stands on its own evidence (1.04 calls per round, 3.6 rounds, 15 of 18 exits
+written as prose) and is unaffected.
