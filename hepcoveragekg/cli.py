@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import sys
 from pathlib import Path
 from typing import Optional, Sequence
@@ -635,6 +636,30 @@ def _cmd_eval(args) -> int:
                 ranked_answer=args.ranked_answer,
                 enum_expand=args.enum_expand,
             )
+        # SEQUENTIAL CHAINING (SUBGOAL_CHAIN=1). N short runs instead of one
+        # long one, because QwQ answers after 2-5 rounds however large the
+        # budget is, and SUBGOAL_SEQUENTIAL asked it to sustain a list it was
+        # never going to reach the end of (0.134 against a 0.570 control).
+        # The chain wraps the planner rather than changing it, so every knob
+        # above applies unchanged to each leg.
+        if os.environ.get("SUBGOAL_CHAIN", "") == "1":
+            from hepcoveragekg.eval import chain as _chain
+            from hepcoveragekg.query import planner as _pl
+
+            _inner_factory = make_system
+
+            def make_system():
+                client, model = _pl._client(), os.environ.get("LLM_MODEL_NAME", "")
+
+                def chat(messages, tools=None):
+                    return client.chat.completions.create(
+                        model=model, messages=messages,
+                        temperature=float(os.environ.get("LLM_TEMPERATURE", 0.2)))
+
+                return _chain.ChainedSubgoalSystem(
+                    _inner_factory(), chat,
+                    max_goals=int(os.environ.get("SUBGOAL_CHAIN_MAX", "3")),
+                    name="chain")
         system = make_system()
     else:
         make_system = None

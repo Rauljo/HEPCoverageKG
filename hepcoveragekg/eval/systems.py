@@ -128,6 +128,9 @@ class Answer:
     constrained_critic_dropped: int = 0
     subgoal_status_calls: int = 0
     subgoal_advances: int = 0
+    #: Sequential CHAINING (eval/chain.py): how many legs actually ran.
+    chain_legs: int = 0
+    chain_goals: list = field(default_factory=list)
     subgoal_forced_advances: int = 0
     subgoal_sequential: str = ""
     reflections_used: int = 0
