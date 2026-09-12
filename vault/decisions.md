@@ -8569,3 +8569,52 @@ mechanism is supposed to make calls.
 Still missing, and the honest next step rather than a claim of completeness:
 the header prints the arm name but not the *resolved* critic and reflect
 endpoints, which is what instance 3 turned on.
+
+## D-181 -- qwen3.8-flash against qwen3-32b on the supervisor's nine (OpenRouter)
+
+One repeat each, same prompt, same graph, `--answer-critic` + `CONSTRAINED_IDS=1`,
+9 records per arm, zero errors in both. Raul asked for this as a sense of the
+possible improvement rather than a result, and it cannot be read as one: n=9
+against a replicate spread near 0.1 (D-093).
+
+| | qwen3-32b | qwen3.8-flash |
+|---|---|---|
+| judged F1 | 0.472 | 0.431 (-0.042, se 0.130) |
+| precision / recall | 0.837 / 0.443 | 0.633 / 0.381 |
+| **retrieval reach** | 0.689 | **0.989** |
+| entities retrieved | 21.3 | **214.2** |
+| evidence rows | 9.4 | 122.8 |
+| candidate papers | 24.8 | 54.4 |
+| papers named | 15.2 | 9.2 |
+| rounds / tool calls / LLM calls | 3.0 / 2.4 / 3.0 | 6.0 / 9.7 / 6.0 |
+| seconds | 156 | **71** |
+
+**The headline number is a null and the volumes are not.** 3.8-flash reaches
+**0.989 of the supervisor's gold papers against 0.689** -- it finds almost
+everything -- while retrieving ten times the entities and running every
+question to the full six-round budget. Then it names nine papers where the 32B
+names fifteen, and scores slightly lower.
+
+So the two models fail in opposite directions, and the same handoff gap the
+per-paper questions exposed is what decides it: **3.8-flash has the best
+retrieval measured anywhere in this project and converts least of it.** The 32B
+retrieves a third as much and writes more of it down.
+
+Two practical notes. It is **twice as fast in wall time despite twice the
+rounds** (71s against 156s), so the round budget rather than the model is what
+bounds it -- `max_rounds` 6 was tuned for a model that finishes in three, and
+3.8-flash hits the ceiling on every question. And its precision is 0.20 lower,
+which for the routing use case (D-172's precision-first arm) is the wrong
+direction.
+
+**What this is worth.** Not a model recommendation. It is evidence that the
+retrieval ceiling on this corpus is much higher than the current system
+reaches, and that the binding constraint is the answer step, not the search.
+A model that reaches 0.989 and scores 0.431 says the graph has the papers and
+the writing loses them. That belongs in the discussion of the handoff problem
+rather than in a model comparison table.
+
+If it is pursued, the honest follow-up is 3.8-flash with a raised round budget
+and the judge selecting the list (`CRITIC_SELECTS=1`), which is the mechanism
+measured to be worth +0.08 and is exactly the one that converts retrieval into
+a named list.
