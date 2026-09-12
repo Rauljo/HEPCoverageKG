@@ -8675,3 +8675,80 @@ low: hit@3 0.442 means that on fewer than half the questions is a correct paper
 in the top three, and 13 of 90 records return no list at all. Precision-first
 is viable in the sense that the list is now 100% real, and not yet in the sense
 that the top of it is reliable.
+
+## D-184 -- the noise floor on the 84, measured from a true replicate pair, and it is small
+
+Every number in this chapter has been compared against a single control run,
+and on the two small sets that practice failed badly: the supervisor's nine
+have a replicate spread near 0.113 (D-093) and the seven value questions 0.087
+(the accidental replicate in D-172). Both are wider than almost every effect
+measured on them, and that is what forced three withdrawals on 09-11.
+
+The 84 retrieval questions turn out to be a different instrument. **54368 and
+54370 are two runs of the same configuration** (typed, `--answer-critic` on the
+9B, judge-selects, 168 records each), and they were never read as a pair:
+
+| | set_f1 | reach | papers named | clean |
+|---|---|---|---|---|
+| replicate A (54368) | 0.323 | 0.983 | 27.9 | 84/84 |
+| replicate B (54370) | 0.318 | 0.991 | 29.6 | 83/84 |
+| **paired difference** | **-0.005 (se 0.009, n=80)** | +0.008 (0.008) | +1.8 (1.5) | |
+
+A second, weaker check across days and configurations agrees: 54453 against
+its `json_schema` predecessor 54318 gives **-0.007 (se 0.023, n=62)**.
+
+**So the replicate spread on the 84 is about 0.005-0.007 in set F1, twenty
+times tighter than the supervisor's nine.** That is the number that makes the
+rest of the chapter readable, and it should be stated once, early, with the
+two small-set floors beside it:
+
+| question set | replicate spread | usable for mechanism comparison? |
+|---|---|---|
+| 84 retrieval | **0.005** | yes |
+| 7 value | 0.087 | no |
+| supervisor's 9 | 0.113 | no |
+
+Consequences, applied immediately:
+- **The ensemble's +0.069 is roughly ten times the floor** and survives.
+- **chATLAS's +0.013 does not fail because of the floor** -- it is twice the
+  floor -- but because its own paired standard error is 0.023, inflated by the
+  31 questions lost to timeouts. A cleaner pair of embedding runs could resolve
+  it; nothing on the small sets could.
+- Every mechanism result reported from the supervisor's nine (D-173 outcome)
+  stays exactly as written: inside the noise, and now with a directly measured
+  comparison set showing what a usable floor looks like.
+
+## D-185 -- the ensemble is the largest real effect in the mechanism programme
+
+84 retrieval questions, 1 repeat, all three arms `--answer-critic` (9B) +
+`CONSTRAINED_IDS=1`, paired on the 55 questions all three answered.
+
+| | set_f1 | reach | candidate papers | entities | named | rounds | LLM calls | seconds | clean |
+|---|---|---|---|---|---|---|---|---|---|
+| typed (54453) | 0.286 | 0.815 | 33.9 | 102.3 | 20.7 | 3.40 | 3.4 | 329 | 62/84 |
+| free-SQL + judge (54459) | 0.276 | 0.545 | 12.7 | 17.5 | 23.6 | 3.02 | 3.0 | 236 | 77/84 |
+| **ensemble, judge picks (54455)** | **0.355** | 0.762 | 20.9 | 96.8 | 20.9 | 3.53 | 5.9 | 517 | **83/84** |
+
+| vs typed | set_f1 | reach | named |
+|---|---|---|---|
+| free-SQL | -0.010 (0.042) | -0.294 (0.082) | +2.9 (3.1) |
+| **ensemble** | **+0.069 (0.025)** | -0.053 (0.057) | +0.1 (1.8) |
+
+**+0.069 at se 0.025 against a floor of 0.005** is the largest and best
+supported mechanism effect in the programme, and the only one outside the
+noise on a set that can resolve it.
+
+**It does not come from retrieving more.** The ensemble's reach is LOWER than
+typed's (0.762 against 0.815) and it names the same number of papers (20.9
+against 20.7). It retrieves fewer candidates than typed (20.9 against 33.9).
+The gain is entirely in WHICH papers the judge selects when the candidate pool
+is drawn from two systems with different biases -- typed reaches broadly
+(0.815) and free-SQL narrowly but differently (0.545). Neither alone beats the
+other (-0.010, flat); the union judged is worth +0.069.
+
+**It is also the most robust arm run all night**: 83 of 84 records clean,
+against typed's 62. Free-SQL's cheapness (236s, 3.0 calls) and the ensemble's
+cost (517s, 5.9 calls) are the trade.
+
+For the write-up this is the result that justifies keeping both systems, which
+until now had no evidence behind it beyond "they fail differently."
