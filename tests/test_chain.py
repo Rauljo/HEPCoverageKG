@@ -92,3 +92,17 @@ def test_one_goal_is_a_single_leg_that_answers():
     out = C.ChainedSubgoalSystem(inner, _chat(["just find the papers"])).answer(_q())
     assert out.chain_legs == 1 and len(inner.asked) == 1
     assert "FINAL STEP" in inner.asked[0]
+
+
+def test_the_cli_unpacks_the_client_pair_correctly():
+    """_client() returns (client, model). Unpacking it as one value made every
+    decomposition raise "'tuple' object has no attribute 'chat'", the chain
+    fail open on all 27 records, and chain_legs=0 is what caught it."""
+    import inspect
+    from hepcoveragekg import cli
+    from hepcoveragekg.query import planner
+
+    assert len(planner._client()) == 2, "_client must stay a (client, model) pair"
+    src = inspect.getsource(cli)
+    assert "client, model = _pl._client()" in src
+    assert "_pl._client(), os.environ" not in src, "the tuple bug is back"

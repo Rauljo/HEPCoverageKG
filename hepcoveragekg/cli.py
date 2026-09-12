@@ -649,7 +649,11 @@ def _cmd_eval(args) -> int:
             _inner_factory = make_system
 
             def make_system():
-                client, model = _pl._client(), os.environ.get("LLM_MODEL_NAME", "")
+                # _client() returns (client, model) -- unpacking it as one
+                # value cost the first chain run: every decomposition raised
+                # "'tuple' object has no attribute 'chat'", the chain failed
+                # open on all 27 records, and chain_legs=0 caught it.
+                client, model = _pl._client()
 
                 def chat(messages, tools=None):
                     return client.chat.completions.create(
