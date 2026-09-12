@@ -8618,3 +8618,60 @@ If it is pursued, the honest follow-up is 3.8-flash with a raised round budget
 and the judge selecting the list (`CRITIC_SELECTS=1`), which is the mechanism
 measured to be worth +0.08 and is exactly the one that converts retrieval into
 a named list.
+
+## D-182 -- constrained decoding plus a judge-selected list removes invented ids entirely
+
+The precision-first arm needs a list that contains only real papers before rank
+order means anything. Measured across three configurations on the 84 retrieval
+questions, against a graph of 60 papers:
+
+| configuration | field | ids listed | exist in the graph | records naming NOTHING real |
+|---|---|---|---|---|
+| free-SQL, no constrained decoding (54351) | `papers` | 2007 | 1804 (89.9%) | **30 of 148 (20.3%)** |
+| free-SQL + judge, raw candidate pool (54459) | `papers` | 945 | 882 (93.3%) | 1 of 64 (1.6%) |
+| **free-SQL + judge, declared list (54459)** | `constrained_ids` | 639 | **639 (100.0%)** | **0** |
+
+One in five answers from the unconstrained system named **no real paper at
+all** -- sequential fabrications like 1703.02649, 1703.02650, 1703.02651. The
+constrained declared list is 100% real, by construction rather than by luck.
+This is the precondition for the routing use case: precision on a list that is
+one-fifth fiction measures confident invention.
+
+## D-183 -- the reranking arm: a small lexical gain, and two reranker bugs found by disbelieving a null
+
+`eval/analysis/score_precision_at_k.py`, on 54459's judge-selected list, 77
+records, mean list length 10.1, 13 records with no list:
+
+| ordering | P@1 | P@2 | P@3 | P@5 | hit@3 | MRR |
+|---|---|---|---|---|---|---|
+| none (as shipped) | 0.234 | 0.221 | 0.247 | 0.248 | 0.416 | 0.332 |
+| **lexical** | **0.260** | **0.240** | 0.251 | 0.258 | **0.442** | **0.347** |
+| dense | 0.221 | 0.221 | 0.242 | 0.248 | 0.416 | 0.325 |
+
+**The shipped order is arXiv-id order**, so the `none` row is what the alphabet
+scores. Lexical reranking -- count how many question words of more than three
+characters appear in the paper's graph evidence -- lifts P@1 by 0.026 and hit@3
+by 0.026. Real but small, and on 77 records nothing here separates from zero.
+
+**Two bugs, both found because the reranker returned numbers IDENTICAL to no
+reranking, twice.** A reranker that changes nothing is indistinguishable from a
+reranker that is not running, and both times it was the latter:
+
+1. `evidence_by_paper()` is keyed on **entity** ids. Passing paper ids returned
+   `{}`, so every candidate scored 0 and the sort fell back to id order. The
+   paper-keyed function is `evidence_by_paper_wide()`, built for free-SQL in
+   D-165/166 precisely because free-SQL retrieves no entities.
+2. With that fixed, `dense` was still inert: the blob was built from labels and
+   aliases, and these papers have **zero labels and 60-200 quotes**, so every
+   blob was the string "(nothing)" and every embedding identical.
+
+Dense is still flat after the fix. That is now a result rather than a bug: on
+this corpus the question embeds no closer to a relevant paper's quotes than to
+an irrelevant one's, which is consistent with 60 papers all drawn from the same
+narrow domain.
+
+**What this says for the router.** The mechanism is sound and the ceiling is
+low: hit@3 0.442 means that on fewer than half the questions is a correct paper
+in the top three, and 13 of 90 records return no list at all. Precision-first
+is viable in the sense that the list is now 100% real, and not yet in the sense
+that the top of it is reliable.
