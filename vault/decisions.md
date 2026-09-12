@@ -8860,3 +8860,62 @@ repeats, about $3.44 + $0.40.** Nine questions cannot resolve +0.083; the 84
 has a replicate floor of 0.005 (D-184) and is the only set in the project that
 can. Not launched -- it spends money on Raul's account and he has not asked
 for it.
+
+## D-188 -- sub-goal decomposition on a model that is not round-limited: perfect retrieval, fewer papers named
+
+D-187 left 3.8-flash at judged F1 0.603 with reach 0.978. Raul asked for
+decomposition on top of that. Two arms, both on the 54468 base (12 rounds,
+`CRITIC_SELECTS=1`, `--answer-critic`, `CONSTRAINED_IDS=1`), 18 records each,
+zero errors: `--subgoal-status` (the planner rewrites the progress block in its
+own turn) and the same plus `SUBGOAL_STATUS_CALL=1` (a separate call writes it
+after each execution, planner reads it read-only).
+
+| | control (54468) | status inline (54470) | status split call (54471) | 32B control (54469) |
+|---|---|---|---|---|
+| judged F1 | **0.603** | 0.531 | 0.491 | 0.520 |
+| precision | 0.561 | 0.476 | 0.461 | 0.649 |
+| recall | 0.753 | 0.682 | 0.603 | 0.552 |
+| **retrieval reach** | 0.978 | **1.000** | **1.000** | 0.668 |
+| **papers named** | **43.6** | 37.1 | 29.8 | 23.8 |
+| entities retrieved | 388 | 329 | 418 | 31.9 |
+| rounds | 11.4 | 9.7 | 10.6 | 3.6 |
+| tool calls | 22.8 | 27.6 | 26.9 | 2.7 |
+| LLM calls | 11.4 | 9.7 | **20.1** | 3.6 |
+| seconds | 227 | 323 | **647** | 91 |
+| answered | 0.889 | 0.833 | 0.778 | 1.000 |
+
+Paired against the control: inline **-0.072 (se 0.087)**, split call **-0.112
+(se 0.074)**. Neither is resolved on nine questions whose replicate spread is
+~0.11 (D-184), and both point down.
+
+**Both decomposition arms reach 1.000 -- every gold paper the supervisor
+named, on every question.** That is the first perfect retrieval recorded in
+this project, and both arms then name FEWER papers than the control that
+reached less (37.1 and 29.8 against 43.6). The mechanism works, and it works
+on the half of the pipeline that was never the bottleneck.
+
+**Two things that are new and are not about the score.**
+
+**1. Decomposition does not lengthen a run that was already long -- it
+concentrates it.** Everywhere else measured, sub-goal status RAISED round
+counts (4.33 against 2.90 on the value questions; its whole function is
+keeping a run going). Here rounds FALL, 11.4 to 9.7, while tool calls per run
+RISE, 22.8 to 27.6. The planner does more per round and stops sooner. On
+models that hit the round ceiling the mechanism reads as "keeps the agent
+going"; on a model with headroom it reads as "lets the agent conclude", and
+concluding early is what costs it the papers. The two readings were
+indistinguishable until a model with headroom was run.
+
+**2. Doing the status in a separate call is strictly worse here.** -0.112
+against the inline -0.072, at **20.1 LLM calls against 9.7 and 647 seconds
+against 323** -- 2.8x the wall time of the control for the worst score of the
+four. It also answers least often (0.778). The split was worth testing and is
+now measured: on the supervisor's nine it has never once beaten the inline
+version, at roughly double the cost each time.
+
+**What this supports in the write-up, stated at the strength the data allows.**
+Task decomposition is a *retrieval* mechanism on this system: it takes reach
+from 0.978 to 1.000 and from 0.668 to 1.000 on the 32B's configuration. It is
+not an answer mechanism, and every arm that improved retrieval in this project
+lost ground at the answer step. Nine questions cannot resolve -0.072; the
+claim that survives is directional and mechanistic, not a number.
