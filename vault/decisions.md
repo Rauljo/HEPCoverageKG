@@ -8478,3 +8478,53 @@ the final rounds, force the answer path when the budget is spent -- would buy
 back the answered rate, not the named papers, and a mechanism that needs to be
 told when to stop talking is a different claim from the one the literature
 makes. Recorded as measured.
+
+## D-178 outcome, the cluster number withdrawn -- the answer critic was not in the same place in both runs
+
+Raul asked whether the reflection runs had the answer critic on. Both do, by
+flag. In the cluster pair they do not have it in the same PLACE, and that
+makes that comparison a two-variable one.
+
+| | control 54355 | reflection 54452 |
+|---|---|---|
+| `--answer-critic` | yes | yes |
+| `CRITIC_BASE_URL` | `compute-gpu-0-1:8001` (the 9B) | **unset -- the planner's own client** |
+| requests to 8001 | 213 | 62, and all 62 are reflection checks |
+| "answer-critic kept" lines | -- | 8, over 18 records |
+
+`hpc/gabriel_arm_job.sh` only sets `CRITIC_BASE_URL` for the `*-8b` arms, and
+54452 ran `ARM=off`. I passed `CRITIC_MODEL=Qwen/Qwen3.5-9B` and
+`REFLECT_BASE_URL=...:8001`, and assumed the critic would follow the reflect
+endpoint. It does not; `_critic_client()` falls back to the planner's client
+when `CRITIC_BASE_URL` is unset.
+
+So **-0.319 conflates the reflection with moving the answer critic off the 9B**
+and is withdrawn. Part of the low critic activity is downstream rather than
+causal -- 9 of 18 records named zero papers and the critic only runs on named
+papers -- but the endpoint difference is uncontrolled either way, and a number
+that cannot be attributed to one change is not a measurement.
+
+**What survives is the OpenRouter pair**, where control and arm are identical
+but for `REFLECT_MODE`: same flags, same endpoints, same critic model, same
+sha. **-0.048 (se 0.068)** judged F1, `answered` 0.833 against 0.889, papers
+named 3.00 against 5.33, at twice the LLM calls and 2.3x wall time. No gain,
+double the cost.
+
+**The claim that the checking model's capability sets the sign is withdrawn
+with it.** It rested entirely on the -0.319 against the -0.048, and one of
+those two numbers is now known to be measuring something else as well. The
+observation that prompted it is still on the record -- the 8B split gf-01 into
+clause fragments while the 9B produced real conditions -- but that is an
+illustration of a failure mode, not a measured effect, and it must be written
+as such.
+
+**Not re-run.** Raul's instruction through doc_writer is no further mechanism
+arms, and this would be one. The OpenRouter result stands on its own and is
+the configuration in which control and arm differ by exactly one thing.
+
+**Method note, third instance tonight.** D-179 (a job named `-reflect` with
+reflection off), the 9B reviewer whose 25 calls all 400'd, and now a critic
+endpoint that silently fell back. All three were invisible in the run file and
+found only by counting requests per port in the log. The header line added in
+D-179 should print the resolved critic and reflect endpoints, not just the
+arm name.
