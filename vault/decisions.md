@@ -8317,3 +8317,99 @@ the history dropped and the schema truncated, and a call that still fails sets
 `Review.failed`, counted as `review_failures` on every record). Until then the
 question D-175 asks -- is the reviewer's effect about reviewing or about model
 size -- is open and unmeasured.
+
+## D-178 outcome -- the reflection suppresses answering, and it is the injection rather than the bounce
+
+The first clean measurement of the asked completeness check. The OpenRouter
+lane returned **18 records with zero errors** on both arms, which the cluster
+had not managed in six attempts.
+
+| | control (54449) | reflection (54450) |
+|---|---|---|
+| judged F1 | 0.275 | **0.064** |
+| precision / recall | 0.469 / 0.227 | 0.120 / 0.046 |
+| **answered** | **0.889** | **0.167** |
+| abstained | 0.111 | 0.278 |
+| papers named | 5.33 | 0.89 |
+| entities retrieved | 47.4 | 67.7 |
+| evidence rows | 27.7 | 38.4 |
+| faithfulness | 0.792 | 0.881 |
+| rounds / LLM calls | 3.50 / 3.5 | 4.06 / 7.8 |
+
+**The mechanism does not degrade answers. It stops them being written.** Three
+of eighteen records produced an answer at all; ten have empty text and no
+recorded stopping reason. Retrieval goes UP (entities 47 to 68, evidence 28 to
+38) and naming goes to almost nothing. Faithfulness rises to 0.881 for the
+uninteresting reason that a run which says almost nothing has almost nothing
+unsupported.
+
+**Two separate faults, separated by running the check on two models.**
+
+**1. The 8B decomposes grammar, not conditions.** `llama-3.1-8b-instruct` --
+inherited on OpenRouter because REFLECT_MODEL falls back to CRITIC_MODEL --
+split gf-01 into `Which analyses`, `are searches`, `rather than measurements`,
+`whose event selection uses`, each marked "nothing yet". Four clause fragments
+that nothing could ever retrieve, all counted as missing, all bouncing the run.
+Qwen3.5-9B on the cluster produced real conditions on the same question
+(`ABCD method background estimation`, `matrix method over independent
+regions`), all marked established. The check needs a model that can tell a
+retrievable condition from a relative clause, and the 8B cannot.
+
+**2. The suppression is NOT the bounce, and this is the finding that matters.**
+Splitting records by whether they were bounced:
+
+| | bounced | not bounced |
+|---|---|---|
+| cluster, 9B check | 0.43 answered (n=7) | 0.40 answered (n=5) |
+| OpenRouter, 8B check | **0.00** answered (n=8) | 0.30 answered (n=10) |
+
+On the cluster the bounced and unbounced records answer at the same low rate.
+So with a competent check model it is not the bounce that stops the answer --
+it is **the verdict sitting in the planner's prompt every round**. Telling a
+planner each round what is still missing makes it keep retrieving instead of
+committing, and that is the mechanism's central design decision, not an
+accident of thresholds. The D-178 rationale was that steering the next action
+is safer than vetoing the last one. Measured, the steering is what does the
+damage.
+
+On the 8B the bounce is lethal on top of that: every bounced record answered
+zero.
+
+**What this is, for the write-up.** It is a clean negative result on a
+mechanism taken from the literature and implemented as the literature
+describes -- Devil's Advocate's post-action alignment at the granularity of a
+round, with Reflexion's separation of the evaluator and with Pan et al.'s
+constraint that the checker never sees the draft. It fails, and it fails in
+the direction Pan et al. and Huang et al. predict for self-correction without
+a reliable external signal, arriving through a door neither paper describes:
+not by rewriting good answers into bad ones, but by never letting the answer
+be written.
+
+**The fix, if it is worth one round of effort.** The reflection must not be
+able to leave a run with no answer: (a) suppress the verdict block in the
+final two rounds so the planner is not told what is missing when it should be
+committing, and (b) force the answer path when the budget is spent after a
+bounce. Neither is a redesign. But the honest order is to write this up as
+measured before building a second version of it, since a version that only
+works after being told when to stop talking is a different claim.
+
+## D-176 outcome -- progress without decomposition, on the value questions
+
+54437, `SUBGOAL_SCOPE=question`: keep the progress tracking, drop the
+sub-objectives. 21 records, 3 errored, 57 status calls, so the mechanism fired.
+
+| arm | clean | facts stated | vs base |
+|---|---|---|---|
+| sub-goal status (54425) | 21/21 | 0.437 | +0.075 (0.041) |
+| status, own call (54445) | 13/21 | 0.562 | +0.092 (0.086) |
+| **progress only, no split (54437)** | 18/21 | 0.380 | **+0.031 (0.080)** |
+| base (54421) | 21/21 | 0.362 | -- |
+| replicate control (54433) | 21/21 | 0.275 | -0.087 (0.045) |
+
+Positive, smaller than the arms that keep the decomposition, and well inside
+the 0.087 noise floor the replicate control established. The missing cell is
+now filled and it says what the nested design suggested: **remembering without
+splitting is the weakest of the three**, which agrees with the supervisor's
+nine, where `--subgoals` alone was the best single mechanism. Plan-on-Graph's
+ablation ranks Memory above the rest; on this system the split is worth more
+than the memory of it, on both sets where both have been measured.
