@@ -8919,3 +8919,53 @@ from 0.978 to 1.000 and from 0.668 to 1.000 on the 32B's configuration. It is
 not an answer mechanism, and every arm that improved retrieval in this project
 lost ground at the answer step. Nine questions cannot resolve -0.072; the
 claim that survives is directional and mechanistic, not a number.
+
+## D-189 -- D-180 instance five, and this one mislabelled two numbers I reported
+
+doc_writer asked for the job number of the `SUBGOAL_SCOPE=question` variant on
+the supervisor's nine. Finding it exposed that **two columns I reported are
+named wrong**, both mine.
+
+**The naming convention, recovered from the job names, which is the only place
+the intent survives.** Every one of these runs predates 1ef8bd6 (21:31 on
+09-11), so none records `subgoal_scope`, and absence carries no information.
+The counters confirm the convention exactly:
+
+| suffix | scope | split call | evidence (`subgoal_status_calls`/record) |
+|---|---|---|---|
+| `-status` | normal (decomposed) | no | 54395 0.00, 54425 0.00, 54365 0.00 |
+| `-status2` | normal (decomposed) | yes | 54408 2.11, 54431 2.20 |
+| `-progress` | **question** | no | 54434 0.00, 54435 0.00 |
+| `-progress2` | **question** | yes | 54436 2.78, 54437 3.17 |
+
+**Correction 1 -- D-173 outcome, the supervisor's nine.** I reported 54436 as
+"Status, own call" and gave it +0.013 (se 0.022). 54436 is **`g9-progress2`**:
+`SUBGOAL_SCOPE=question` PLUS `SUBGOAL_STATUS_CALL=1`. It is the
+whole-question progress variant, not the decomposed one. So the table's
+"status, own call" column on Gabriel's nine describes a configuration that was
+never run there -- **there is no `g9-status2`**. The +0.013 belongs to
+`progress + own call`, and it changes TWO things against the inline status arm
+(54365), not one.
+
+**Correction 2 -- D-176 outcome, the value questions.** I wrote "progress only,
+no split (54437)" and gave it +0.031 (se 0.080). 54437 is `v7-progress2` and
+has 3.17 status calls per record, so the split call WAS on. The row that
+actually is "progress, no split" is **54434 (`v7-progress`, 0.00 calls)**,
+which I never scored.
+
+**Why the arithmetic check fails, recorded so it is not retried.** The obvious
+discriminator is that `SUBGOAL_SCOPE=question` skips the decomposition call, so
+`llm_calls - rounds - subgoal_status_calls` should be 1 for normal scope and 0
+for question scope. It reads **0.00 for every arm including known normal-scope
+ones**, because `subgoals.decompose()` is called in `planner._prepare` where
+the session is not in scope and `session.llm_calls` is never incremented. The
+decomposition call is real, costs money, and is invisible in every run file in
+this project.
+
+**Three fixes, none of them large:**
+1. `decompose()` must increment `session.llm_calls` -- it is an LLM call.
+2. `subgoal_scope` is on the record since 1ef8bd6; nothing more is needed for
+   future runs, but every run before it must be identified from its job name.
+3. The chapter's mechanism tables must be re-checked against the table above
+   before they are published, because two of the columns were wrong and the
+   error was invisible in the run files.
