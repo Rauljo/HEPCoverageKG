@@ -44,6 +44,13 @@ echo "judge=$CRITIC_MODEL  constrained=${CONSTRAINED_IDS:-0} critic_selects=${CR
 # becomes the slowest question rather than the sum. Each worker builds its own
 # system and sqlite connection -- required, because free-SQL keeps search sets
 # in temp tables named on the connection.
-.venv/bin/python -m hepcoveragekg.cli eval run "$Q" $ARM_FLAGS \
-    --repeats "${REPS:-5}" --workers "${WORKERS:-8}" \
-    --critic-seed 20260815 --timeout 1200 2>&1 | tail -26
+# DEFAULTS GO BEFORE $ARM_FLAGS, NOT AFTER. argparse takes the LAST value, so
+# a hardcoded `--timeout 1200` at the end silently overrode
+# `ARM_FLAGS="... --timeout 3600"`: the chained arms were relaunched with a
+# tripled budget to stop them timing out and timed out at 1200s anyway, with
+# the log still saying "no answer within 1200s". Same shape as the judge
+# override two hours earlier (D-082, third instance) -- a value the script
+# pins after the caller's.
+.venv/bin/python -m hepcoveragekg.cli eval run "$Q" \
+    --timeout "${TIMEOUT:-1200}" --critic-seed 20260815 \
+    --repeats "${REPS:-5}" --workers "${WORKERS:-8}" $ARM_FLAGS 2>&1 | tail -26
