@@ -19,19 +19,26 @@
 set -uo pipefail
 module load Python/3.9.6-GCCcore-11.2.0
 cd /home/xucabrjs/HEPCoverageKG
+_OVERRIDE_CRITIC="${CRITIC_MODEL:-}"
 set -a; . ./.env; set +a
 export LLM_BASE_URL="https://openrouter.ai/api/v1"
 export LLM_API_KEY="$OPENROUTER_API_KEY"
 export CRITIC_BASE_URL="https://openrouter.ai/api/v1"
 export CRITIC_API_KEY="$OPENROUTER_API_KEY"
 export LLM_MODEL_NAME="${OR_MODEL:-qwen/qwen3-32b}"
-export CRITIC_MODEL="meta-llama/llama-3.1-8b-instruct"
+# THE SUBMITTED JUDGE MUST WIN (D-082, third instance). This line used to be
+# unconditional, so `--export=...,CRITIC_MODEL=qwen/qwen3.5-9b` was silently
+# discarded and fourteen arms launched on 2026-09-12 to remove a judge
+# confound all ran with the Llama-8B anyway. gabriel_arm_job.sh has carried an
+# _OVERRIDE_CRITIC guard for this since 2026-09-01; this script never got one.
+export CRITIC_MODEL="${_OVERRIDE_CRITIC:-meta-llama/llama-3.1-8b-instruct}"
 unset LLM_MAX_COMPLETION_TOKENS
 export KIND_SEMANTICS="${KIND_SEMANTICS:-0}"
 [ -n "${LLM_API_KEY:-}" ] || { echo "FATAL: no OPENROUTER_API_KEY"; exit 2; }
 Q="${QFILE:-eval/questions/gabriel-gold-2026-09-02-merged.jsonl}"
 echo "ARM=${ARM_LABEL:-unnamed}  flags=${ARM_FLAGS:-baseline}  repeats=${REPS:-5}"
 echo "questions=$Q  model=$LLM_MODEL_NAME  encoder=${ALIASES_EMBED_MODEL:-bge-base}"
+echo "judge=$CRITIC_MODEL  constrained=${CONSTRAINED_IDS:-0} critic_selects=${CRITIC_SELECTS:-0} seq=${SUBGOAL_SEQUENTIAL:-0} chain=${SUBGOAL_CHAIN:-0}"
 # --workers: the runner was serial until 2026-09-02 (D-094). A question is
 # ~100s of network wait, so overlapping them is close to linear; the wall
 # becomes the slowest question rather than the sum. Each worker builds its own
