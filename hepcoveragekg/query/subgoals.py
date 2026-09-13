@@ -345,7 +345,7 @@ def wants_advance(text: str) -> bool:
 
 
 def render_sequential(goals: list, index: int, established: list,
-                      rounds_left: int) -> str:
+                      rounds_left: int, sql: bool = False) -> str:
     """The block for ONE objective. `established` is what earlier ones produced.
 
     The planner never sees the objectives it has not reached. It does see what
@@ -367,6 +367,16 @@ def render_sequential(goals: list, index: int, established: list,
         "When it is satisfied, write OBJECTIVE COMPLETE on its own line, with "
         "a short note of what it established, and make no further calls that "
         "round.")
+    # A SUB-GOAL IS NOT A SCHEMA. On free-SQL with qwen3-32b, 62% of tool calls
+    # failed and every error was of one kind -- "no such table: analyses",
+    # "no such table: analysis_objects" -- after a sub-objective reading "find
+    # analyses that use b-tagged jets". The decomposition's vocabulary leaked
+    # into the query's. The typed agent cannot have this failure because its
+    # tool names are fixed; an agent that WRITES queries can and does.
+    if sql:
+        tail += ("\n\nThe wording of this objective is NOT schema. Use only the "
+                 "tables and columns given in the schema above -- never invent a "
+                 "table named after a word in the objective.")
     return (f"\n\nSUB-OBJECTIVES: working on {index + 1} of {len(goals)}"
             f" ({rounds_left} rounds left)\n\n"
             "ALREADY ESTABLISHED\n" + done +

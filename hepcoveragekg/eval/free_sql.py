@@ -1008,7 +1008,7 @@ class FreeSQLSystem:
             # SUBGOAL_SEQUENTIAL=1 lived only in the typed planner's graph, so
             # free-SQL could not run the arm at all -- half of the comparison.
             if _os.environ.get("SUBGOAL_SEQUENTIAL", "") == "1":
-                system += _sg.render_sequential(goals, 0, [], self._max_rounds)
+                system += _sg.render_sequential(goals, 0, [], self._max_rounds, sql=True)
             else:
                 system += (_sg.render(goals) if self._subgoal_status
                            else _sg.goals_only(goals))
@@ -1071,7 +1071,7 @@ class FreeSQLSystem:
                                 if not (m.get("role") == "system"
                                         and "SUB-OBJECTIVES" in (m.get("content") or ""))]
                     messages.append({"role": "system", "content": _sg.render_sequential(
-                        goals, idx, established, self._max_rounds - rounds)})
+                        goals, idx, established, self._max_rounds - rounds, sql=True)})
                 elif self._subgoal_status and goals:
                     from ..query import subgoals as _sg
                     fresh = _sg.extract_status(choice.content or "")

@@ -115,3 +115,17 @@ def test_strict_prompt_is_the_one_sent(monkeypatch):
     goals = sg.decompose(chat, "analyses using X and Y")
     assert goals == ["find X papers", "find Y papers", "intersect them"]
     assert "ONE SUB-OBJECTIVE PER CONDITION" in seen["body"]
+
+
+def test_the_sql_variant_warns_against_inventing_tables():
+    """free-SQL + sequential on qwen3-32b failed 62% of its tool calls, every
+    error "no such table: analyses" after a sub-goal reading "find analyses
+    that use b-tagged jets". The decomposition's vocabulary leaked into the
+    query's."""
+    plain = sg.render_sequential(GOALS, 0, [], 6)
+    assert "NOT schema" not in plain, "the typed agent must not get the SQL warning"
+    sqlv = sg.render_sequential(GOALS, 0, [], 6, sql=True)
+    assert "NOT schema" in sqlv
+    assert "never invent a table" in sqlv
+    # the last objective carries it too -- that is where the answer is written
+    assert "NOT schema" in sg.render_sequential(GOALS, 2, ["a", "b"], 3, sql=True)
