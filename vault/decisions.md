@@ -9141,3 +9141,56 @@ with a longer per-record timeout before either is quoted.
 
 **What survives cleanly**: the typed sequential arms (18 and 17 clean, +0.123
 and +0.096 over their controls) and the whole free-SQL column on 3.8-flash.
+
+## D-193 -- the 32b chain, clean at last, and what the timeouts had been hiding
+
+54523: qwen3-32b typed chained, 18/18 records, **zero errors**, 9B judge. Two
+launches before it were void, each for a different reason found only in the
+error strings:
+
+- 54517 lost 6 of 18 to a 1200s ceiling.
+- 54521 was relaunched with `--timeout 3600` and **still timed out at 1200s**,
+  because `or_arm_job.sh` pinned `--timeout 1200` AFTER `$ARM_FLAGS` and
+  argparse takes the last value (D-082, fourth instance; fixed).
+
+**The timeouts were removing the hard questions, and the effect is large.**
+
+| | 54517 (6 lost) | **54523 (0 lost)** |
+|---|---|---|
+| papers found | 25.9 | **42.5** |
+| selected | 22.2 | **37.1** |
+| judged F1 (list) | 0.657 | 0.655 |
+
+Retrieval is 64% higher once the long questions survive, while F1 is
+unchanged. So the lost records were the ones where the chain does the most
+work, and the earlier number was computed on the easy half. F1 happening to
+match is luck, not vindication: the two means describe different question
+sets.
+
+**The clean trio, list rule, 18 records each:**
+
+| | control | sequential | chained |
+|---|---|---|---|
+| papers retrieved | 27.9 | 34.8 | **42.5** |
+| candidates judged | 27.6 | 34.6 | 42.3 |
+| selected | 23.1 | 31.3 | 37.1 |
+| of which right | 6.7 | 8.8 | **10.5** |
+| of which wrong | 16.4 | 22.6 | 26.6 |
+| **recall** | 0.63 | 0.76 | **0.90** |
+| precision | 0.68 | 0.60 | 0.59 |
+| **judged F1 (list)** | 0.575 | 0.602 | **0.655** |
+| rounds / calls / seconds | 3.3 / 3.3 / 397 | 3.7 / 3.7 / 471 | 8.4 / 9.4 / **923** |
+
+Paired: sequential **+0.123 (se 0.061)**, chained **+0.145 (se 0.062)**.
+On the text rule the same arms give +0.019 and +0.052, with recall **+0.238
+(se 0.072)** and precision -0.084 (se 0.035) for the chain -- the rules
+disagree because the text carries prose ids the judge rejected, so the list
+rule is the one that measures the mechanism.
+
+**Recall 0.90 is the highest recorded on the supervisor's nine.** The chain
+finds nine tenths of the gold papers, at 2.3x the wall time of the control.
+
+**Still not clean: the 3.8-flash chain.** 54524 lost 11 of 18 to OpenRouter
+**429 rate limits**, even at two workers -- not to time. Three legs of the
+chattiest model in the set exceeds the account's request rate. Its cell stays
+unquotable; the fix is one worker with backoff, not a longer timeout.
