@@ -9194,3 +9194,1094 @@ finds nine tenths of the gold papers, at 2.3x the wall time of the control.
 **429 rate limits**, even at two workers -- not to time. Three legs of the
 chattiest model in the set exceeds the account's request rate. Its cell stays
 unquotable; the fix is one worker with backoff, not a longer timeout.
+
+## D-194 -- the 9.5B judge on OpenRouter never judged: `chat_template_kwargs` is a vLLM argument
+
+Chasing the supervisor-facing oddity "why is qwen3-32b only rejecting 4
+papers", the answer turned out to be that it rejected nothing at all. Keep
+rates: QwQ 35-37%, 3.8-flash 44%, **qwen3-32b 87-89%**. The record-level
+`constrained_critic_dropped` read 0, which looks like "no drops were needed".
+The count that mattered was inside `answer_review`:
+
+    qid gabriel-gf-01-condition   candidates 42  kept 42
+    dropped 0   defaulted 42   calls 6   errors 0
+
+**`defaulted=42` with `errors=0`.** Every paper was kept because no verdict
+came back, and no call threw.
+
+**Cause.** `answer_critic_call` climbs a ladder whose first rung sends
+`extra_body={"chat_template_kwargs": {"enable_thinking": False}}` (D-105: a
+reasoning judge spends its allowance thinking and every verdict defaults to
+keep). `chat_template_kwargs` is a **vLLM** argument. OpenRouter does not
+implement it -- and does not reject it either. It accepts the request, drops
+the kwarg, and the judge thinks. Measured directly against
+`qwen/qwen3.5-9b` on 2026-09-13, same prompt both ways:
+
+| rung | content | reasoning | finish | completion tokens |
+|---|---|---|---|---|
+| thinking-off (`extra_body`) | **0 chars** | 6405 chars | `length` | 2000 |
+| plain | valid verdict JSON | 2690 chars | `stop` | 886 |
+
+The empty response is a perfectly successful HTTP call, so a ladder that
+steps only on **exceptions** stops on rung one forever. `_parse("")` returns
+`{}`, and every paper in the batch takes the `no verdict returned ->
+defaulted=True -> keep` path.
+
+**Two wrong diagnoses on the way, both recorded because the corrections are
+the useful part.**
+
+*"The judge never judged."* It judged a quarter of the candidates, and judged
+them well. Among candidates that actually received a verdict the drop rate is
+**40-86%**, against **63%** for the healthy cluster-hosted QwQ judge and
+**57%** for llama-8b. The judge is not lenient and not broken; it is absent.
+What the arms lost is not the verdicts that were made but the 67-95% of
+candidates that reached the answer having never been looked at.
+
+*"The plain rung works, so stepping past the empty rung is the fix."* It is
+not, and this was the expensive error: the plain rung fails too. Thinking is
+never off on OpenRouter -- reasoning is present on **every** call including
+the thinking-off ones -- so whether content survives is just whether the
+reasoning happens to finish inside the cap. Same judge, same prompt, by batch
+size, cap 4000:
+
+| papers | rung | content | reasoning | finish | tokens |
+|---|---|---|---|---|---|
+| 1 | thinking-off | 100 | 2206 | stop | 659 |
+| 1 | plain | 119 | 3629 | stop | 1067 |
+| 4 | thinking-off | 510 | 7901 | stop | 2499 |
+| 4 | plain | **0** | 13662 | `length` | 4000 |
+| 8 | thinking-off | **0** | 13333 | `length` | 4000 |
+| 8 | plain | **0** | 13028 | `length` | 4000 |
+
+At `CHUNK = 8` both rungs blank. Re-running the arms on the ladder fix alone
+would have reproduced the contamination.
+
+D-105's alarm (`DEFAULT_ALARM = 0.25`) did fire. It went to a log that
+`or_arm_job.sh` pipes through `tail -26`, and the logs are 28-29 lines.
+
+**Scope.** Every arm judged by `qwen/qwen3.5-9b` **on OpenRouter** -- 12 runs,
+78-95% of candidates defaulted:
+
+| defaulted | jobs | planner |
+|---|---|---|
+| 73-85% | 54503, 54504, 54533, 54536 | qwen3-32b |
+| 67-76% | 54510, 54511 | qwen3.8-flash |
+| 38-93% | 54517, 54519, 54521, 54522, 54523, 54524 | chained, both |
+
+The **cluster-hosted** 9B judge is unaffected (0% defaulted): real vLLM
+honours the kwarg. The llama-8b judge is unaffected (0-3%): it is not a
+reasoning model, so thinking-off is a no-op for it.
+
+The bitter part: the 9.5B judge was adopted precisely to **remove** a judge
+confound between arms. It introduced a larger one, in the direction that
+flatters the arm -- keep-everything inflates recall and depresses precision,
+so the 32b columns read as "a model that retrieves broadly" when what they
+show is a filter that was switched off.
+
+**Fix, in two parts.** Neither alone is enough.
+
+1. **Send the argument the endpoint actually implements.** There is no
+   portable way to turn thinking off: `chat_template_kwargs` is vLLM's,
+   `reasoning` is OpenRouter's, and each ignores or rejects the other.
+   `_thinking_off(client)` reads `base_url` and orders the two, keeping the
+   loser as a later rung so a misread endpoint costs a retry, not the judge.
+   On the same eight-paper batch that blanked above:
+
+   | variant | content | reasoning | finish | tokens |
+   |---|---|---|---|---|
+   | `chat_template_kwargs` | 0 | 13333 | `length` | 4000 |
+   | `reasoning {exclude: true}` | 1086 | 0 | `stop` | 2142 |
+   | `reasoning {enabled: false}` | **702** | **0** | `stop` | **279** |
+
+   `exclude` only hides the thinking from the response -- it is still
+   generated and still billed (2142 tokens against 279), so `enabled: false`
+   is the one we send.
+
+2. **A rung is judged by what it returned, not by whether it raised.**
+   `_has_content` (content **or** tool calls, since the reflection check
+   shares this ladder and may answer with either). This no longer carries the
+   fix on its own, but it is what turns a future silent blanking into one
+   wasted call instead of a whole mislabelled arm.
+
+Regression tests verified to fail on the old code, including one asserting the
+hosted client reaches the working argument on its **first** call -- the
+failure mode was paying 4000 thinking tokens per call to learn nothing.
+
+**D-070's class again, seventh instance.** A run file records what a system
+produced, not what it was asked to do. Every previous instance was an
+env/flag that failed to arrive; this one is an argument that *did* arrive at a
+server that had no idea what it meant. New rule: an argument that only one
+serving stack implements must be verified to have had an effect, not assumed
+from the absence of an error.
+
+**Verified end to end, not just at the API.** The same real pool that
+recorded `defaulted 42, calls 6, errors 0` in 54533 (gf-01-condition), rerun
+through `judge_papers` on the patched ladder against the same OpenRouter
+endpoint:
+
+    candidates 16  kept 10  dropped 6  DEFAULTED 0  calls 2  errors 0
+
+A 38% drop rate, inside the healthy band, and the rejection is the exact
+distinction the prompt asks for -- 2001.06899 dropped with "mentions
+b-tagging only for template derivation", which is the "mentions a technique in
+passing" case.
+
+**Consequence for the tables.** The 32b and 3.8-flash columns judged by the
+OpenRouter 9.5B are withdrawn pending re-run. QwQ (cluster judge) and the
+llama-8b-judged 3.8-flash arms stand.
+
+## D-195 -- the 32b re-run: fixing the judge erases qwen3-32b's apparent advantage
+
+54548 (`r-32b-ctrl`), the D-194 re-run of 54533 on the patched ladder. Same
+model, same questions, same judge, same flags -- the only change is that the
+judge now answers.
+
+| 32b control | unjudged | papers retrieved | named | recall | precision | judged F1 |
+|---|---|---|---|---|---|---|
+| 54533, broken judge | **78%** | 31.5 | 36.4 | 0.78 | 0.60 | **0.615** |
+| 54548, fixed judge | **0%** | 33.0 | 20.6 | 0.56 | 0.69 | **0.578** |
+| QwQ control (54355) | 0% | 23.9 | 17.8 | 0.53 | 0.78 | 0.579 |
+
+18 clean records of 18, no errors, 1 defaulted candidate of 589.
+
+**Retrieval is unchanged (31.5 to 33.0) and everything downstream moves.**
+That is the internal consistency check the result needed: the judge runs after
+the search, so a fix to the judge must leave retrieval alone, and it does.
+What changes is how much of that retrieval reaches the answer -- the judge now
+rejects 22.0 candidates per record instead of 4.1, and the named list falls
+from 36.4 to 20.6.
+
+**The headline: qwen3-32b's lead over QwQ was the broken judge.** 0.578
+against 0.579 is the same number. Table 4.8's "32b is the strongest answerer"
+reading does not survive, and neither does the $+0.015$ sub-goal-status gain
+attributed to it, which was measured on a list three quarters of which nobody
+had looked at. The recall that made 32b look strong (0.78) was papers kept by
+default, and it falls to 0.56 once they are judged -- below QwQ's precision
+advantage rather than above it.
+
+Also worth recording: the arm ran in **11 minutes**. The broken version took
+far longer per record, because a judge that thinks until it hits the token
+ceiling on three quarters of its batches is paying full price for silence.
+
+## D-196 -- the brake: a stopping signal, because every other mechanism says "keep going"
+
+Raul, reading the corrected Table 4.8: *"Qwen3.8 is working for longer rounds,
+which is good. However, it gets to the point where it retrieves pretty much
+every paper.... that is not the behaviour we are really looking for no???"*
+
+He is right, and the table now shows it. Two rows were added to make it
+visible, because a reach figure alone hides what the breadth costs:
+
+| | rounds | papers touched | gold reach | retrieval precision |
+|---|---|---|---|---|
+| QwQ control | 3.2 | 23.7 / 60 | 0.68 | **0.67** |
+| QwQ +sg status | 4.0 | 32.7 | 0.78 | 0.59 |
+| qwen3-32b control | 3.2 | 33.0 | 0.77 | 0.58 |
+| qwen3-32b +sg status | 3.9 | 35.9 | 0.80 | 0.57 |
+| qwen3.8-flash control | 11.4 | 55.3 | 0.98 | 0.48 |
+| qwen3.8-flash +sg status | 9.7 | 57.9 | **1.00** | **0.46** |
+
+**The diagnosis.** The tool trace says where the mass comes from: QwQ issues
+3.6 calls returning 68 rows per record, qwen3.8-flash issues **22.8 calls
+returning 834 rows**, mostly `search` (6.5 calls, 288 rows) and `contents_of`
+(4.8 calls, 253 rows), which dumps a whole set. Three things compound. Nothing
+in the loop penalises breadth -- a bigger set never looks like failure to the
+planner, and the only thing that ever removes a paper is the judge at the very
+end. The corpus is 60 papers, so ~23 calls at ~44 rows each sweep it almost by
+accident. And **fixing the stamina exposed the missing brake**: the sub-goal
+family solved "the model gives up too early" and nobody built its counterpart.
+
+**Why it matters more than F1 suggests.** F1 is flat (0.554 against QwQ's
+0.543) -- it is a different operating point, trading precision 0.67 to 0.48 for
+reach 0.68 to 0.98, not a worse one. Three reasons it is still wrong. It
+hollows out the premise: if the agent touches 55 of 60 and hands them to a
+judge, the graph structure is not what finds the papers and the argument does
+not survive a 10,000-paper corpus. It moves the bottleneck -- reach 0.98 means
+retrieval is *solved* for this model and further retrieval work on it is wasted.
+And it hurts the judge by the decoy effect already written up for the QwQ status
+arm: 11.8 gold in a pool of 24 is a different task from 11.8 in a pool of 55.
+
+**The arm.** `SUFFICIENCY=1`, a block rewritten each round reporting how many
+papers the run holds and **how many the last round added that it did not
+already have**, escalating after two consecutive thin rounds (`MIN_NEW_PAPERS`
+2, `SATURATION_ROUNDS` 2).
+
+Two design choices worth defending. It is **deterministic** -- no model call,
+no judge. A brake implemented as another LLM opinion would cost a call per
+round and confound "a stopping rule helped" with "a second model looked at it",
+the confound `REVIEWER_MODEL` exists to avoid; and the quantity that matters is
+arithmetic. And the instruction is **conditional**: it reports, states that
+stopping is scored as success rather than surrender, and keeps an explicit
+escape hatch ("if some specific part of the question still has nothing behind
+it, say which part and search for THAT"). An unconditional stop would cost
+recall on exactly the questions the sub-goal family was built to rescue, and a
+brake that undoes the accelerator is not an improvement.
+
+`sufficiency_new` (papers gained per round) and `sufficiency_saturated` are on
+every record, and `SUFFICIENCY` is in the config hash and the submission echo.
+Without those, an arm that shortens runs cannot be told apart from a model that
+happened to stop early -- the D-070 class, which has now cost this project
+seven instances.
+
+**Prediction, recorded before the run.** On qwen3.8-flash: rounds down from
+11.4, papers touched down from 55.3, retrieval precision up from 0.48, reach
+down from 0.98 but not below ~0.85, and F1 roughly flat. If reach collapses the
+threshold is too aggressive; if nothing moves the block is being ignored and
+the next version has to cost the planner something rather than merely inform it.
+17 unit tests, full suite 1107.
+
+**First live trace (n=1, qwen3.8-flash, "which analyses use b-tagged jets"),
+and it half-refutes the prediction above.**
+
+| round | papers held | new | stale | saturated |
+|---|---|---|---|---|
+| 1 | 0 | 0 | 0 | no (nothing searched yet) |
+| 2 | 42 | **42** | 0 | no |
+| 3 | 54 | 12 | 0 | no |
+| 4 | 55 | 1 | 1 | no |
+| 5 | 55 | 0 | 2 | **yes** -> answered |
+
+The block reaches the planner and the planner acts on it: the run stopped the
+round the brake fired. **Rounds 11.4 to 5, tool calls 22.8 to 7** against the
+control mean -- less than half the effort.
+
+**But papers held is still 55.** The prediction said papers touched would fall
+from 55.3; it did not move. The reason is in the trace: **54 of the 55 papers
+arrive by round 3**. The breadth is not in the long tail this brake shortens,
+it is in the first two searching rounds, where one `search` returns ~44 rows
+and one `contents_of` ~53. By the time marginal yield is measurable the corpus
+has already been swept.
+
+So the arm as built saves **effort**, not breadth, and it cannot improve
+retrieval precision on this model because retrieval precision was fixed at
+round 3. A brake that counts rounds is the wrong instrument for a model that
+over-retrieves per call. The lever that would work is per-call width
+(`SEARCH_BREADTH_MAX`, currently 240) or a cap on rows per tool result -- and
+that is a different arm, worth running as the pair to this one.
+
+Kept and worth running anyway: halving cost at equal breadth is a real result,
+and the counters now make the distinction visible. n=1 on a deliberately broad
+question; not a measurement, a demonstration that the mechanism fires.
+
+## D-197 -- why qwen3.8-flash reads the whole corpus: it has the answer at round 2 and takes it apart
+
+Raul: *"design some mechanism to avoid qwen3.8 over-retrieving... diagnose the
+issue, why is it acting like that, and design the mechanism that would fix it."*
+
+**Diagnosis, from the trace rather than the totals.** On gf-01 (searches whose
+selection uses BOTH b-tagged jets AND missing transverse momentum) qwen3.8-flash
+makes the correct call in round 2 -- `facets objects=[BJet, MET] mode=all
+category=search`, 18 rows -- and then spends nine rounds relaxing it: the AND
+split into two ORs (round 4), `facets` on Jet, Electron, Muon and Tau, none of
+which the question mentions (rounds 6-7), a generic "ATLAS CMS search for new
+physics" paper search, and two predicate-less bulk reads returning 465 and 775
+rows. Replayed against the gold, **the round-2 set alone is 18 papers holding
+8 of 11 gold at precision 0.80** -- better on both axes than the finished
+answer (0.70 / 0.63). QwQ on the same question makes exactly that one call and
+answers.
+
+Across all 18 records: after the first intersection, QwQ makes **0.0** further
+calls and qwen3.8-flash **21.7**. Only 14 of 5114 entities are generic (occur
+in >10 papers); excluding them the footprint is still **54.3 of 60** via
+specific entities. This is not shared vocabulary inflating a count. The model
+genuinely touches everything.
+
+**Three causes.** (1) Nothing tells an agentic-trained planner that an
+intersection *closes* a conjunctive question; its prior is that thoroughness
+means more calls, so having computed A AND B it checks A, B and their
+neighbours. (2) **Every paper touched is a candidate**: the harness judges the
+footprint, so a `subjects_of` issued to *read* about 465 regions hands the
+judge 50 extra papers to sort. Exploration is charged at the rate of
+nomination, and the decoy effect follows. (3) `subjects_of` and `contents_of`
+have no ceiling and return the corpus from one broad input.
+
+**Why D-196 cannot fix it.** 54 of the 55 papers are in hand by round 3. A
+brake on marginal yield fires at round 5, after the sweep. It halves cost
+(rounds 11.4 to 5) and leaves breadth untouched -- measured, n=1, and exactly
+what the trace predicts.
+
+**Mechanism: anchored candidates** (`vault/ideas/anchored-candidates.md`).
+Separate exploring from nominating. The run keeps a candidate set that starts
+empty and is added to only by *finding* calls that carry the planner's own
+first intersection (the anchor); reads never add to it; a finding call that
+drops an anchor value or introduces one outside it runs and is recorded but
+does not nominate, and the coverage block says so in one line. The judge and
+the answer see the candidate set; the footprint is kept for measurement so
+"papers retrieved" keeps its meaning. Expansion tools get a 60-row ceiling.
+
+Chosen over a stricter brake (damage done by round 3), a row cap alone (the
+enumeration sweep arrives 20 rows at a time), an LLM on-question judge (a
+second model's opinion, and set arithmetic on the planner's own arguments
+needs none), and more prompt advice (two blocks already say "stop"; advice
+does not compete with a trained prior, changing what counts does).
+
+**Prediction before running.** qwen3.8-flash on gf-01-shaped questions:
+candidates ~18 not 55, answer precision up from 0.63, reach roughly held. QwQ:
+unchanged. If reach falls sharply, the anchor is too tight and the explicit
+`nominate` path is not being used -- offer it louder, do not loosen the rule.
+
+## D-198 -- free-SQL on qwen3.8-flash is not cautious either; Table 4.9's "retrieves 24.3" was the asserted list, not the footprint
+
+Raul, planning the chapter: *"for qwq we had seen [free-SQL] was more
+cautious, so i thought it could also be in qwen3.8, but its not really being
+more cautious."* Checked, and he is right -- and the table that says otherwise
+is wrong for a specific reason.
+
+Judged list, list rule, Gabriel's nine, 18 records each:
+
+| arm | footprint | reach | retrieval P | named | right | wrong | P | R | F1 | silent |
+|---|---|---|---|---|---|---|---|---|---|---|
+| QwQ typed | 23.9 | 0.69 | 0.66 | 10.2 | 4.4 | 0.7 | 0.83 | 0.44 | 0.540 | 0 |
+| QwQ free-SQL | 4.4 | 0.20 | 0.73 | 4.9 | 2.8 | 0.4 | 0.83 | 0.49 | 0.322 | 7 |
+| 32b typed | 33.0 | 0.77 | 0.58 | 10.7 | 4.3 | 1.0 | 0.78 | 0.46 | 0.511 | 1 |
+| 32b free-SQL | 7.8 | 0.40 | 0.70 | 7.3 | 3.9 | 1.1 | 0.78 | 0.47 | 0.431 | 2 |
+| 3.8 typed | 55.3 | 0.98 | 0.48 | 21.4 | 6.3 | 4.5 | 0.63 | 0.70 | 0.554 | 2 |
+| 3.8 free-SQL | 22.7 | 0.77 | 0.73 | **44.1** | 11.3 | **12.2** | 0.57 | 0.97 | 0.679 | 0 |
+
+The 3.8 free-SQL row is impossible on its face: a named list of 44 from a
+footprint of 23. The footprint column is the record's `papers` field, and
+free-SQL writes `papers = asserted if asserted else touched` -- so on the 14
+of 18 records where the answer cites, the "footprint" is what the model
+*asserted*, not what its queries touched. The judge's actual pool
+(`constrained_candidates` = touched ∪ asserted) is **48.6 per record**, and the
+last queries in the trace say why: `SELECT arxiv_id, title, category FROM paper
+ORDER BY ...` (60 rows), `SELECT paper_id, kind, label FROM entity_occurrence
+WHERE ...` (133 rows). Corpus dumps. Free-SQL on this model sweeps the library
+exactly as the typed agent does, through a different door, and the judge then
+keeps 44 of 49 -- the least cautious answer in the table, at precision 0.57
+with 12.2 wrong papers per answer.
+
+Three consequences. Table 4.9's caption ("On qwen3.8-flash, which retrieves
+24.3 papers, the judge triples the named list to 45.1") describes the asserted
+list tripling, not retrieval, and needs rewriting. Free-SQL's caution is a
+property of QwQ and 32b, which write narrow queries and stop -- not of the
+free-SQL interface. And the anchored-candidates rule for SQL (D-197: a query
+with no string literal is a read and never nominates) is aimed at precisely
+this: `SELECT * FROM paper` cannot put anything in front of the judge. 54553
+is the test.
+
+**Rule for the chapter: report the footprint as `constrained_candidates` (what
+the judge saw), never as `papers`, on any free-SQL arm with a judge.**
+
+## D-199 -- qwen3.8-flash as its own judge: +0.137, the largest single-mechanism gain on the nine
+
+Raul's overnight brief: *"One option to solve this i think could be use the
+same qwen3.8 as the judge selector. Try it."* 54550, `n-38-selfjudge`: the
+3.8-flash control with `CRITIC_MODEL=qwen/qwen3.8-flash`, everything else as
+54468. 18 of 18 clean.
+
+| 3.8-flash typed | pool | named | right | wrong | P | R | F1 | defaulted |
+|---|---|---|---|---|---|---|---|---|
+| llama-8b judge (54468) | 49.1 | 21.4 | 6.3 | 4.5 | 0.63 | 0.70 | 0.554 | 0% |
+| **itself as judge (54550)** | 49.9 | 20.0 | **7.8** | **2.8** | **0.78** | **0.80** | **0.691** | 10% |
+| 9.5B judge, broken (54510) | 47.6 | 38.9 | 9.4 | 11.9 | 0.52 | 0.96 | 0.533 | 76% |
+
+Paired by question, **+0.137 (s.e. 0.065, n=9)** -- the only mechanism on the
+nine to clear two standard errors. Retrieval is identical (pool 49.1 vs 49.9,
+reach 0.98 vs 0.99): the gain is entirely in what the judge does with the
+same pool. It keeps the same number of papers (20.0 vs 21.4) and swaps 1.7
+wrong ones for 1.5 right ones. Precision 0.78 puts it in QwQ's band (0.83)
+while holding recall 0.80, where QwQ has 0.44.
+
+**What this says about the judge.** The answer critic is the mechanism that
+did all the work in Table 4.6, and the chapter has treated its model as a
+minor choice ("which model judges matters far less", 9B vs QwQ on the 84).
+On a pool of 50 that stops being true: an 8B judge sorting 50 candidates
+against thin evidence is the decoy-effect regime, and a stronger judge is
+worth more than any planning mechanism tried. The 32b judge experiment
+(`CRITIC_MODEL=qwen/qwen3-32b`) is the missing cell.
+
+**What it does not do.** Raul's caveat stands: *"even if it works, it is not
+the optimal because the problem of overretrieving will still be there."* The
+pool is 49.9. The judge is reading the library better; nobody is reading
+less of it. Anchoring (D-197) is the other half, and the arm that combines
+them (`n3-38-anchor-selfjudge`) is queued.
+
+**Caveat on the 10%.** The 3.8 judge returned unparseable verdicts on 10% of
+candidates, which were kept by default (D-105 alarm threshold is 25%). Kept
+papers can only add wrong ones, so the true effect is if anything understated.
+Worth a one-line parse fix -- the 3.8 judge tends to wrap the JSON in prose.
+
+## D-200 -- the overnight results: anchoring, self-judging, chaining, on the supervisor's nine
+
+All arms 2 repeats, judged list, list rule. `n` is clean records of 18; the
+3.8-flash arms launched after ~01:00 lost 2-8 records each to an upstream
+rate limit on `qwen/qwen3.8-flash` (429 at Alibaba, then a failing fallback
+provider), so their means are on partial data and are marked. Paired deltas
+are by question (n=9) against the arm's own control.
+
+**qwen3.8-flash, typed.**
+
+| arm | n | pool | named | right | wrong | P | R | F1 | Δ (s.e.) |
+|---|---|---|---|---|---|---|---|---|---|
+| control, llama-8b judge (54468) | 18 | 49.1 | 21.4 | 6.3 | 4.5 | 0.63 | 0.70 | 0.554 | -- |
+| **self-judge** (54550) | 18 | 49.9 | 20.0 | 7.8 | 2.8 | 0.78 | 0.80 | **0.691** | **+0.137 (0.065)** |
+| anchor v3 (54558) | 16* | 24.8 | 15.6 | 5.9 | 2.9 | 0.74 | 0.61 | 0.570 | +0.011 (0.051) |
+| anchor v6, final rule (54572) | 14* | 20.1 | 11.3 | 3.7 | 4.2 | 0.65 | 0.50 | 0.336 | -0.170 (0.105) |
+| anchor v5 + self-judge (54571) | 11* | 30.6 | 18.6 | 8.0 | 1.6 | 0.85 | 0.76 | 0.790 | +0.217 (0.059) |
+| anchor v6 + self-judge (54573) | 12* | 28.0 | 17.6 | 5.9 | 3.6 | 0.70 | 0.56 | 0.521 | -0.009 (0.063) |
+| chained sub-goals (54556) | 16* | 55.3 | 14.6 | 6.8 | 1.6 | 0.79 | 0.64 | 0.669 | +0.115 (0.092) |
+
+*partial: rate-limited records excluded. The v6 cells disagree with v5 by
+more than the mechanism changed between them, on 11-14 records each; they
+are being re-run alone (54578/54579/54580, one worker) for clean cells.
+
+What is solid on 3.8-flash: the self-judge (+0.137, clean); anchoring halves
+the judge's pool (49 -> 20-30) and roughly halves wrong papers on every
+version, at a cost in recall (0.70 -> 0.50-0.61) and in silence (runs that
+exhaust their rounds without answer(), 1-5 per arm); the chain lifts
+precision to 0.79 at a third fewer rounds.
+
+**qwen3-32b, typed** (all 18/18 clean).
+
+| arm | pool | named | right | wrong | P | R | F1 | Δ (s.e.) |
+|---|---|---|---|---|---|---|---|---|
+| control (54548) | 32.7 | 10.7 | 4.3 | 1.0 | 0.78 | 0.46 | 0.511 | -- |
+| self-judge (54561) | 25.2 | 13.7 | 4.9 | 2.3 | 0.75 | 0.50 | 0.518 | +0.006 (0.062) |
+| anchor v4 (54565) | 18.7 | 8.6 | 4.6 | 0.9 | 0.84 | 0.48 | 0.512 | +0.001 (0.098) |
+| anchor v6, final (54574) | 18.1 | 8.8 | 4.1 | 0.7 | 0.84 | 0.45 | 0.484 | -0.027 (0.087) |
+| **chained sub-goals** (54557) | 41.3 | 12.8 | 6.1 | 1.2 | 0.81 | 0.58 | **0.643** | **+0.132 (0.060)** |
+
+On 32b the anchor holds the intersection exactly (gf-01 pool = 18 on every
+version) and buys precision 0.78 -> 0.84 for nothing in F1; the model was
+not sweeping to begin with. The chain is the one mechanism that moves 32b:
+recall 0.46 -> 0.58 at precision 0.81, +0.132, over two standard errors.
+Self-judging does nothing for 32b (+0.006): judge capacity matters on a
+pool of 50, not of 25.
+
+**Free-SQL** (18/18 unless marked).
+
+| arm | pool | named | right | wrong | P | R | F1 | Δ (s.e.) |
+|---|---|---|---|---|---|---|---|---|
+| 3.8 judge (54514) | 48.6 | **44.1** | 11.3 | **12.2** | 0.57 | 0.97 | 0.679 | -- |
+| **3.8 anchor v1** (54553) | 38.4 | **13.4** | 6.2 | **1.3** | 0.84 | 0.64 | 0.686 | +0.007 (0.102) |
+| 3.8 anchor v6 (54575) | 14* | 35.9 | 13.4 | 5.3 | 1.1 | 0.86 | 0.63 | 0.621 | -0.007 (0.097) |
+| 32b judge (54507) | 7.8 | 7.3 | 3.9 | 1.1 | 0.78 | 0.47 | 0.431 | -- |
+| 32b anchor v3 (54568) | 8.2 | 5.8 | 3.3 | 0.3 | 0.93 | 0.40 | 0.422 | -0.009 (0.022) |
+
+The free-SQL result is the cleanest statement of the trade Raul asked for: on
+3.8-flash, the same F1 with **a quarter of the list and a tenth of the wrong
+papers**; on 32b, wrong papers 1.1 -> 0.3 at precision 0.93 for -0.009.
+
+**Reading for the chapter.** (1) On the model that sweeps, judge capacity is
+worth more than any planning mechanism: self-judging +0.137. (2) Anchoring
+does what it was built to do -- the judge's pool halves and wrong papers halve
+-- and the price is recall and silence, so F1 is flat-to-negative; it is a
+precision instrument, and the physicist's time it saves is the number to
+report (wrong papers per answer), not F1. (3) Chaining is the one mechanism
+that lifts recall on the models that do not sweep, +0.132 on 32b. (4) The
+"balance" is a choice between arms, which is what routing is for
+(`vault/ideas/routing-by-intent.md`).
+
+**D-200 addendum (09:10) -- the clean 3.8-flash cells.** Re-run alone at one
+worker after the rate limit lifted; 18/18, zero errors each.
+
+| 3.8-flash typed | pool | named | right | wrong | P | R | F1 | Δ (s.e.) | silent |
+|---|---|---|---|---|---|---|---|---|---|
+| control (54468) | 49.1 | 21.4 | 6.3 | 4.5 | 0.63 | 0.70 | 0.554 | -- | 2 |
+| self-judge (54550) | 49.9 | 20.0 | 7.8 | 2.8 | 0.78 | 0.80 | **0.691** | **+0.137 (0.065)** | 2 |
+| anchor v6 (54578) | **24.2** | 15.2 | 4.8 | 3.3 | 0.68 | 0.64 | 0.491 | -0.063 (0.065) | 3 |
+| anchor v6 + self-judge (54579) | 21.2 | 13.8 | 5.8 | 2.2 | 0.76 | 0.55 | 0.526 | -0.028 (0.086) | 2 |
+| chain (54556) | 55.3 | 14.6 | 6.8 | 1.6 | 0.79 | 0.64 | 0.669 | +0.115 (0.092) | 0 |
+
+| 3.8-flash free-SQL | pool | named | right | wrong | P | R | F1 | Δ (s.e.) |
+|---|---|---|---|---|---|---|---|---|
+| judge (54514) | 48.6 | 44.1 | 11.3 | 12.2 | 0.57 | 0.97 | 0.679 | -- |
+| anchor v1 (54553) | 38.4 | 13.4 | 6.2 | 1.3 | 0.84 | 0.64 | 0.686 | +0.007 (0.102) |
+| anchor v6 (54580) | 25.6 | 10.9 | 5.1 | 1.2 | 0.79 | 0.60 | 0.592 | -0.087 (0.107) |
+
+**The clean reading replaces the partial one.** On 3.8-flash the anchor does
+exactly what it was built to do to the judge's pool -- 49 to 24 typed, 49 to
+26 free-SQL -- and halves the list; but it costs recall (0.70 -> 0.64 typed,
+0.97 -> 0.60 free-SQL) and F1 goes with it. The +0.217 that the rate-limited
+v5+self-judge cell showed does not survive a clean run (-0.028). What does
+survive, clean and paired: **self-judge +0.137** and **chain +0.115** on 3.8;
+**chain +0.132** on 32b. The anchor is a list-size and wrong-paper
+instrument: on free-SQL v1, a quarter of the list and a tenth of the wrong
+papers at the same F1, and that cell (with the answer-id override still in)
+is the one to quote; v6's stricter rule bought nothing further and cost
+recall.
+
+Two caveats that now stand on their own. The self-judge defaults 18% of
+candidates on the anchored pool even at one worker (10% on the control), so
+its defaulting is not the overnight load but something in how 3.8-flash
+answers the judge prompt on those batches -- worth a fix before the arm is
+quoted as a combination. And every anchor cell on 3.8 carries 2-3 silent
+records (rounds exhausted without answer()); `SELECT_AT_CEILING=1` exists for
+this and has not been run.
+
+v7 (tighten-never-loosen, D-197 limitation): 54581 (32b), 54582 (3.8 +
+self-judge), running.
+
+## D-201 -- why QwQ and qwen3-32b show under one tool call per round: two artefacts, not idleness
+
+Raul: *"i see that both qwq and qwen3-32b are doing very few tool calls per
+rounds. there are even rounds without tools.... why is that?"*
+
+Measured on the controls. Rounds with no recorded tool call: QwQ 28 of 63
+(44%), qwen3-32b 18 of 58 (31%), qwen3.8-flash 16 of 206 (8%). Two distinct
+causes, and neither is the model sitting idle.
+
+**1. The answer round can never have a tool call.** `answer()` is dispatched
+in `execute` and returns without appending a `Step` -- it is not a retrieval
+call and writes no row. So every record that answers has exactly one empty
+round by construction: its last. That accounts for **18 of 18** records in
+every arm, and for **all** of 32b's empty rounds (18 of 18; it has no others).
+The published "tool calls per round" therefore divides by a round that
+structurally cannot contain a search.
+
+**2. QwQ spends extra rounds on refused citations.** Its 10 remaining empty
+rounds are all the same path: the model answers with
+`papers_from='<set name>'` naming a result set it never created, so
+`planner` sets `citation_refused`, `execute` wipes the answer, posts the
+correction as a tool message and `continue`s -- no step, one whole round
+gone. All 10 of the 10 records with an extra empty round have
+`citation_corrected=True`; 32b and 3.8-flash have **zero** such rounds.
+
+The underlying error is the one D-190 already documents from the other side:
+**QwQ created a named set on only 8 of 18 records while citing one on 13.**
+It is citing sets it never made. The sub-goal-status block, which exists to
+tell the planner what it holds and where, moves both numbers in the right
+direction -- sets created 8 -> 13 of 18, refusals 13 -> 9, extra empty rounds
+10 -> 8 -- the same repair as the tool-error collapse (1.64 -> 0.33) reported
+in Table 4.8, showing up in a second counter.
+
+**Corrected figure: tool calls per round that actually searched.**
+
+| arm | rounds | calls | calls/round (published) | searching rounds | **calls/searching round** |
+|---|---|---|---|---|---|
+| QwQ control | 3.50 | 3.56 | 0.91 | 1.94 | **1.64** |
+| QwQ +sg status | 4.00 | 3.61 | 0.90 | 2.56 | 1.33 |
+| qwen3-32b control | 3.22 | 2.50 | 0.78 | 2.22 | **1.11** |
+| qwen3.8-flash control | 11.44 | 22.83 | 2.00 | 10.56 | 2.15 |
+
+So the honest reading of the density row is: 32b issues about one call per
+searching round -- it is terse and correct, one `facets` call often answers
+the question -- QwQ about 1.6, and 3.8-flash about 2.2. The gap between
+models is real but roughly half what the published row suggests, and QwQ's
+apparent sparseness is partly a self-inflicted round tax.
+
+**For the chapter:** either report calls per searching round, or keep the
+current row and state in the caption that the denominator includes the answer
+round (and, for QwQ, the citation-correction rounds). The second is cheaper
+and the numbers already in the tables stay valid.
+
+**D-201 addendum -- and the productive rounds really are one call, because the
+32B models do not parallelise.**
+
+Raul: *"even the productive rounds, for both models are just one tool call
+no???, whereas qwen3.8 does more than one."* Correct. Distribution over
+rounds that executed at least one call:
+
+| calls in the round | QwQ | qwen3-32b | qwen3.8-flash |
+|---|---|---|---|
+| 1 | 69% | **88%** | 15% |
+| 2 | 11% | 12% | **73%** |
+| 3+ | 20% | **0%** | 12% |
+
+`max_places` is 8 and only QwQ ever reaches it, so nothing is truncated.
+qwen3-32b never issues more than two calls in a round at all.
+
+What the multi-call rounds hold is the tell. qwen3.8-flash: 162 multi-call
+rounds, **45% the same tool twice** -- `search + search` 32, `contents_of`
+twice 10, `facets` twice 8. It fires both halves of a conjunctive question in
+one message (gf-01 round 1 is `search "b-tagged jets"` AND `search "missing
+transverse momentum"` together). qwen3-32b: 5 multi-call rounds in the whole
+arm, **100% the same tool twice** -- fan-out only, and almost never. QwQ: 11,
+mostly heterogeneous chains (`papers_of + search + subjects_of`).
+
+The OpenAI tool interface permits several `tool_calls` per assistant message;
+whether a model uses it is a training question. The two 32B **reasoning**
+models run think -> one action -> observe -> think: they want the result
+before choosing the next call, so a round is one decision and one action. The
+**agentic-trained** model treats a round as one decision with several
+independent actions -- 22.8 calls in 11.4 rounds against QwQ's 3.6 in 3.5.
+
+**Consequence for the chapter: `rounds` counts decision points for all three
+models but measures different amounts of work.** A 32b round is one lookup; a
+3.8-flash round is a small batch. Rounds are therefore not a comparable
+effort measure across the two families, and the density row is where the
+difference actually lives. One sentence covers it: the 32B reasoning models
+serialise retrieval (88% and 69% of searching rounds are a single call) while
+the agentic model parallelises (73% are exactly two) -- a difference in how
+the interface is used, not in how much each call returns.
+
+## D-202 -- the free-SQL judge record never carried `defaulted`, so every free-SQL judge cell was unverifiable on exactly D-194's failure
+
+Reported by the doc-writing session while Raul was away; confirmed here.
+
+**The bug.** `free_sql.critic_selects_papers` ended with
+`review.summary() if hasattr(review, "summary") else {"kept", "candidates"}`.
+`AnswerReview` has `to_dict()`, not `summary()`, so the fallback fired on every
+free-SQL record: the run file holds `['candidates', 'kept']` and nothing else.
+The typed path has always written the full dict (`defaulted`, `dropped`,
+`calls`, `errors`, ...). `ensemble.py` and `chain.py` go through the same
+function and inherit the fix. One line, `summary = review.to_dict()`.
+
+**Why it is not tidiness.** `defaulted` is the one counter that shows a judge
+whose verdicts do not parse -- the D-194 signature, where every unparsed
+verdict is kept. On free-SQL it never reached the record. And the two
+free-SQL judge cells in Table 4.9 (54507 for 32b, 54514 for 3.8-flash) ran on
+**2026-09-12 19:05**, a day before the D-194 fix was deployed, on the same
+OpenRouter 9.5B judge that D-194 showed defaulting 67-95% of candidates on the
+typed arms. Their keep rates -- 32b 94%, 3.8-flash **91% (44 of 49)** -- are
+the D-194 signature. The job logs cannot confirm it: 29 lines through a
+`tail -26`, the alarm sits above the cut.
+
+**Correction to D-198 and D-200.** Both say the free-SQL arms showed "0%
+defaulted" and D-198 offers a reason ("pools of ~8 candidates, one batch, so
+the reasoning fit in the cap"). That was a zero read off a field that did not
+exist. Withdrawn. The overnight free-SQL anchor arms (54553 onward) ran after
+the judge fix and their keep rates (35%) look like a working judge, but they
+carry no `defaulted` either; nothing on free-SQL is verified until the re-runs
+land.
+
+**Re-runs**, fixed judge and fixed record, paired with the Table 4.9 cells:
+54586 (3.8-flash free-SQL, judge selects) and 54587 (32b free-SQL, judge
+selects). If `defaulted` on the old cells was high -- and 91% kept says it
+was -- Table 4.9's judge column is a broken judge and its 0.679 is not a
+result; the re-run replaces it. If it comes back near zero on the re-run with
+the keep rate unchanged, the judge genuinely keeps everything on free-SQL's
+pools, which is a finding about the judge.
+
+**A related caveat the peer raised, correct and worth one sentence in the
+chapter:** the two systems do not judge the same material. `critic_selects_papers`
+builds paper-wide evidence (`evidence_by_paper_wide`: every quote the paper
+holds plus labels sharing a word with the question), while the typed path
+uses `evidence_by_paper`, restricted to what the run retrieved. Deliberate
+and documented (free-SQL retrieves few entities), but "same prompt, same
+judge as the typed side" is two thirds true.
+
+**v7 (tighten-never-loosen) result, same morning.** 54581 (32b): re-anchored
+on 0 of 18 records; 54582 (3.8 + self-judge): 2 of 18. The planners almost
+never make a strict-superset lookup after their first, so v7 sits within
+noise of v6 (32b -0.041 vs -0.027; 3.8+sj +0.038 vs -0.028, the gap mostly
+self-judge defaulting 4% against 18%). The rule is kept; the limitation
+(D-197: the anchor is a snapshot of the planner's first exact claim) stands
+as stated, and the thread in the app is its real fix.
+
+**D-202 addendum -- blast radius across the chapter's tables, from the
+records.** The doc-writer session scoped it by start time; the typed path
+records `defaulted`, so the cells can be read directly, and the window is
+judge-*model*-specific: the D-194 failure needs a reasoning judge, and
+Llama-3.1-8B has no thinking to disable.
+
+| table | cells | judge / lane | defaulted | verdict |
+|---|---|---|---|---|
+| 4.6, 4.7 | all | cluster 9B | 0% | clean |
+| 4.8 QwQ | 54355 etc. | cluster 9B | 0% | clean |
+| 4.8 flash | 54468 / 54470 | llama-8b, OpenRouter | 0.5% / 2.6% | clean |
+| 4.8 32b | 54548 / 54549 | 9.5B, OpenRouter, **after** the fix | 0.2% / 0.0% | clean (D-195 re-runs) |
+| 4.9 QwQ | 54546 / 54547 | cluster 9B | recorded nothing (free-SQL) | clean by lane |
+| 4.9 32b judge | 54507 | 9.5B, OpenRouter, **before** the fix | recorded nothing; keeps 94% | **affected** -> 54587 |
+| 4.9 flash judge | 54514 | 9.5B, OpenRouter, **before** the fix | recorded nothing; keeps 91% | **affected** -> 54586 |
+| 4.9 plain arms | 54506 / 54513 | no judge | -- | unaffected |
+
+Rule for any future scan: affected = reasoning judge (qwen3.5-9b, QwQ, qwen3*)
+AND OpenRouter AND started before 2026-09-13 ~19:00 -- or any free-SQL judge
+arm at all, since those recorded no `defaulted` until this morning.
+
+**D-202 results, part 1 -- 32b free-SQL judge, fixed record and fixed judge
+(54587, 18/18, `defaulted` now recorded: 0.0%).**
+
+| 32b free-SQL, judge selects | pool | kept | named | right | wrong | P | R | F1 |
+|---|---|---|---|---|---|---|---|---|
+| old cell, 54507 (pre-fix judge, `defaulted` unrecorded) | 7.8 | 94% | 7.3 | 3.9 | 1.1 | 0.78 | 0.47 | 0.431 |
+| **re-run, 54587** | 8.0 | **74%** | 5.9 | 3.3 | **0.4** | 0.82 | 0.38 | 0.390 |
+
+The working judge is stricter -- wrong papers 1.1 -> 0.4, recall 0.47 -> 0.38
+-- and the old cell's 94% keep did inflate it. But on a pool of 8 the
+difference is small, which is the point Raul and the doc-writer had already
+reached: on 32b the single query's result set *is* the answer, and the judge
+has almost nothing to do. 74% kept with 0% defaulted is the judge's genuine
+verdict on that pool. Replaces Table 4.9's 32b judge column. The 3.8-flash
+cell (54586) is the one where it matters; pending.
+
+**D-202 results, part 2 -- 3.8-flash free-SQL judge, fixed (54586, 18/18,
+`defaulted` 0.0%), and a correction to the free-SQL anchor claim.**
+
+| 3.8 free-SQL, judge selects | pool | kept | named | right | wrong | P | R | F1 |
+|---|---|---|---|---|---|---|---|---|
+| old cell, 54514 (pre-fix judge, unrecorded) | 48.6 | 91% | **44.1** | 11.3 | **12.2** | 0.57 | 0.97 | 0.679 |
+| **re-run, 54586** | 41.2 | 35% | **13.9** | 6.5 | **1.4** | 0.81 | 0.71 | **0.695** |
+| anchor v1, 54553 (fixed judge) | 38.4 | 35% | 13.4 | 6.2 | 1.3 | 0.84 | 0.64 | 0.686 |
+
+Paired, re-run vs old: +0.016 (s.e. 0.096). Replaces Table 4.9's flash judge
+column. The caption's "the judge triples the named list to 45.1" described a
+judge that kept 91% because it could not parse its own verdicts; the working
+judge cuts the list to 14 and the wrong papers to 1.4.
+
+**Correction to D-198 / D-200 (free-SQL rows).** The anchor v1 arm (54553) ran
+after the judge fix and was compared against 54514, which ran before it. So
+"a quarter of the list and a tenth of the wrong papers at the same F1" was
+the *judge fix*, not the anchor. Against the working judge the anchor adds
+almost nothing on free-SQL 3.8: named 13.9 -> 13.4, wrong 1.4 -> 1.3, recall
+0.71 -> 0.64, F1 0.695 -> 0.686. Withdrawn for free-SQL. The typed-side
+anchor result stands (both arms on a working judge: pool 49 -> 24, list 21 ->
+15, at an F1 cost).
+
+**Chapter reading, corrected.** On free-SQL the judge is the mechanism; the
+anchor is redundant with it because a working judge already discards the
+dumps. On the typed side the anchor narrows the pool a working judge is
+handed, which the judge cannot do for itself. That is a cleaner division of
+labour than the one D-200 drew.
+
+## D-203 -- the cluster's vLLM ceiling is the GPU driver: 0.18.0 is the highest that runs
+
+Asked by the doc-writing session for the technologies section. Established from
+the job logs rather than inferred.
+
+**The blocker.** `compute-gpu-0-1` runs **NVIDIA driver 550.163.01 / CUDA
+12.4**. vLLM releases after 0.18.0 bundle a PyTorch that refuses to initialise
+CUDA against it, at `torch._C._cuda_init` during `EngineCore.init_device`,
+before any weights load:
+
+    RuntimeError: The NVIDIA driver on your system is too old (found version 12040).
+
+**Every vLLM version ever started on the cluster**, counted across
+`~/hepcoveragekg_setup/logs/vllm*.out`:
+
+| version | starts | outcome |
+|---|---|---|
+| 0.8.5 | 50 | works (the `.sif`, everything before 2026-09-01) |
+| **0.18.0** | 9 | works, 0 driver errors, both endpoints answered |
+| 0.24.0 | 1 | driver too old (job 47419, 2026-07-07) |
+| 0.28.0 | 1 | driver too old (job 54030) |
+
+Not a container or build problem: all four are unpacked sandboxes under
+`images/`, and the two newer ones fail at CUDA init.
+
+**The image choice was forced in both directions.** 0.8.5 ran everything
+before 2026-09-01; 0.18.0 was required for the stacked QwQ + Qwen3.5-9B server
+(and is why `guided_json` silently stopped working, D-159); newer than 0.18 is
+impossible on this driver.
+
+**What it excluded, precisely.** Job 54030 attempted to serve
+**Qwen/Qwen3.8-27B** under vLLM 0.28.0 and died on that driver error -- a
+citable instance of a modern model shut out by the cap. **But not "unservable"
+in general:** the 0.18.0 model registry lists Qwen2 / Qwen2Moe / Qwen3 /
+Qwen3Moe / Qwen3Next ForCausalLM, the same set as 0.24.0, so whether
+Qwen3.8-27B loads under 0.18.0 was never tested.
+
+**Not to be claimed:** that `qwen/qwen3.8-flash` was unservable locally. It is
+a different artefact from Qwen3.8-27B, was only ever used through OpenRouter,
+and no log here says anything about its weights. Attributing its hosted-only
+use to the driver would be unsupported.
+
+Alongside, already known: two-A100 effective ceiling (TP=3 fails
+head-divisibility), 24 h job cap, no outbound network on compute nodes, and
+MIG/LIGHTGPU unusable for vLLM at any size (D-039).
+
+## D-204 -- control / sequential / chaining on QwQ and qwen3-32b, matched judges, and a withdrawal
+
+Raul asked for this table. Every cell now runs constrained decoding with the
+judge selecting, the 9B/9.5B judge on its own endpoint, two repeats. Three
+cells were re-run to get there: QwQ sequential (54590, the old one was one
+repeat), QwQ chained (54591, the old one lost 3 of 17 to timeouts), and
+qwen3-32b sequential (54592, the old one used the llama-8b judge while the
+rest of its column used the 9.5B).
+
+| | QwQ ctl | QwQ seq | QwQ chain | 32b ctl | 32b seq | 32b chain |
+|---|---|---|---|---|---|---|
+| clean records | 39 | 17 | 17 | 18 | 18 | 18 |
+| entities retrieved | 41.2 | 66.8 | 88.2 | 71.2 | 66.2 | 104.2 |
+| papers retrieved | 23.7 | 29.9 | 40.8 | 33.0 | 26.4 | 41.4 |
+| gold reach | 0.68 | 0.79 | **0.88** | 0.77 | 0.71 | **0.91** |
+| retrieval precision | 0.67 | 0.67 | 0.59 | 0.58 | 0.62 | 0.55 |
+| judge pool | 26.1 | 29.2 | 40.8 | 32.7 | 25.6 | 41.3 |
+| papers in the answer | 10.5 | 12.1 | 12.9 | 10.7 | 10.2 | 12.8 |
+| right / wrong | 4.5 / 0.8 | 5.1 / 1.5 | **6.4** / 1.2 | 4.3 / 1.0 | 4.0 / 1.2 | **6.1** / 1.2 |
+| recall | 0.45 | 0.49 | **0.59** | 0.46 | 0.47 | **0.58** |
+| precision | 0.82 | 0.80 | 0.83 | 0.78 | 0.78 | 0.81 |
+| set F1 | 0.543 | 0.567 | **0.667** | 0.511 | 0.507 | **0.643** |
+| paired D (s.e.) | -- | +0.018 (0.050) | **+0.114 (0.065)** | -- | -0.004 (0.038) | **+0.132 (0.060)** |
+| rounds / tool calls | 3.2 / 3.7 | 3.2 / 2.1 | 8.9 / 8.7 | 3.2 / 2.5 | 3.4 / 2.4 | 8.0 / 5.5 |
+| tool errors / redundant | 1.64 / 0.90 | 0.00 / 0.00 | 3.06 / 2.71 | 0.00 / 0.00 | 0.11 / 0.00 | 0.06 / 0.17 |
+
+**WITHDRAWN: "sequential kills QwQ."** I reported, from the provisional
+numbers, that QwQ sequential named no paper on 9 of 9 records for F1 0.000,
+and read it as the model being unable to carry a task. That was an artefact of
+my own comparison: the old arm (54475) ran **without constrained decoding** --
+`constrained_mode` empty on all 9 records, mean candidates 0.0 -- so it had no
+selected list for a scorer that scores the selected list, against controls that
+did. On a matched arm QwQ sequential is **+0.018 (s.e. 0.050)**: a null, not a
+collapse. One silent record of 17, not 17 of 17.
+
+The lesson is the D-070 class again, from the measurement side rather than the
+run side: an arm that differs from its control in *two* ways measures neither.
+
+**What the table says.** Sequential is a null on both models (+0.018, -0.004).
+Chaining is the one planning mechanism that lifts both, by about the same
+amount: **+0.114 on QwQ, +0.132 on qwen3-32b**, both roughly two standard
+errors, recall 0.45 -> 0.59 and 0.46 -> 0.58 with precision held (0.83, 0.81).
+It is also the only arm where right papers in the answer rise materially
+(4.5 -> 6.4, 4.3 -> 6.1).
+
+**At what cost, and is over-retrieval "solved"?** No. The chain costs 2.5x the
+rounds and, on QwQ, 2.4x the tool calls with tool errors 1.64 -> 3.06 and
+redundant calls 0.90 -> 2.71, because each leg starts fresh and re-issues what
+the last one did. And it buys its recall by retrieving more: papers 24 -> 41
+and 33 -> 41, with **retrieval precision falling** (0.67 -> 0.59, 0.58 -> 0.55).
+It does not sweep to 55 like qwen3.8-flash, but it widens the same way. What
+keeps the answer precise is the judge working on a larger pool, not a better
+search.
+
+## D-205 -- the chain threw away its own judge's review; the rejected count was right, the defaulting claim was not
+
+Raul: *"I think your measure of candidates the judge rejected is wrong."*
+Checked, and the measure is right on five of six columns and right-but-
+unverifiable on the sixth pair. What the check actually found is a bug next
+door.
+
+**The check.** My scorer computes rejected as `constrained_candidates -
+len(constrained_ids)`. On the control and sequential columns
+`constrained_candidates == answer_review.candidates` and `len(ids) ==
+answer_review.kept`, so the figure equals the judge's own `dropped` exactly
+(QwQ ctl 17.7 vs 17.6; 32b ctl 22.0 vs 22.0). On the **chained** columns they
+disagree badly: pool 40.8 against a review claiming 35.0 candidates and 16.9
+kept while the shipped list is 12.9.
+
+**The cause.** `chain.py` runs one chain-level selection over the union of the
+legs -- `picked, review = critic_selects_papers(...)` -- and assigned
+`constrained_ids` and `constrained_candidates` from it while **discarding
+`review`**. So a chain record's `answer_review` was the LAST LEG's verdicts,
+describing a different pool and a different list from the one it shipped. Same
+class as D-202, one function away: the judge that decided the answer left no
+record.
+
+**The measure stands.** Re-deriving the chain-level pool offline: every paper
+in the union has evidence (`evidence_by_paper_wide` returns 41.0 of 41.0 on
+QwQ, 39.2 of 39.2 on 32b), so nothing was excluded for lack of material and
+`pool - selected` is genuinely judged-and-dropped: **28.1 on QwQ, 27.1 on
+32b**. Table~\ref{tab:decomposition}'s "candidates the judge rejected" row is
+correct as printed.
+
+**What is withdrawn is the caption's defaulting claim.** "Judge defaulting
+stays below 4\% in every column" read `answer_review` -- which on the two
+chain columns is the wrong judge. Defaulting for the chain-level judge is
+unmeasured on those runs.
+
+**Fixed** (`last_answer.answer_review = review`, the dict
+`critic_selects_papers` now returns after D-202) and both chain arms re-run:
+54594 (QwQ, cluster) and 54595 (qwen3-32b, OpenRouter). Until they land the
+caption should say defaulting is verified below 4\% on the control and
+sequential columns and not yet measured on the chained ones.
+
+**D-204 addendum -- qwen3.8-flash was already run on both, matched to its own
+control (54468, Llama-3.1-8B judge, 18/18 each).** Sequential is 54473
+(`or-g9-38-seqstrict`, the strict split the QwQ and 32b arms use; 54472
+`sgseq` is the looser variant and is not the match). Chained is 54485
+(`or-g9-38-chain3`, `chain-critic` on all 18, 2.6 legs). The 54556 chain
+quoted earlier used the **9.5B** judge against a **llama-8b** control and is
+withdrawn as the table cell for that reason.
+
+| qwen3.8-flash | Control | Sequential | Chained |
+|---|---|---|---|
+| entities retrieved | 388.1 | 342.9 | 292.8 |
+| papers retrieved | 55.3 | 56.7 | 56.8 |
+| gold reach | 0.98 | 1.00 | 1.00 |
+| retrieval precision | 0.48 | 0.47 | 0.46 |
+| judge pool | 49.1 | 49.4 | 56.8 |
+| answers naming no paper | 2 | 2 | **0** |
+| papers in the answer | 21.4 | 22.0 | 22.4 |
+| right / wrong | 6.3 / 4.5 | 6.6 / 4.9 | **7.2** / 5.2 |
+| recall | 0.70 | 0.73 | 0.71 |
+| precision | 0.63 | 0.62 | **0.66** |
+| set F1 | 0.554 | 0.559 | **0.644** |
+| paired D (s.e.) | -- | +0.005 (0.090) | **+0.091 (0.052)** |
+| rounds / tool calls | 11.44 / 22.8 | 10.28 / 18.7 | 10.44 / 18.1 |
+| tool errors / redundant | 0.28 / 0.06 | 0.22 / 0.11 | 0.67 / **1.83** |
+
+**The pattern now holds on all three models.** Sequential is a null
+everywhere (+0.018 QwQ, -0.004 32b, +0.005 flash). Chaining lifts every one
+(+0.114, +0.132, +0.091), and on flash it does so differently from the 32B
+pair: not by raising recall (0.70 -> 0.71, already at reach 0.98) but by
+raising precision 0.63 -> 0.66 and removing both silent answers, with right
+papers 6.3 -> 7.2. On a model that already reaches everything, decomposition
+buys selection, not coverage.
+
+Flash is also the one model where chaining is *cheaper* than the control
+(rounds 11.4 -> 10.4, calls 22.8 -> 18.1): four-round legs cap the wandering
+that D-197 diagnosed. Its redundant calls rise 0.06 -> 1.83, the same
+fresh-start cost the QwQ chain pays.
+
+Caveat as D-205: the 6.1% defaulting shown for the flash chain is the last
+leg's review, not the chain-level judge's, and is unverified until a post-fix
+re-run.
+
+## D-206 -- sequential presentation does not get a second objective: the block asks for a round with no tool calls, and the graph reads that as the answer
+
+Raul: *"In the sequential for qwq and qwen, how can it be that they keep using
+only 3.24 or 3.39 rounds??"* Because the runs end on the round the first
+objective is declared complete.
+
+**The mechanism instructs exactly the thing that terminates a run.**
+`render_sequential`'s tail for a non-final objective reads: *"Work ONLY on
+this objective. Do not answer the question yet... When it is satisfied, write
+OBJECTIVE COMPLETE on its own line, with a short note of what it established,
+and **make no further calls that round**."* And `plan()` sets
+
+    state["_prose_answer"] = (not calls) and bool(session.steps)
+
+So a round with no tool calls, after anything has been retrieved, is routed to
+`finish` as an answer written in prose. `_advance_sequential` runs first and
+records the advance -- the pointer moves, the counter increments -- and then
+the same round ends the run.
+
+**Measured.** Of 17 QwQ sequential records, 15 advanced at least once and
+ended on the prose exit, and they are **the same 15 records**. Advances per
+question: QwQ 0.94, qwen3-32b 0.33, qwen3.8-flash 0.50 -- the mechanism
+almost never reaches objective two of three. Forced advances
+(`MAX_ROUNDS_PER_GOAL`) fired zero times, because no run survived long enough.
+
+Prose-exit rate, control against sequential: QwQ **28% -> 88%**, qwen3-32b
+72% -> 89%, qwen3.8-flash 11% -> 39%. The models already end this way
+sometimes -- it is why `_prose_answer` exists -- but the sequential block
+roughly triples it on QwQ.
+
+**So the null in Table~\ref{tab:decomposition} is not "sequencing does not
+help".** It is "sequencing was never tested": the arm is a control with a
+narrower first-round prompt, which is why its rounds (3.24, 3.39) match the
+control's (3.23, 3.22) almost exactly. The one real effect is that the
+narrower prompt makes QwQ's first objective cheap and clean -- tool errors
+1.64 -> 0.00, redundant calls 0.90 -> 0.00 -- which is a finding about the
+prompt, not about decomposition.
+
+**The fix is one condition**, not a redesign: `_prose_answer` must not fire on
+a round whose content declares OBJECTIVE COMPLETE while objectives remain --
+that round is a hand-off, not an answer. `wants_advance()` already detects it
+and is already called two lines earlier. Chaining sidesteps the whole problem
+by giving each objective its own run, which is very likely why chaining works
+on all three models and sequencing works on none.
+
+Not built: the freeze holds until the experiments are written. Recorded here
+so the chapter can say what the null means, and so the fix is one line when it
+is wanted.
+
+## D-207 -- anchoring and chaining did not compose: the chain judged the footprint union
+
+Raul asked for chain + anchor on QwQ and qwen3-32b. Checked the composition
+before launching, and as written the arm would have measured nothing.
+
+`chain.py` accumulated `papers |= set(a.papers or [])` -- each leg's
+**footprint**, every paper reachable from anything it retrieved -- and the
+chain-level `critic_selects_papers` judged that union. Each leg's inner run
+does compute an anchored pool and uses it for its own `constrained_ids`, but
+the chain then overrides `constrained_ids` from its own pass. So `ANCHOR=1`
+inside a chain was a **no-op at the point that decides the answer**: the judge
+saw everything the legs touched.
+
+That is the sequential failure again (D-206): an arm that cannot exercise its
+own mechanism, which would have produced a null and invited the reading
+"anchoring does not help chaining".
+
+**Fixed.** `Answer` now carries `nominated_papers` as a set rather than only
+`anchor_papers` as a count; `chain.py` unions those alongside the footprints
+and judges the nominated union when `ANCHOR=1`, falling back to the footprint
+union when the anchor is off or nothing was nominated. `constrained_candidates`
+records whichever pool was judged. Test asserts both branches.
+
+Arms launched on the fixed code: **54598** (QwQ, cluster, 9B judge) and
+**54599** (qwen3-32b, OpenRouter, 9.5B judge), both 4-round legs, two repeats,
+judge matched to each model's other cells.
+
+**What to expect, stated first.** The chain's gain is coverage (D-204: reach
+0.68 -> 0.88, 0.77 -> 0.91) bought by retrieving more, with retrieval
+precision falling; the anchor's effect is to shrink the judge's pool at some
+cost in recall (D-200: pool 33 -> 18 on 32b, precision 0.78 -> 0.84). Composed,
+the plausible outcome is the chain's recall at something closer to the anchor's
+precision -- pool well below the chain's 41, precision above 0.81, recall
+between the control's 0.46 and the chain's 0.58. If instead the pool stays near
+41, the composition still is not working and the run should be read as such
+rather than as a result.
+
+## D-208 -- anchoring and chaining cancel: the anchor removes exactly what the chain went out to find
+
+54598 (QwQ) and 54599 (qwen3-32b), both on the composition fix of D-207, both
+with the chain-level review now recorded (defaulting 0.0%).
+
+| | QwQ ctl | QwQ chain | QwQ anc+chain | 32b ctl | 32b chain | 32b anc+chain |
+|---|---|---|---|---|---|---|
+| judge pool | 26.1 | 42.6 | **21.6** | 32.7 | 44.8 | **29.5** |
+| gold reach | 0.68 | 0.93 | 0.89 | 0.77 | 0.94 | 0.94 |
+| papers in the answer | 10.5 | 12.8 | 8.6 | 10.7 | 13.9 | 10.3 |
+| of which right | 4.5 | **6.5** | 4.7 | 4.3 | **6.6** | 4.7 |
+| recall | 0.45 | **0.61** | 0.47 | 0.46 | **0.64** | 0.46 |
+| precision | 0.82 | 0.85 | 0.85 | 0.78 | 0.82 | 0.77 |
+| set F1 | 0.543 | **0.676** | 0.512 | 0.511 | **0.691** | 0.529 |
+
+Paired: chain **+0.127 (0.070)** and **+0.180 (0.033)** over control; anchor on
+top of chain **-0.171 (0.078)** and **-0.162 (0.068)**. The composition is
+mechanically sound -- the pool halves (42.6 -> 21.6, 44.8 -> 29.5), the
+nominating counters fire (1.6 and 1.3 per question), the D-207 falsification
+test passes -- and the result is that it **returns both models to their
+control's recall** (0.61 -> 0.47, 0.64 -> 0.46) at unchanged precision.
+
+**Why they cancel.** Retrieval is nearly identical between chain and
+anchor+chain (papers 42.6 vs 40.4, 44.8 vs 44.4; reach 0.93 vs 0.89, 0.94 vs
+0.94), so the anchor is not stopping the chain from finding anything. It is
+discarding the found papers at the judge's door. The chain's legs deliberately
+widen past the planner's first structural lookup -- that is what "one leg per
+condition" means -- and the anchor's rule is that a lookup which leaves the
+first one does not nominate. So the second and third legs' results are
+exactly what the anchor excludes. The gain the chain buys by widening is
+removed by the mechanism built to stop widening.
+
+**Reading.** These are not complementary mechanisms to be stacked. Chaining
+buys coverage by retrieving more and relies on the judge to hold precision;
+anchoring buys precision by shrinking what the judge sees. Applied together
+the second undoes the first, and F1 lands within noise of the control on both
+models (0.512 and 0.529 against 0.543 and 0.511). For the routing design this
+is a constraint worth stating: pick one, by question shape, rather than
+composing them.
+
+**Also from these runs:** the 32b chain re-run (54595, 18/18 clean, 1%
+defaulted) gives **+0.180 (s.e. 0.033)** against its control, where
+Table~\ref{tab:decomposition} currently prints $+$0.132 from the earlier
+record. The cell and the caption's defaulting clause both want updating.
+
+## D-209 (2026-09-15) — provenance and efficiency were recorded all along; chain's trace is not
+**Finding**, not a build. Both missing analyses were computable from run files already on disk;
+no new runs were needed. `faithfulness` and `unsupported_claims` (from `query/verify.py`) and
+`llm_calls` / `prompt_tokens` / `completion_tokens` / `seconds` are on **every** record, and had
+never been analysed. Written up in [[provenance-and-efficiency]].
+**The trap, found before reporting**: the mechanical check needs `session.seen_values`, and that
+is not populated everywhere. Measured over 2,213 clean records on Gabriel's nine — typed agent
+3/1328 empty (0%), `chain` 104/390 (27%), `free-sql` **479/479 (100%)**, ensemble 16/16 (100%).
+Two different causes:
+- **free-SQL is structurally unverifiable.** `eval/free_sql.py` never references `verification`
+  or `seen_values`; the agent writes its own SQL and the harness never registers the returned
+  values. Mechanical traceability is a capability the *typed interface* has and the free-SQL
+  interface does not — that is a result, and it belongs in the write-up.
+- **`chain` merges the wrong fields.** `eval/chain.py` unions `entity_ids`, `evidence_ids`,
+  `papers`, `steps`, `llm_calls`, `rounds`, `seconds` across legs and then returns
+  `out = last_answer`, so `seen_values` holds only the FINAL leg while the text covers every leg.
+  Chain faithfulness is measured against a fraction of its own trace.
+**Consequence**: chain arms are excluded from every provenance number. Do **not** report
+"chaining destroys provenance" — it is the D-070/D-180 shape again, a run file recording what a
+system produced rather than what it was asked to do. Fix is one line (`out.seen_values` unioned
+like its neighbours); not applied, the build freeze is on.
+**Also**: `faithfulness` is 1.0 when nothing is checkable, and **74% of answers naming no paper
+score a perfect 1.0**. The metric is only honest over records with `checked > 0`, with `checked`
+printed beside it — the same convention as named-only F1.
+**Also**: critic tokens are computed in `critic.Review` and never stored on the Answer, so token
+counts are a lower bound on every critic arm. Calls are complete (recovered from
+`reviews[].calls` and `answer_review.calls`).
+
+## D-210 (2026-09-15) — anchoring is a provenance and cost mechanism, not an F1 mechanism
+**Correction of how the anchor was judged.** It was recorded as flat-to-negative on set F1 and
+shelved on that basis (D-197 ff.). Scored against requirement 2 instead, it is the strongest
+mechanism measured. Paired by question, typed agent, traced and checkable records, 9 questions:
+
+| model | faithfulness | unsupported claims | LLM calls | seconds | judged F1 |
+|---|---|---|---|---|---|
+| QwQ-32B | +0.040 (0.060) | −5.23 (2.79) | −1.60 (0.47) | −177 (36) | −0.022 (0.031) |
+| qwen3-32b | **+0.204 (0.043)** | −5.61 (1.56) | −0.96 (0.38) | −78 (13) | −0.057 (0.029) |
+| qwen3.8-flash | **+0.143 (0.023)** | −6.43 (1.08) | −2.27 (0.63) | −74 (16) | +0.032 (0.011) |
+
+Faithfulness rises on all three, unsupported claims fall by two thirds to three quarters, and it
+is cheaper and faster everywhere. On qwen3.8-flash it wins on every axis including F1.
+**Why, mechanically**: the anchor narrows the candidate pool, so the answer has less unretrieved
+material to reach for. The same narrowing that costs recall is what buys traceability.
+**Lesson for the write-up**: a mechanism measured against the wrong requirement reads as a null
+result. Anchoring was only ever a null on the axis it was not built to move.

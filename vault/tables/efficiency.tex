@@ -1,0 +1,54 @@
+% Efficiency: calls, rounds, tokens, wall time and measured cost. See D-209 for
+% what is and is not recorded (critic tokens are not).
+\begin{table}[htbp]
+\centering
+\small
+\setlength{\tabcolsep}{5pt}
+\begin{tabular}{llrrrrrrr}
+\toprule
+System / arm & Model & $n$ & F$_1$ & calls & rounds & in-tok & out-tok & s \\
+\midrule
+Free-SQL, control            & QwQ-32B &  75 & 0.397 &  2.8 & 2.8 &  8{,}666 & 6{,}354 & 189 \\
+Typed, constr.\ + critic     & QwQ-32B & 303 & 0.572 &  7.0 & 3.1 & 20{,}578 & 4{,}261 & 301 \\
+\quad + anchoring            & QwQ-32B &  36 & 0.532 &  5.3 & 2.8 & 16{,}272 & 4{,}084 & \textbf{126} \\
+\quad + plan reviewer        & QwQ-32B &  36 & 0.546 & 11.0 & 2.9 & 37{,}590 & 7{,}101 & 365 \\
+Chained, constr.\ + critic   & QwQ-32B &  49 & 0.700 & 13.9 & 8.4 & 22{,}163 & 4{,}162 & 623 \\
+\midrule
+Free-SQL, control            & Qwen3-32B &  90 & 0.412 &  3.8 & 3.4 & 10{,}592 & 2{,}790 & 145 \\
+Typed, constr.\ + critic     & Qwen3-32B & 117 & 0.559 &  7.3 & 3.3 & 19{,}907 & 2{,}730 & 191 \\
+\quad + anchoring            & Qwen3-32B & 108 & 0.505 &  6.3 & 3.2 & 20{,}372 & 2{,}649 & \textbf{115} \\
+Chained, constr.\ + critic   & Qwen3-32B &  97 & 0.659 & 12.9 & 8.1 & 18{,}445 & 2{,}659 & 631 \\
+\midrule
+Free-SQL, control            & Qwen3.8-flash &  90 & 0.667 & 13.1 & 12.0 & 146{,}910 &  9{,}273 & 270 \\
+Typed, constr.\ + critic     & Qwen3.8-flash &  90 & 0.572 & 16.9 & 10.9 & 191{,}535 & 11{,}992 & 289 \\
+\quad + anchoring            & Qwen3.8-flash & 174 & 0.612 & 15.1 & 11.3 & 198{,}205 & 12{,}308 & 230 \\
+Chained, constr.\ + critic   & Qwen3.8-flash & 102 & 0.648 & 15.9 &  8.7 &  35{,}050 &  4{,}463 & 587 \\
+\bottomrule
+\end{tabular}
+\caption[What each configuration costs]{The cost of each configuration on the
+supervisor's nine questions, clean records only. \emph{Calls} is every LLM call
+the answer required, the planner's own plus the search critic's, the answer
+critic's and the plan reviewer's, recovered per record rather than estimated.
+Tokens are the planner's and the plan reviewer's; the critics compute their token
+usage and never store it, so token counts are a \emph{lower bound} wherever a
+critic is present, while call counts are complete. Three readings stand out.
+Qwen3.8-flash consumes roughly ten times the input tokens of either 32B planner
+for comparable quality --- 191{,}535 against 20{,}578 on the typed agent at the
+same F$_1$ --- so its retrieval breadth is bought with reading, not converted
+from it. The free-SQL agent is the cheap interface at 2.8--3.8 calls against the
+typed agent's 7.0--7.3, and on Qwen3-32B costs \$0.0031 per answer against
+\$0.0052, so the typed agent's $+0.147$ F$_1$ and its mechanical provenance cost
+about $1.7\times$. Chaining is the most expensive mechanism measured, roughly
+doubling calls, rounds and wall time for the largest single F$_1$ gain, while
+anchoring moves in the opposite direction on every axis. Dollar figures are
+derived from measured spend rather than a price list: one 27-record Qwen3-32B run
+billed \$0.25 against 1{,}081{,}881 recorded tokens, giving \$0.231 per million,
+which is an upper bound on the price of a recorded token because the critics'
+tokens are missing from the denominator. QwQ was self-hosted and has no marginal
+cost; no billing anchor exists for Qwen3.8-flash, so no figure is quoted for it.
+Wall time is reported last and should be read only within a lane: cluster runs
+shared one vLLM server with up to four concurrent evaluation jobs and the hosted
+runs contend with other tenants, which is why calls and tokens are the primary
+currency throughout this work.}
+\label{tab:efficiency}
+\end{table}

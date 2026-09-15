@@ -10,6 +10,17 @@ Themes: **Extraction & retrieval** · **Graph & canonicalization** · **Agents &
 
 ## Extraction & retrieval
 
+- [ ] **The query layer does not filter assertion status** — found while writing the methodology
+      section (2026-09-15). `accepted_view` is empty (0 `expert_accepted`), so the templates read
+      `assertion` directly and the **324 `rejected`** statements (2.3% of the graph) are reachable
+      by retrieval alongside the 11,309 `machine_verified` ones. Quarantined (2,555) is defensible
+      — it mostly means "evidence not locatable", not "false" — but rejected is material the
+      adjudicator refused. A one-line `WHERE status != 'rejected'`; the effect is unmeasured.
+      Stated as a limitation in the methodology write-up.
+- [ ] **3,372 QA findings are imported and then ignored** (2,767 `error`/`fail`). Upstream's own
+      observations about the extraction, faithfully stored and used by nothing. Obvious signal for
+      filtering or for down-weighting retrieval. Also written up as a limitation.
+
 - [ ] **★ ASK GABRIEL for the source HTML corpus (the paper dataset).** Unblocks the most: the
       cellular-vs-family comparison, the baseline-extraction study ("my RAG vs his bundles"), and
       any local prototyping. The pilot paper *list* is in-repo, but the HTML lives on his machine.
