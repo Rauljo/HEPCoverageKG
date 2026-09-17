@@ -1,6 +1,6 @@
 # Ideas — index
 
-**Status counts: 5 seed · 18 discussed · 3 adopted · 0 rejected**
+**Status counts: 5 seed · 19 discussed · 3 adopted · 0 rejected**
 
 *Statuses: seed (one-liner, never discussed) · discussed (has a doc) · adopted (graduated to a D-nnn decision; doc is its pre-history) · rejected (kept forever, with rationale).*
 *Organized by theme (each idea placed by its primary concern; several span themes — cross-links in the docs). Actionable to-dos live in [`../backlog.md`](../backlog.md), not here.*
@@ -46,4 +46,4 @@
 | Grade the reached at answer time | discussed | [grade-the-reached-at-answer-time.md](grade-the-reached-at-answer-time.md) — D-135's 14% bucket (gf-07): papers that entered via subjects_of/describe and never met the ranker; grade them once at the ranked-answer hook. Not built: 7-20 judge calls at answer time on a path near the record budget, ~+0.03 expected |
 | Answer routing by question shape | discussed | [answer-routing-by-shape.md](answer-routing-by-shape.md) — the name-ids instruction is set-specific and costs per-paper and count answers (D-153); choose the answer instruction by shape. Not built |
 | Observability / artefact tracing | seed | Keep intermediate artefacts so an error's *cause* is recoverable (AgentRivet/Langfuse) — provenance, not scoring |
-- [plan-ahead-batching](plan-ahead-batching.md) -- **proposed** 2026-09-17. Let the model chain dependent calls in one round by naming the set a same-turn search will save; the executor already allows it (927 ok / 82 wrong-name), the prompt forbids it. Cheap version is one prompt line.
+| plan-ahead batching | discussed | [plan-ahead-batching.md](plan-ahead-batching.md) -- let the model chain dependent calls in one round by naming the set a same-turn search will save; executor already allows it (927 ok / 82 wrong-name), prompt forbids it. Cheap version: one prompt line. 2026-09-17 |
