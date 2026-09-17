@@ -1,6 +1,6 @@
 # Ideas — index
 
-**Status counts: 4 seed · 16 discussed · 3 adopted · 0 rejected**
+**Status counts: 5 seed · 18 discussed · 3 adopted · 0 rejected**
 
 *Statuses: seed (one-liner, never discussed) · discussed (has a doc) · adopted (graduated to a D-nnn decision; doc is its pre-history) · rejected (kept forever, with rationale).*
 *Organized by theme (each idea placed by its primary concern; several span themes — cross-links in the docs). Actionable to-dos live in [`../backlog.md`](../backlog.md), not here.*
@@ -39,7 +39,11 @@
 | Multi-agent extension | discussed | [multi-agent-extension.md](multi-agent-extension.md) — agentic verification vs single-pass baseline; the critic panel is mostly **Sunny's** thread; blocked on baseline. 2026-07-27: "mixture of LLMs" is an *ensemble*, not an agency, argument |
 | Researcher feedback loop + self-correction | discussed | [researcher-feedback-loop.md](researcher-feedback-loop.md) — expose per-paper summaries → authors correct → cluster → human-applied fixes (never LLM self-editing). Team meeting 2026-07-24 |
 | **Self-correcting planning arms** | discussed | [self-correcting-planning-arms.md](self-correcting-planning-arms.md) — four REMOVABLE arms after PoG (NeurIPS 2024), specced 2026-08-31: `--subgoals` (decompose, ≤3), `--subgoal-status` (the memory block, contains it — PoG's highest-value mechanism and the fix for gf-01's forgotten conditions), `--structured-verdict`, `--backtrack` (critic-filtered unfollowed candidates, competing with a fresh search). Departs from PoG on breadth: they minimise counts for Hits@1, we filter by relevance because recall is our weaker side |
+| Anchored candidates | discussed | [anchored-candidates.md](anchored-candidates.md) -- separate exploring from nominating; the judge sees what the planner nominated, not everything it touched (D-197) |
+| Routing by intent | discussed | [routing-by-intent.md](routing-by-intent.md) -- a dispatcher over measured arms: shape x intent x effort, rerank-explain for sets, built to not need sweeping at 3,000 papers |
+| App: follow-up questions | seed | [app-follow-up-questions.md](app-follow-up-questions.md) -- a thread that carries the previous turn's pool forward; the human-in-the-loop version of tighten-never-loosen |
 | **Typed-interface arms** | discussed | [typed-interface-arms.md](typed-interface-arms.md) — three REMOVABLE arms on the tool layer, specced 2026-08-31 from the trace anatomy: `--symmetric-hops` (the backward hop requires a predicate, the forward hop does not), `--strict-refs` (92% of typed errors are references to things that do not exist yet), `--path-tool` (one call for the conjunctive multi-hop that free-SQL writes as a JOIN). Each default OFF, one guarded branch, deletable. None expected to work until measured |
 | Grade the reached at answer time | discussed | [grade-the-reached-at-answer-time.md](grade-the-reached-at-answer-time.md) — D-135's 14% bucket (gf-07): papers that entered via subjects_of/describe and never met the ranker; grade them once at the ranked-answer hook. Not built: 7-20 judge calls at answer time on a path near the record budget, ~+0.03 expected |
 | Answer routing by question shape | discussed | [answer-routing-by-shape.md](answer-routing-by-shape.md) — the name-ids instruction is set-specific and costs per-paper and count answers (D-153); choose the answer instruction by shape. Not built |
 | Observability / artefact tracing | seed | Keep intermediate artefacts so an error's *cause* is recoverable (AgentRivet/Langfuse) — provenance, not scoring |
+- [plan-ahead-batching](plan-ahead-batching.md) -- **proposed** 2026-09-17. Let the model chain dependent calls in one round by naming the set a same-turn search will save; the executor already allows it (927 ok / 82 wrong-name), the prompt forbids it. Cheap version is one prompt line.
