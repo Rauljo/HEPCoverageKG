@@ -3,8 +3,10 @@
 The three planners are the ones the chapter measured. Two are hosted on
 OpenRouter; QwQ is self-hosted (vLLM on the cluster, reached through the SSH
 tunnel `.env` points LLM_BASE_URL at), because OpenRouter no longer serves it.
-The judge is the 8B model every measured arm used on the hosted lane: cheap,
-and the chapter found the judge's size barely matters.
+The judge is Qwen3.5-9B, the judge of every cluster run and of the Qwen3-32B
+runs on OpenRouter (the flash arms used an 8B; the chapter found the judge's
+size barely matters). Through the hosted gateway its thinking is switched off
+by the call ladder in `planner.answer_critic_call`, the D-194 fix.
 
 Prices are OpenRouter list prices per million tokens on 2026-09-20 -- the
 numbers the efficiency table uses -- so the cost shown per answer is the
@@ -60,11 +62,12 @@ MODELS: dict[str, ModelSpec] = {
 }
 
 JUDGE = ModelSpec(
-    label="Llama-3.1-8B (judge)", model="meta-llama/llama-3.1-8b-instruct",
-    base_url=OPENROUTER, key_env="OPENROUTER_API_KEY", price_in=0.05, price_out=0.08,
+    label="Qwen3.5-9B (judge)", model="qwen/qwen3.5-9b",
+    base_url=OPENROUTER, key_env="OPENROUTER_API_KEY", price_in=0.10, price_out=0.15,
     max_rounds=0, efforts=(), default_agent="", note="")
 
-# One judge call, measured on 24 calls of the production prompt (D-216).
+# One judge call, measured on 24 calls of the production prompt (D-216, on the
+# 8B; the prompt is the same, so the size carries over).
 JUDGE_CALL_PROMPT_TOKENS = 4850
 JUDGE_CALL_COMPLETION_TOKENS = 190
 
