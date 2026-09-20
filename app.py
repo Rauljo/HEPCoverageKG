@@ -163,7 +163,7 @@ with st.sidebar:
     with st.expander("Advanced"):
         max_rounds = st.slider("Max rounds", 2, 16, spec.max_rounds,
                                help="What the chapter's runs allowed this model.")
-        show_detail = st.toggle("Show what the system did", value=False)
+        show_detail = st.toggle("Show what the system did", value=True)
         show_graph = st.toggle("Draw the graph behind each answer", value=True)
     st.divider()
     turns = st.session_state.setdefault("turns", [])
