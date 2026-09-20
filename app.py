@@ -225,16 +225,6 @@ def render_turn(t, *, detail: bool, graph: bool):
     tags.append(f"${t.cost:.4f}")
     st.caption(" · ".join(tags))
 
-    # -- what it cost, always visible --------------------------------------
-    if not t.from_memory:
-        c1, c2, c3, c4, c5 = st.columns(5)
-        c1.metric("Rounds", t.rounds)
-        c2.metric("Model calls", f"{t.llm_calls} + {t.judge_calls}",
-                  help="Planner calls plus the judge's batched verdict calls")
-        c3.metric("Tokens", f"{t.prompt_tokens + t.completion_tokens:,}",
-                  help=f"{t.prompt_tokens:,} in, {t.completion_tokens:,} out, planner only")
-        c4.metric("Cost", f"${t.cost:.4f}", help="At OpenRouter list prices, judge included")
-        c5.metric("Seconds", f"{t.seconds:.0f}")
 
     if t.goals:
         with st.expander(f"🪜 Split into {len(t.goals)} steps", expanded=False):
@@ -277,6 +267,18 @@ def render_turn(t, *, detail: bool, graph: bool):
                 graph_frame(GV.to_html(g), height=600)
 
     # -- what the system did ------------------------------------------------
+    if not t.from_memory:
+        with st.expander(f"💰 Cost — {t.rounds} rounds, {t.llm_calls} + {t.judge_calls} calls, "
+                         f"{t.prompt_tokens + t.completion_tokens:,} tokens, ${t.cost:.4f}", expanded=False):
+            c1, c2, c3, c4, c5 = st.columns(5)
+            c1.metric("Rounds", t.rounds)
+            c2.metric("Model calls", f"{t.llm_calls} + {t.judge_calls}",
+                      help="Planner calls plus the judge's batched verdict calls")
+            c3.metric("Tokens", f"{t.prompt_tokens + t.completion_tokens:,}",
+                      help=f"{t.prompt_tokens:,} in, {t.completion_tokens:,} out, planner only")
+            c4.metric("Cost", f"${t.cost:.4f}", help="At OpenRouter list prices, judge included")
+            c5.metric("Seconds", f"{t.seconds:.0f}")
+
     if detail and not t.from_memory:
         with st.expander("🔧 What the system did", expanded=False):
             v = t.verification
