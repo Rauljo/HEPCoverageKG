@@ -1,0 +1,26 @@
+{
+  "run_id": "20260829T151005-free-sql-282491",
+  "started_at": "2026-08-29T15:10:05+00:00",
+  "git_sha": "9d04651-dirty",
+  "system": "free-sql",
+  "config": {
+    "kind": "free-sql",
+    "model": "",
+    "max_rounds": 6,
+    "max_rows": 200,
+    "statement_seconds": 15.0,
+    "tools": [
+      "sql"
+    ]
+  },
+  "config_hash": "80bafe6c5e10",
+  "questions_path": "/tmp/smoke.jsonl",
+  "questions_hash": "ccf9fc307c8f",
+  "n_questions": 2,
+  "repeats": 1,
+  "host": "dias.hpc.phys.ucl.ac.uk",
+  "model": "Qwen/Qwen2.5-72B-Instruct-AWQ",
+  "finished_at": "2026-08-29T15:10:34+00:00",
+  "n_records": 2,
+  "wall_seconds": 29.8
+}

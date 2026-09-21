@@ -1,0 +1,52 @@
+row	question_id	paper	verdict	notes
+1001	gf-01-cond	2004.01678	no	
+1002	gf-01-cond	2004.01678	no	
+1003	gf-01-cond	2401.05299	no	There is a cut on transverse missing mass in a CR. This cut includes MET. Agree with the answer, just making the subtle note why this variable was described.
+1004	gf-01-cond	2401.05299	no	The quotes mention searches but none of them say a search is being preformed.
+1005	gf-01-cond	2312.04450	no	EFT operators are usually high pT measurements that are converted into limits. It is kind of both, but in the end, we call these measurements.
+1006	gf-01-cond	2012.01581	no	
+1007	gf-01-cond	2012.01581	no	
+1008	gf-01-cond	2605.14245	yes	Surprising as the first three symbols say the cut is made on pTmiss!
+1009	gf-01-cond	2605.14245	no	
+1010	gf-01-cond	2001.06899	no	
+1011	gf-01-cond	2106.14246	unsure	Highly suggestive. The answer would strictly be "no" from this quote alone, but it is suspicious enough to have a look at the paper. Indeed it has bins of MET!! If this is ground truth for the paper, the correct answer is "yes". If this is ground truth for this snippet alone, then "no" is correct.
+1012	gf-01-cond	2106.14246	yes	The selection rejects b-jets so that means they are used.
+1013	gf-01-cond	2110.11231	no	
+1014	gf-01-cond	2103.04956	no	
+1015	gf-01-cond	2103.04956	no	
+1016	gf-01-cond	2506.13565	no	
+1017	gf-01-cond	2007.02873	yes	There is no way one uses a MET trigger online without then also requiring MET in the offline analysis.
+1018	gf-01-cond	2007.02873	yes	It literally says it is a characteristic of the signature - one would then ignore such a clear handle? No!
+1019	gf-01-cond	2007.02873	no	
+1020	gf-01-cond	2304.08962	no	
+1021	gf-01-cond	2304.08962	no	
+1022	gf-01-cond	2307.01094	yes	how did the model find no evidence!? it is in the sentence
+1023	gf-01-cond	2307.01094	yes	veto = use
+1024	gf-01-cond	2109.13808	no	
+1025	gf-01-cond	2109.13808	yes	
+1026	gf-01-cond	2109.13808	unsure	EFT is often a measurement but nothing to confirm that here
+1027	gf-01-cond	2503.19420	yes	
+1028	gf-01-cond	2503.19420	no	
+1029	gf-01-cond	2303.15340	no	
+1030	gf-01-cond	2303.15340	no	
+1031	gf-01-cond	2111.08340	no	
+1032	gf-01-cond	2111.08340	no	
+1033	gf-01-cond	2112.00895	no	
+1034	gf-01-cond	2112.00895	no	
+1035	gf-01-cond	2112.00895	no	
+1036	gf-02	2007.02873	no	This is a statement about the error not about the estimate itself.
+1037	gf-02	2008.05928	no	
+1038	gf-02	2009.04363	no	
+1039	gf-02	2012.01581	yes	It seems like matrix method with f = fail and p = pass and there being 3 leptons.
+1040	gf-02	2106.01676	yes	"using the matrix method" is a give away that it is using the matrix method.
+1041	gf-02	2402.08486	no	
+1042	gf-04	2112.00895	unsure	Language is not definitive as corrections are used for detector-level comparisons. The ground truth is though that this is a measurement.
+1043	gf-04	2206.09466	yes	
+1044	gf-04	2303.15340	yes	
+1045	gf-04	2307.01094	yes	
+1046	gf-04	2405.18661	yes	
+1047	gf-04	2504.13081	yes	
+1048	gf-04	2506.13565	yes	
+1049	gf-04	2508.13900	no	
+1050	gf-04	2604.21670	yes	
+1051	gf-04	2605.14245	no	

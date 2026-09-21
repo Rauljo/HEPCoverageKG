@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -37,9 +38,8 @@ from hepcoveragekg.facets.vocabulary import canonicalize_entity, facet_tags
 
 # The reference codebase is read-only and lives outside this repo (CLAUDE.md).
 REFERENCE_REPO = Path(
-    "/Users/raulsal/Library/CloudStorage/OneDrive-UniversityCollegeLondon/"
-    "Dissertation/HEPKG_promopt_tests"
-)
+    os.environ.get("HEPKG_REFERENCE_REPO", "../HEPKG_promopt_tests")
+).expanduser()
 FIXTURE = Path(__file__).parent / "fixtures" / "analysis_facets.jsonl"
 CARD_FIELD_NAMES = sorted(set(CARD_FIELDS.values()))
 

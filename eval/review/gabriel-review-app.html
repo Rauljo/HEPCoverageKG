@@ -155,7 +155,7 @@ textarea{width:100%;margin-top:.6rem;padding:.5rem .65rem;border:1px solid var(-
       go, and the questions are independent — a half-finished set is still a usable
       measurement for the questions it covers. Press <b>Finish &amp; get my answers
       file</b> whenever you like — it hands you a small file to email back to
-      Raul.</p>
+      the author.</p>
     <p class="keyk">Keyboard: <kbd>y</kbd> yes · <kbd>n</kbd> no · <kbd>u</kbd> unsure ·
       <kbd>j</kbd>/<kbd>k</kbd> or <kbd>↓</kbd>/<kbd>↑</kbd> move · <kbd>r</kbd> reveal ·
       <kbd>?</kbd> notes</p>
@@ -165,10 +165,10 @@ textarea{width:100%;margin-top:.6rem;padding:.5rem .65rem;border:1px solid var(-
 
 <div class="done-panel" id="panel">
   <div class="card">
-    <h3 id="panel-title">Getting your answers back to Raul</h3>
+    <h3 id="panel-title">Getting your answers back to the author</h3>
     <p id="panel-msg">This is everything you have marked so far.</p>
     <p class="warnbox"><b>This page cannot send anything on its own</b> — it has no
-      connection to Raul's machine. Please download the file (or copy the text)
+      connection to the author's machine. Please download the file (or copy the text)
       and email it back, otherwise the answers stay on this computer.</p>
     <button class="primary" id="copy">Copy my answers</button>
     <button id="dl">Download as a file</button>
@@ -411,7 +411,7 @@ document.getElementById("dl").onclick = () => {
     a.href = url; a.download = "review-answers.txt";
     document.body.appendChild(a); a.click(); a.remove();
     setTimeout(()=>URL.revokeObjectURL(url), 4000);
-    btn.textContent = "Saved — now email it to Raul";
+    btn.textContent = "Saved — now email it to the author";
   }catch(err){
     btn.textContent = "Download blocked — please copy the text below instead";
   }

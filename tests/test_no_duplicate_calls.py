@@ -1,6 +1,6 @@
 """A call already made is answered from the record, not run again.
 
-The worry this addresses, in Raul's words: persistence could make the agent
+The worry this addresses, in the author's words: persistence could make the agent
 "just go in loops infinitely without actually finding anything". The retry
 behaviour it would multiply already exists -- 68 of 4,479 steps in the stored
 arms were exact repeats -- so it is closed BEFORE the loop is asked to persist

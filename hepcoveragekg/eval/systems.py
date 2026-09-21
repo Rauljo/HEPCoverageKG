@@ -133,6 +133,31 @@ class Answer:
     chain_goals: list = field(default_factory=list)
     subgoal_forced_advances: int = 0
     subgoal_sequential: str = ""
+    #: SUFFICIENCY=1 (D-196). The brake's own trace: papers gained per round,
+    #: and rounds it called unproductive. Without these a shorter run cannot be
+    #: told apart from a model that happened to stop early.
+    sufficiency: str = ""
+    sufficiency_new: list = field(default_factory=list)
+    sufficiency_saturated: int = 0
+    #: ANCHOR=1 (D-197). What the anchor was, how many calls nominated / drifted
+    #: / relaxed, how many entities the judge was actually shown, and whether
+    #: the run fell back to the footprint because nothing was nominated.
+    anchor: str = ""
+    anchor_values: list = field(default_factory=list)
+    anchor_terms: list = field(default_factory=list)
+    anchor_nominating: int = 0
+    anchor_drift: int = 0
+    anchor_relax: int = 0
+    anchor_fallback: bool = False
+    anchor_entities: int = 0
+    anchor_papers: int = 0
+    #: ANCHOR=1: the papers this run NOMINATED, as a set. Carried on the Answer
+    #: (not merely counted) because `chain.py` has to union the anchored pools
+    #: of its legs; unioning their footprints instead would judge everything the
+    #: legs touched and make anchoring a no-op inside a chain (D-207).
+    nominated_papers: list = field(default_factory=list)
+    anchor_tightened: int = 0
+    selected_at_ceiling: bool = False
     reflections_used: int = 0
     reflect_checks: int = 0
     reflect_note: str = ""
@@ -210,6 +235,16 @@ _ENV_CONFIG: tuple[tuple[str, str], ...] = (
     ("CRITIC_MODEL", "NousResearch/Meta-Llama-3.1-8B-Instruct"),
     ("CRITIC_BASE_URL", ""),
     ("CRITIC_API_KEY_SET", ""),
+    # The brake (D-196). In the config hash so a sufficiency run and its control
+    # cannot collide, and so the switch is recoverable from the run file --
+    # which is the only thing that would have caught D-179, where four arms
+    # named `-reflect` ran as controls because the variable never reached them.
+    ("SUFFICIENCY", "0"),
+    # Anchored candidates (D-197) and the expansion-tool ceiling that can ride
+    # with it. Separate switches so the anchoring effect is measurable alone.
+    ("ANCHOR", "0"),
+    ("EXPANSION_CAP", "0"),
+    ("SELECT_AT_CEILING", "0"),
     # THE ENCODER. Absent until 2026-09-02, so a run file could not say which
     # embedding model produced it and four encoder arms could not be told apart
     # from their outputs afterwards -- the same gap that made an `index_values`
@@ -415,6 +450,7 @@ def from_session(session, conn=None) -> Answer:
         # replay against the DIAS database because 406 stored steps carried
         # 406 empty previews.
         steps=[{"round": s.round, "tool": s.tool, "args": s.args, "rows": s.rows,
+                "anchor": getattr(s, "anchor", "") or "",
                 "error": s.error, "seconds": round(s.seconds, 3),
                 "preview": s.preview,
                 **({"redirected_from": s.redirected_from} if s.redirected_from else {})}
@@ -479,6 +515,21 @@ def from_session(session, conn=None) -> Answer:
         subgoal_advances=int(getattr(session, "subgoal_advances", 0) or 0),
         subgoal_forced_advances=int(getattr(session, "subgoal_forced_advances", 0) or 0),
         subgoal_sequential=os.environ.get("SUBGOAL_SEQUENTIAL", ""),
+        anchor=os.environ.get("ANCHOR", ""),
+        anchor_values=sorted(getattr(session, "anchor_values", None) or []),
+        anchor_terms=sorted(getattr(session, "anchor_terms", None) or [])[:40],
+        anchor_nominating=int(getattr(session, "anchor_nominating", 0) or 0),
+        anchor_drift=int(getattr(session, "anchor_drift", 0) or 0),
+        anchor_relax=int(getattr(session, "anchor_relax", 0) or 0),
+        anchor_fallback=bool(getattr(session, "anchor_fallback", False)),
+        anchor_entities=len(getattr(session, "nominated_entity_ids", set()) or ()),
+        anchor_papers=len(getattr(session, "nominated_papers", set()) or ()),
+        nominated_papers=sorted(getattr(session, "nominated_papers", set()) or ()),
+        anchor_tightened=int(getattr(session, "anchor_tightened", 0) or 0),
+        selected_at_ceiling=bool(getattr(session, "selected_at_ceiling", False)),
+        sufficiency=os.environ.get("SUFFICIENCY", ""),
+        sufficiency_new=list(getattr(session, "sufficiency_new", []) or []),
+        sufficiency_saturated=int(getattr(session, "sufficiency_saturated", 0) or 0),
         reflections_used=int(getattr(session, "reflections_used", 0) or 0),
         reflect_checks=int(getattr(session, "reflect_checks", 0) or 0),
         reflect_note=str(getattr(session, "reflect_note", "") or "")[:1200],

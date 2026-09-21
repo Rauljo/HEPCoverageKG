@@ -34,6 +34,7 @@ from __future__ import annotations
 import os
 import time
 
+from ..query import anchor as _anchor
 from .systems import Answer, Question
 
 
@@ -91,6 +92,7 @@ class ChainedSubgoalSystem:
 
         prior: list = []
         papers: set = set()
+        nominated: set = set()
         entities: set = set()
         evidence: set = set()
         steps: list = []
@@ -105,6 +107,13 @@ class ChainedSubgoalSystem:
             entities |= set(a.entity_ids or [])
             evidence |= set(a.evidence_ids or [])
             papers |= set(a.papers or [])
+            # ANCHOR=1 (D-207): the chain-level judge must see what the legs
+            # NOMINATED, not everything they touched. Unioning `a.papers` alone
+            # would hand it the full footprint and the anchor would do nothing
+            # inside a chain -- a null by construction, which is exactly how the
+            # sequential arm failed (D-206). `nominated` stays empty when the
+            # anchor is off, and the union below falls back to `papers`.
+            nominated |= set(getattr(a, "nominated_papers", None) or [])
             calls += a.llm_calls or 0
             rounds += a.rounds or 0
             tools += len(a.steps or [])
@@ -132,11 +141,21 @@ class ChainedSubgoalSystem:
                 try:
                     from .free_sql import critic_selects_papers
 
-                    picked, review = critic_selects_papers(conn, q.text, set(papers))
+                    pool = nominated if (_anchor.enabled() and nominated) else papers
+                    picked, review = critic_selects_papers(conn, q.text, set(pool))
                     if picked:
                         last_answer.constrained_ids = list(picked)
-                        last_answer.constrained_candidates = len(papers)
+                        last_answer.constrained_candidates = len(pool)
                         last_answer.constrained_mode = "chain-critic"
+                        # AND THE REVIEW, which this line used to drop on the
+                        # floor (D-205). `answer_review` then held the LAST
+                        # LEG's verdicts while `constrained_ids` held the
+                        # chain-level judge's, so the record's kept/candidates
+                        # did not describe the list it shipped, and
+                        # `defaulted` -- the counter that catches a judge whose
+                        # verdicts do not parse (D-194) -- was the wrong
+                        # judge's. Same class as D-202 one function away.
+                        last_answer.answer_review = review
                         last_answer.text = (last_answer.text or "").rstrip() \
                             + "\n\nPapers: " + ", ".join(picked)
                 except Exception as exc:  # noqa: BLE001 -- never lose the chain

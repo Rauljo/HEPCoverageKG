@@ -1,0 +1,36 @@
+{
+  "run_id": "20260901T222529-free-sql-2480",
+  "started_at": "2026-09-01T22:25:29+00:00",
+  "git_sha": "1e3881c-dirty",
+  "system": "free-sql",
+  "config": {
+    "kind": "free-sql",
+    "model": "",
+    "max_rounds": 6,
+    "max_rows": 200,
+    "statement_seconds": 15.0,
+    "tools": [
+      "sql",
+      "search"
+    ],
+    "persist": true,
+    "reviewer": false,
+    "state_objective": false,
+    "index_values": false,
+    "index_quotes": false,
+    "search_sets": false,
+    "concept_prompt": false,
+    "subgoals": false,
+    "subgoal_status": false
+  },
+  "config_hash": "c5a452e808bb",
+  "questions_path": "/private/tmp/claude-501/-Users-raulsal-Library-CloudStorage-OneDrive-UniversityCollegeLondon-Dissertation-HEPCoverageKG/0946ea08-c854-4158-a4c1-7dce0ce186f6/scratchpad/one.jsonl",
+  "questions_hash": "5fa8f2e65c48",
+  "n_questions": 1,
+  "repeats": 1,
+  "host": "eduroam-int-dhcp-97-218-31.ucl.ac.uk",
+  "model": "qwen/qwen3-32b",
+  "finished_at": "2026-09-01T22:27:20+00:00",
+  "n_records": 1,
+  "wall_seconds": 110.6
+}

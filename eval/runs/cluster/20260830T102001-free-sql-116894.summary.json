@@ -1,0 +1,28 @@
+{
+  "run_id": "20260830T102001-free-sql-116894",
+  "started_at": "2026-08-30T10:20:01+00:00",
+  "git_sha": "b0a569a-dirty",
+  "system": "free-sql",
+  "config": {
+    "kind": "free-sql",
+    "model": "",
+    "max_rounds": 6,
+    "max_rows": 200,
+    "statement_seconds": 15.0,
+    "tools": [
+      "sql",
+      "search"
+    ],
+    "persist": true
+  },
+  "config_hash": "4cc587a8ef30",
+  "questions_path": "eval/questions/gabriel-gold-2026-08-25.jsonl",
+  "questions_hash": "3a9c689b3af0",
+  "n_questions": 8,
+  "repeats": 3,
+  "host": "dias.hpc.phys.ucl.ac.uk",
+  "model": "openai/gpt-5.6-sol",
+  "finished_at": "2026-08-30T10:29:59+00:00",
+  "n_records": 24,
+  "wall_seconds": 597.9
+}

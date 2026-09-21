@@ -1,0 +1,28 @@
+{
+  "run_id": "20260817T144023-hepkg-49060",
+  "started_at": "2026-08-17T14:40:23+00:00",
+  "git_sha": "91aeb1c-dirty",
+  "system": "hepkg",
+  "config": {
+    "kind": "planner",
+    "model": "Qwen/Qwen2.5-72B-Instruct-AWQ",
+    "max_rounds": 6,
+    "max_places": 8,
+    "minimal_prompt": false,
+    "use_critic": true,
+    "critic_seed": null,
+    "answer_contract": false,
+    "contract": "",
+    "force_critic_set": true
+  },
+  "config_hash": "88358778a0b0",
+  "questions_path": "eval/questions/shards/conceptB-02.jsonl",
+  "questions_hash": "5aeceeed07db",
+  "n_questions": 145,
+  "repeats": 3,
+  "host": "compute-0-0.local",
+  "model": "Qwen/Qwen2.5-72B-Instruct-AWQ",
+  "finished_at": "2026-08-18T06:51:05+00:00",
+  "n_records": 435,
+  "wall_seconds": 58242.7
+}

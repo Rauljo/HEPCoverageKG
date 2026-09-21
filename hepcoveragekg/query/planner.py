@@ -165,21 +165,80 @@ def answer_critic_call(client, model: str, messages, cap: int):
     fail, and again every verdict defaults to keep -- 1003 of 1003 on job
     54344 -- while the run is labelled critic-on. The verdicts themselves
     need a few hundred tokens; only a judge that thinks needs the big cap.
+
+    A RUNG THAT ANSWERS NOTHING HAS FAILED (D-194). `chat_template_kwargs` is
+    a vLLM argument. A hosted gateway does not implement it and does not
+    complain about it either -- OpenRouter accepts the request, ignores the
+    kwarg, and the judge thinks anyway. Measured against `qwen/qwen3.5-9b`
+    there on 2026-09-13: the thinking-off rung returned `content=''` with 6405
+    characters of reasoning and finish_reason='length', while the plain rung
+    returned the verdict JSON in 886 tokens. Because the empty response is a
+    perfectly successful HTTP call, a ladder that steps only on exceptions
+    stops on the first rung forever, and every verdict defaults to KEEP with
+    `errors=0` -- 78-85% of candidates across the two qwen3-32b arms, a judge
+    that never judged while the run was labelled critic-on. So the rung has to
+    be judged by what it returned, not by whether it raised.
     """
     attempts = []
     for c in (cap, ANSWER_CRITIC_SMALL_CAP) if cap > ANSWER_CRITIC_SMALL_CAP else (cap,):
-        attempts.append(dict(max_tokens=c, extra_body={"chat_template_kwargs": {"enable_thinking": False}}))
+        for body in _thinking_off(client):
+            attempts.append(dict(max_tokens=c, extra_body=body))
         attempts.append(dict(max_tokens=c))
     last = None
     for kw in attempts[:-1]:
         try:
-            return client.chat.completions.create(
+            response = client.chat.completions.create(
                 model=model, messages=messages, temperature=0.0, **kw)
         except Exception as exc:  # noqa: BLE001 -- try the next rung
             last = exc
             continue
+        if _has_content(response):
+            return response
+        logger.warning(
+            "judge rung returned no content (max_tokens=%s, thinking-off=%s); "
+            "trying the next rung", kw.get("max_tokens"), "extra_body" in kw)
     return client.chat.completions.create(
         model=model, messages=messages, temperature=0.0, **attempts[-1])
+
+
+def _thinking_off(client) -> list:
+    """The arguments that actually stop this judge from thinking, best first.
+
+    THERE IS NO PORTABLE ONE (D-194). `chat_template_kwargs` is vLLM's and
+    means nothing to a hosted gateway; `reasoning` is OpenRouter's and is
+    rejected by vLLM. The endpoint the client points at decides which to try
+    first, and the other stays in the ladder so a misread base_url costs a
+    retry rather than the whole judge.
+
+    Measured on `qwen/qwen3.5-9b` over OpenRouter, one eight-paper batch:
+
+        chat_template_kwargs   content 0     reasoning 13333  length  4000 tok
+        reasoning exclude=1    content 1086  reasoning 0      stop    2142 tok
+        reasoning enabled=0    content 702   reasoning 0      stop     279 tok
+
+    `exclude` only hides the thinking from the response -- it is still
+    generated and still billed, which is why it is not the one we send.
+    """
+    vllm = {"chat_template_kwargs": {"enable_thinking": False}}
+    gateway = {"reasoning": {"enabled": False}}
+    base = str(getattr(client, "base_url", "") or "").lower()
+    return [gateway, vllm] if "openrouter" in base else [vllm, gateway]
+
+
+def _has_content(response) -> bool:
+    """Did this response actually say anything a caller can use?
+
+    Content OR tool calls: the reflection check shares this ladder and may
+    answer either way, so "empty" must not mean "no prose" for a caller that
+    asked for a tool call.
+    """
+    try:
+        message = response.choices[0].message
+    except (AttributeError, IndexError, TypeError):
+        return False
+    if (getattr(message, "content", None) or "").strip():
+        return True
+    return bool(getattr(message, "tool_calls", None))
 
 
 def completion_cap(model: str) -> int:
@@ -695,6 +754,10 @@ class Step:
     # would make the planner look as though it had chosen correctly, and tool
     # selection is something this project measures (S-49).
     redirected_from: Optional[str] = None
+    #: ANCHOR=1: what this call was to the anchor -- nominate / anchor / relax /
+    #: drift / read. Recorded per step so a shorter candidate list can be traced
+    #: to the calls that were excluded, not inferred.
+    anchor: str = ""
     # The result itself, for the few tools whose output IS an answer rather than
     # a list to read. Kept so `answer(value_from=...)` can lift the number
     # straight out instead of the model retyping it or the harness re-deriving
@@ -853,6 +916,41 @@ class Session:
     #: Entities the search critic had dropped and CONSTRAINED_FROM_KEPT then
     #: kept out of the candidate list (D-158).
     constrained_critic_dropped: int = 0
+    #: SUFFICIENCY=1 (D-196). `sufficiency_new` is the papers each round added
+    #: that the run did not already hold, and `sufficiency_saturated` the rounds
+    #: the block declared unproductive. Both are recorded because the arm's
+    #: whole claim is about MARGINAL yield: an arm that shortens runs without
+    #: these is indistinguishable from a model that happened to stop early, and
+    #: that is the class of mistake D-070 exists to prevent.
+    sufficiency_new: list = field(default_factory=list)
+    sufficiency_saturated: int = 0
+
+    #: ANCHOR=1 (D-197). The entities returned by calls that were FINDING
+    #: things on the question's own terms -- a subset of `known_entity_ids`,
+    #: and the only ones the judge is shown. The anchor itself is the planner's
+    #: first intersection: `facets` values, or the first round's search terms.
+    nominated_entity_ids: set[str] = field(default_factory=set)
+    #: Papers nominated directly by paper-returning calls (facets, papers_of),
+    #: so an intersection stays an intersection at the judge.
+    nominated_papers: set[str] = field(default_factory=set)
+    anchor_values: Optional[set] = None
+    anchor_mode: str = "all"
+    anchor_terms: set[str] = field(default_factory=set)
+    #: One term set per search in the anchor round: the conditions as the
+    #: planner itself separated them. Lets a later search be checked for how
+    #: many of them it covers.
+    anchor_groups_terms: list = field(default_factory=list)
+    anchor_round: Optional[int] = None
+    anchor_nominating: int = 0
+    anchor_drift: int = 0
+    anchor_relax: int = 0
+    anchor_fallback: bool = False
+    #: v7: how many times a superset lookup re-anchored the run.
+    anchor_tightened: int = 0
+    #: SELECT_AT_CEILING=1: the list was chosen by the judge after the run
+    #: exhausted its rounds without an answer() call.
+    selected_at_ceiling: bool = False
+
     #: Dedicated status calls made (SUBGOAL_STATUS_CALL=1, D-173). Counted so a
     #: mechanism that never fired cannot be reported as a null result.
     subgoal_status_calls: int = 0
@@ -2337,7 +2435,7 @@ def _client():
     headers = {}
     if "openrouter" in base:
         # OpenRouter attributes usage to these; harmless elsewhere.
-        headers = {"HTTP-Referer": "https://github.com/Rauljo/HEPCoverageKG",
+        headers = {"HTTP-Referer": "https://anonymous.4open.science/r/HEPCoverageKG-7699",
                    "X-Title": "HEPCoverageKG"}
     return OpenAI(
         base_url=base,

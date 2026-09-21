@@ -1,6 +1,6 @@
 """The widening ladder, and the guarantee that it stops.
 
-Raul's objection to persistence was that it would make the agent "go in loops
+The author's objection to persistence was that it would make the agent "go in loops
 infinitely without actually finding anything". The answer is not a promise about
 the model -- it is that there are four rungs, each offered at most once, and
 when they are spent the abstention goes through.

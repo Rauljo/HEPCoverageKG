@@ -54,5 +54,4 @@ so.
 No rush, and partial is genuinely useful — the rows are ordered so the most
 informative come first.
 
-Thanks,
-Raul
+Thanks.

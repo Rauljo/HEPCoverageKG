@@ -315,7 +315,8 @@ def test_judge_call_falls_back_to_a_small_cap_when_the_server_rejects_the_big_on
             return NS(choices=[NS(message=NS(content='{"verdicts": []}'))])
     out = planner.answer_critic_call(_C(), "m", [{"role": "user", "content": "q"}], 8000)
     assert out.choices[0].message.content == '{"verdicts": []}'
-    assert calls == [8000, 8000, 1500]
+    # Three rungs per cap now (D-194): vLLM's argument, the gateway's, plain.
+    assert calls == [8000, 8000, 8000, 1500]
 
 
 def test_paper_wide_evidence_reaches_sentences_on_unretrieved_entities():
@@ -371,3 +372,87 @@ def test_dense_quote_ranking_uses_the_encoder_and_falls_back_to_lexical(monkeypa
     dense_first = AC._render("P", ["b-tagged jet"], quotes, question=question).splitlines()[2]
     assert dense_first == f"  quote: {para}"
     assert question in AC._DENSE_CACHE and para in AC._DENSE_CACHE
+
+
+def test_judge_steps_past_a_rung_that_returns_empty_content():
+    """D-194: OpenRouter ignores `chat_template_kwargs` instead of rejecting it.
+
+    The thinking-off rung then succeeds as HTTP and returns nothing, so a
+    ladder that steps only on exceptions stops there and every verdict
+    defaults to KEEP with errors=0. Measured on qwen/qwen3.5-9b: content='',
+    6405 chars of reasoning, finish_reason='length'.
+    """
+    from types import SimpleNamespace as NS
+    from hepcoveragekg.query import planner
+    calls = []
+
+    class _C:
+        chat = property(lambda self: self); completions = property(lambda self: self)
+        def create(self, **kw):
+            calls.append(("thinking-off" if "extra_body" in kw else "plain",
+                          kw["max_tokens"]))
+            if "extra_body" in kw:                      # the gateway ignored it
+                return NS(choices=[NS(message=NS(content="", tool_calls=None))])
+            return NS(choices=[NS(message=NS(content='{"verdicts": []}',
+                                             tool_calls=None))])
+
+    out = planner.answer_critic_call(_C(), "m", [{"role": "user", "content": "q"}], 4000)
+    assert out.choices[0].message.content == '{"verdicts": []}'
+    assert calls == [("thinking-off", 4000), ("thinking-off", 4000), ("plain", 4000)]
+
+
+def test_judge_accepts_a_rung_that_answers_with_a_tool_call_only():
+    """The reflection check shares this ladder and may answer without prose."""
+    from types import SimpleNamespace as NS
+    from hepcoveragekg.query import planner
+    calls = []
+
+    class _C:
+        chat = property(lambda self: self); completions = property(lambda self: self)
+        def create(self, **kw):
+            calls.append(kw["max_tokens"])
+            return NS(choices=[NS(message=NS(content="", tool_calls=[NS(id="t1")]))])
+
+    out = planner.answer_critic_call(_C(), "m", [{"role": "user", "content": "q"}], 4000)
+    assert out.choices[0].message.tool_calls
+    assert calls == [4000]
+
+
+def test_thinking_off_argument_follows_the_serving_stack():
+    """D-194: vLLM understands `chat_template_kwargs`, OpenRouter `reasoning`.
+
+    Sending the wrong one is not an error -- OpenRouter accepts the vLLM kwarg,
+    ignores it, and the judge thinks until the cap runs out and the reply comes
+    back empty. So the endpoint has to pick, with the other kept as a fallback.
+    """
+    from types import SimpleNamespace as NS
+    from hepcoveragekg.query import planner
+
+    local = planner._thinking_off(NS(base_url="http://localhost:8001/v1"))
+    assert local[0] == {"chat_template_kwargs": {"enable_thinking": False}}
+
+    hosted = planner._thinking_off(NS(base_url="https://openrouter.ai/api/v1"))
+    assert hosted[0] == {"reasoning": {"enabled": False}}
+
+    # Both stacks keep the other argument as a later rung, so a base_url the
+    # check does not recognise costs one retry and not the judge.
+    assert {"reasoning": {"enabled": False}} in local
+    assert {"chat_template_kwargs": {"enable_thinking": False}} in hosted
+
+
+def test_hosted_judge_reaches_the_gateway_rung_on_the_first_try():
+    """The expensive failure was paying 4000 thinking tokens per call to learn
+    nothing. With base_url read, the working argument goes out first."""
+    from types import SimpleNamespace as NS
+    from hepcoveragekg.query import planner
+    sent = []
+
+    class _C:
+        base_url = "https://openrouter.ai/api/v1"
+        chat = property(lambda self: self); completions = property(lambda self: self)
+        def create(self, **kw):
+            sent.append(kw.get("extra_body"))
+            return NS(choices=[NS(message=NS(content='{"verdicts": []}', tool_calls=None))])
+
+    planner.answer_critic_call(_C(), "m", [{"role": "user", "content": "q"}], 4000)
+    assert sent == [{"reasoning": {"enabled": False}}]

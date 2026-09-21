@@ -1,0 +1,28 @@
+{
+  "run_id": "20260829T201044-free-sql-53986",
+  "started_at": "2026-08-29T20:10:44+00:00",
+  "git_sha": "e3b20e3-dirty",
+  "system": "free-sql",
+  "config": {
+    "kind": "free-sql",
+    "model": "",
+    "max_rounds": 6,
+    "max_rows": 200,
+    "statement_seconds": 15.0,
+    "tools": [
+      "sql",
+      "search"
+    ],
+    "persist": true
+  },
+  "config_hash": "4cc587a8ef30",
+  "questions_path": "eval/questions/gabriel-gold-2026-08-25.jsonl",
+  "questions_hash": "3a9c689b3af0",
+  "n_questions": 8,
+  "repeats": 3,
+  "host": "compute-0-0.local",
+  "model": "Qwen/Qwen2.5-72B-Instruct-AWQ",
+  "finished_at": "2026-08-29T20:15:36+00:00",
+  "n_records": 24,
+  "wall_seconds": 291.5
+}

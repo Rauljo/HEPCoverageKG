@@ -1,0 +1,25 @@
+{
+  "run_id": "20260815T104347-hepkg-48529",
+  "started_at": "2026-08-15T10:43:47+00:00",
+  "git_sha": "b6ce7b2-dirty",
+  "system": "hepkg",
+  "config": {
+    "kind": "planner",
+    "model": "Qwen/Qwen2.5-72B-Instruct-AWQ",
+    "max_rounds": 6,
+    "max_places": 8,
+    "minimal_prompt": false,
+    "use_critic": true,
+    "critic_seed": 20260815
+  },
+  "config_hash": "76ac05498582",
+  "questions_path": "eval/questions/dev-2026-08-03-paperA-200.jsonl",
+  "questions_hash": "f5fc48f4f2a6",
+  "n_questions": 200,
+  "repeats": 3,
+  "host": "compute-0-2.local",
+  "model": "Qwen/Qwen2.5-72B-Instruct-AWQ",
+  "finished_at": "2026-08-15T13:43:57+00:00",
+  "n_records": 600,
+  "wall_seconds": 10809.6
+}

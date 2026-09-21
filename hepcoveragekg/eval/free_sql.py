@@ -33,6 +33,7 @@ from __future__ import annotations
 import json
 import os as _os
 import re
+from hepcoveragekg.query import anchor as _anchor
 import sqlite3
 import time
 from dataclasses import dataclass, field
@@ -155,6 +156,17 @@ def constrained_papers(client, model, question: str, draft: str, touched: set,
     return picked, mode
 
 
+def _anchor_fields(anc, nominated: set) -> dict:
+    """The anchor's trace for the record, empty when the switch is off."""
+    if not _anchor.enabled():
+        return {}
+    return {"anchor": "1", "anchor_terms": sorted(anc.anchor_terms)[:40],
+            "anchor_nominating": anc.anchor_nominating, "anchor_drift": anc.anchor_drift,
+            "anchor_relax": anc.anchor_relax, "anchor_fallback": bool(anc.anchor_fallback),
+            "anchor_tightened": int(getattr(anc, "anchor_tightened", 0) or 0),
+            "anchor_entities": len(nominated)}
+
+
 def critic_selects_papers(conn, question: str, touched: set, named=(), chat=None) -> tuple[list, dict]:
     """The judge decides free-SQL's list (CRITIC_SELECTS=1 + CONSTRAINED_IDS=1; D-166).
 
@@ -204,7 +216,13 @@ def critic_selects_papers(conn, question: str, touched: set, named=(), chat=None
     review = AC.judge_papers(chat, question, evidence)
     kept = set(review.kept)
     picked = [p for p in cands if p in kept]
-    summary = review.summary() if hasattr(review, "summary") else {"kept": len(kept), "candidates": len(cands)}
+    # `AnswerReview.to_dict()`, not a `summary()` it never had (D-202). The
+    # hasattr fallback fired on every free-SQL record, so the run file kept
+    # only {candidates, kept} and `defaulted` -- the one counter that shows a
+    # judge whose verdicts do not parse -- never reached the record. The
+    # typed path has always written the full dict. Every free-SQL judge cell
+    # before this line was unverifiable on exactly the failure D-194 found.
+    summary = review.to_dict()
     return picked, summary
 
 
@@ -1018,6 +1036,10 @@ class FreeSQLSystem:
         ]
         started = time.time()
         touched: set[str] = set()
+        # ANCHOR=1 (D-197): what the run's on-question queries returned, the
+        # only papers the judge is shown. `touched` stays the footprint.
+        nominated: set[str] = set()
+        anc = _anchor.new_state()
         where: dict = {}          # paper id -> the query that first returned it
         entities: set[str] = set()
         calls = prompt_tokens = completion_tokens = 0
@@ -1102,14 +1124,19 @@ class FreeSQLSystem:
                     text_out = choice.content or ""
                     extra = {}
                     if self._constrained and touched:
+                        pool = touched
+                        if _anchor.enabled():
+                            anc.anchor_fallback = not nominated
+                            pool = nominated or touched
                         if _os.environ.get("CRITIC_SELECTS", "") == "1":
-                            picked, rv = critic_selects_papers(self._conn, q.text, touched)
-                            extra = {"constrained_candidates": len(touched), "constrained_ids": picked,
+                            picked, rv = critic_selects_papers(self._conn, q.text, pool)
+                            extra = {"constrained_candidates": len(pool), "constrained_ids": picked,
                                      "constrained_mode": "critic", "answer_review": rv}
                         else:
                             cl, mdl = self._client_pair()
-                            picked, mode = constrained_papers(cl, mdl, q.text, text_out, touched, where)
-                            extra = {"constrained_candidates": len(touched), "constrained_ids": picked, "constrained_mode": mode}
+                            picked, mode = constrained_papers(cl, mdl, q.text, text_out, pool, where)
+                            extra = {"constrained_candidates": len(pool), "constrained_ids": picked, "constrained_mode": mode}
+                        extra.update(_anchor_fields(anc, nominated))
                         if picked:
                             text_out = text_out.rstrip() + "\n\nPapers: " + ", ".join(picked)
                     return Answer(
@@ -1160,14 +1187,25 @@ class FreeSQLSystem:
                         text_out = str(args.get("text") or "")
                         extra = {}
                         if self._constrained and (touched or asserted):
+                            pool = touched
+                            if _anchor.enabled():
+                                anc.anchor_fallback = not nominated
+                                pool = nominated or touched
+                                if nominated:
+                                    # v6: the answer's own ids do not widen the
+                                    # pool -- qwen3.8-flash asserts dozens. An
+                                    # asserted id counts only if a query on the
+                                    # question's terms returned it.
+                                    asserted = [a for a in asserted if a in pool]
                             if _os.environ.get("CRITIC_SELECTS", "") == "1":
-                                picked, rv = critic_selects_papers(self._conn, q.text, touched, asserted)
-                                extra = {"constrained_candidates": len(set(touched) | set(asserted)), "constrained_ids": picked,
+                                picked, rv = critic_selects_papers(self._conn, q.text, pool, asserted)
+                                extra = {"constrained_candidates": len(set(pool) | set(asserted)), "constrained_ids": picked,
                                          "constrained_mode": "critic", "answer_review": rv}
                             else:
                                 cl, mdl = self._client_pair()
-                                picked, mode = constrained_papers(cl, mdl, q.text, text_out, touched, where)
-                                extra = {"constrained_candidates": len(touched), "constrained_ids": picked, "constrained_mode": mode}
+                                picked, mode = constrained_papers(cl, mdl, q.text, text_out, pool, where)
+                                extra = {"constrained_candidates": len(pool), "constrained_ids": picked, "constrained_mode": mode}
+                            extra.update(_anchor_fields(anc, nominated))
                             if picked:
                                 text_out = text_out.rstrip() + "\n\nPapers: " + ", ".join(picked)
                         return Answer(
@@ -1188,6 +1226,8 @@ class FreeSQLSystem:
                     if call.function.name == "search":
                         body, hits = self._search(args)
                         entities.update(hits)
+                        if _anchor.enabled():
+                            _anchor.note_search(anc, args.get("text") or args.get("query") or "", hits)
                         steps.append({"tool": "search", "round": rounds,
                                       "args": args, "rows": len(hits),
                                       "error": None, "preview": body[:200]})
@@ -1207,14 +1247,31 @@ class FreeSQLSystem:
                         where.setdefault(_p, " ".join(query.split())[:140])
                     touched.update(papers_in(result))
                     entities.update(entities_in(result))
+                    a_tag = ""; a_line = ""
+                    if _anchor.enabled() and not result.error:
+                        a_tag = _anchor.classify_sql(anc, rounds, query)
+                        if a_tag == _anchor.TIGHTEN:
+                            nominated.clear()
+                        if a_tag in (_anchor.ANCHOR, _anchor.NOMINATE, _anchor.TIGHTEN):
+                            nominated.update(papers_in(result)); anc.anchor_nominating += 1
+                            # The ids this query found are on-anchor, so a later
+                            # query fetching papers BY those ids nominates too.
+                            anc.nominated_entity_ids |= set(entities_in(result))
+                            anc.nominated_papers |= set(papers_in(result))
+                        elif a_tag == _anchor.DRIFT:
+                            anc.anchor_drift += 1
+                        elif a_tag == _anchor.RELAX:
+                            anc.anchor_relax += 1
+                        a_line = _anchor.sql_feedback(a_tag, anc, len(result.rows))
                     steps.append({
                         "tool": lang, "round": rounds, "args": {"query": query},
                         "rows": len(result.rows), "error": result.error or None,
-                        "truncated": result.truncated,
+                        "truncated": result.truncated, "anchor": a_tag,
                         "preview": result.render()[:200],
                     })
                     messages.append({"role": "tool", "tool_call_id": call.id,
-                                     "content": result.render()[:6000]})
+                                     "content": result.render()[:6000]
+                                                + ("\n" + a_line if a_line else "")})
         except Exception as exc:                  # noqa: BLE001
             return Answer(text="", answered=False, seconds=time.time() - started,
                           papers=sorted(touched), steps=steps, entity_ids=sorted(entities),

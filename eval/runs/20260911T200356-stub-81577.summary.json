@@ -1,0 +1,19 @@
+{
+  "run_id": "20260911T200356-stub-81577",
+  "started_at": "2026-09-11T20:03:56+00:00",
+  "git_sha": "2295812-dirty",
+  "system": "stub",
+  "config": {
+    "kind": "stub"
+  },
+  "config_hash": "3bb2f83b0190",
+  "questions_path": "/private/tmp/claude-501/-Users-raulsal-Library-CloudStorage-OneDrive-UniversityCollegeLondon-Dissertation-HEPCoverageKG/0946ea08-c854-4158-a4c1-7dce0ce186f6/scratchpad/smoke3.jsonl",
+  "questions_hash": "974b4b215249",
+  "n_questions": 3,
+  "repeats": 1,
+  "host": "eduroam-int-dhcp-97-208-177.ucl.ac.uk",
+  "model": "qwen/qwen3-32b",
+  "finished_at": "2026-09-11T20:03:56+00:00",
+  "n_records": 3,
+  "wall_seconds": 0.0
+}

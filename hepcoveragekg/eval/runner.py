@@ -236,7 +236,9 @@ def run(questions: QuestionSet, system: System, *, repeats: int = 1,
                 # file at all, and the schema card changed silently mid-night
                 # (D-089). Printed at the top so a wrong arm is caught on
                 # submission rather than when the results disagree.
-                "env.ALIASES_EMBED_MODEL", "env.KIND_SEMANTICS"):
+                "env.ALIASES_EMBED_MODEL", "env.KIND_SEMANTICS",
+                # The brake (D-196), printed on submission for the same reason.
+                "env.SUFFICIENCY", "env.ANCHOR", "env.EXPANSION_CAP"):
         if key in meta.config:
             log.info("    %-24s %s", key, meta.config[key])
 

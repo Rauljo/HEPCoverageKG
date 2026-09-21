@@ -36,6 +36,9 @@ from typing import Any, Callable, Optional, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 
+from hepcoveragekg.query import anchor as _anchor
+from hepcoveragekg.query import sufficiency as _suff
+
 logger = logging.getLogger(__name__)
 
 
@@ -84,6 +87,12 @@ class PlannerState(TypedDict, total=False):
     #: and the one-line notes the finished ones left behind.
     subgoal_index: int
     subgoal_established: list
+    #: SUFFICIENCY=1: the papers reachable from everything retrieved so far, and
+    #: how many consecutive rounds have added almost none. Carried in state
+    #: because the marginal yield is the signal and it cannot be recovered from
+    #: a single round's view.
+    sufficiency_papers: set
+    sufficiency_stale: int
     objective: str
     review_feedback: str
     review_cycles: int
@@ -242,6 +251,21 @@ def plan(state: PlannerState, config=None) -> PlannerState:
                         and ("SUB-OBJECTIVES" in (m.get("content") or "")
                              or "PROGRESS ON THE QUESTION" in (m.get("content") or "")))]
         state["messages"] = msgs + [{"role": "system", "content": block}]
+    # THE BRAKE (D-196). Every block above this one tells the planner to keep
+    # going; this one tells it what more searching is still buying. Placed
+    # after the sub-goal block so that when both are fitted the planner reads
+    # "here is what you have not covered" and then "here is what your last
+    # round added", which is the order the two have to be read in.
+    if _suff.enabled():
+        stats = _suff.update(state, runtime.get("conn"),
+                             sorted(session.known_entity_ids))
+        session.sufficiency_new.append(stats["new"])
+        if stats["saturated"]:
+            session.sufficiency_saturated += 1
+        state["messages"] = _suff.replace_block(
+            state["messages"],
+            _suff.render(stats, state["max_rounds"] - state["round"]))
+
     # THE CHECK RUNS WHEN A ROUND'S RESULTS ARE IN, NOT WHEN AN ANSWER IS
     # TRIED (D-178). One call reads the rows retrieved so far and says which
     # parts of the question they establish; the planner sees that verdict
@@ -458,6 +482,9 @@ def _constrained_ids(runtime, session) -> None:
         return
     conn = runtime.get("conn")
     ids = sorted(getattr(session, "known_entity_ids", set()) or [])
+    # ANCHOR=1 (D-197): the judge sees what the planner NOMINATED, not
+    # everything it touched. The footprint above is still what the record
+    # reports as retrieved; only the candidate list changes.
     # CONSTRAINED_FROM_KEPT=1 (D-158): the search critic's verdicts shape the
     # candidate list. Without it the critic and the selector are disconnected:
     # `known_entity_ids` holds every row a tool returned, dropped or not, so
@@ -482,10 +509,33 @@ def _constrained_ids(runtime, session) -> None:
     by: dict = {}
     for pid, label in rows:
         by.setdefault(str(pid), []).append(str(label))
+    # ANCHOR=1 (D-197): the judge is shown the papers the planner NOMINATED,
+    # not everything it touched. `ids` stays the footprint so the judge's
+    # EVIDENCE for each candidate is everything the run retrieved about it;
+    # only the candidate list narrows. Papers nominated at paper level (an
+    # intersection's rows) enter as-is, so the AND the planner computed is
+    # still an AND at the judge's door.
+    anchor_pool = None
+    if _anchor.enabled():
+        anchor_pool, session.anchor_fallback = _anchor.candidate_pool(session, conn)
+        if not session.anchor_fallback:
+            by = {p: l for p, l in by.items() if p in anchor_pool}
+            for p in anchor_pool:
+                by.setdefault(str(p), [])
     # Ids the draft already named are eligible too, but ONLY if the graph
     # holds them: job 54296 (D-157) admitted runs of consecutive ids the
     # draft had invented, and the enum then made them legal choices.
     named = set(_answer_named(session))
+    # UNDER ANCHOR THE ANSWER'S IDS DO NOT WIDEN THE POOL (v6). The override
+    # -- "name a paper in answer() to include it" -- was meant for a paper the
+    # planner specifically wants. qwen3.8-flash uses it as a dump: on gf-01 it
+    # named 38 ids in its answer and the pool went from the 18-paper
+    # intersection to 38 (54569). 32b names what it nominated and is
+    # unaffected. So a named id counts only if it was nominated; the planner
+    # widens by making a structural call on the question's terms, not by
+    # writing ids down.
+    if anchor_pool is not None and not session.anchor_fallback:
+        named &= set(anchor_pool)
     if named - set(by):
         try:
             held = {str(r[0]) for r in conn.execute(
@@ -1064,8 +1114,19 @@ def execute(state: PlannerState, config=None) -> PlannerState:
             result = runtime["execute"](name, args)
             elapsed = time.perf_counter() - started
             session.evidence_ids.extend(getattr(result, "evidence_ids", []) or [])
+            # A corpus-sized read is cut BEFORE its ids are collected, so the
+            # cap shrinks the footprint and not just the transcript.
+            _anchor.cap_expansion(name, result)
             session.seen_values |= planner._values_in(result.rows)
             session.known_entity_ids |= planner._collect_ids(result.rows, result.note)
+            # ANCHORED CANDIDATES (D-197): classify the call against the
+            # planner's own first intersection and nominate only if it was
+            # finding things on the question's terms. Reads never nominate.
+            anchor_tag = ""
+            if _anchor.enabled():
+                anchor_tag = _anchor.observe(session, state["round"], name, args,
+                                             result.rows, result.note or "",
+                                             planner._collect_ids)
             if runtime.get("rerank"):
                 # THE CUT IS HERE, so the order has to be decided here (D-113,
                 # D-118 class B). Search rows carry the critic's rung as
@@ -1081,10 +1142,14 @@ def execute(state: PlannerState, config=None) -> PlannerState:
                 body += f"\n[{result.note}]"
             if redirect:
                 body += f"\n[{redirect}]"
+            if anchor_tag in (_anchor.DRIFT, _anchor.RELAX):
+                body += "\n" + _anchor.feedback(anchor_tag, session, name, args,
+                                                len(result.rows))
             session.steps.append(planner.Step(
                 state["round"], name, args,
                 rows=len(result.rows), seconds=elapsed, preview=body[:200],
                 redirected_from=asked_for if redirect else None,
+                anchor=anchor_tag,
                 # kept only for tools whose single row IS an answer, so
                 # `answer(value_from=...)` can lift the number rather than the
                 # model retyping it or the harness re-deriving it
@@ -1201,6 +1266,27 @@ def finish(state: PlannerState, config=None) -> PlannerState:
             session.answer_gate_failed = True
             logger.warning("answer written as prose: %s, %d chars",
                            verdict.kind, len(session.answer))
+        _answer_exit(runtime, session)
+
+    # SELECT AT THE CEILING (SELECT_AT_CEILING=1). A run that spends every
+    # round and never calls answer() leaves with no list at all, and scores
+    # zero on every metric -- not because it found nothing but because the
+    # selection step never ran over what it found. On the anchored 3.8-flash
+    # arm that was 5 of 18 records against 2 on the control (the feedback line
+    # makes the planner search longer), and the whole difference between an
+    # F1 of 0.493 and 0.683. Under CRITIC_SELECTS the judge decides the list
+    # from the evidence anyway, so it can do that at the ceiling as well as
+    # after an answer() call; the answer text stays empty and the record says
+    # the list was selected without one.
+    if (os.environ.get("SELECT_AT_CEILING", "") == "1"
+            and not (session.answer or "").strip()
+            and not state.get("_prose_answer")
+            and os.environ.get("CONSTRAINED_IDS", "") == "1"
+            and os.environ.get("CRITIC_SELECTS", "") == "1"
+            and getattr(session, "known_entity_ids", None)):
+        session.selected_at_ceiling = True
+        session.stopped_because = ((session.stopped_because or "hit max_rounds")
+                                   + "; list selected at the ceiling")
         _answer_exit(runtime, session)
 
     # A new round of rows means the last verdict is stale (D-178).

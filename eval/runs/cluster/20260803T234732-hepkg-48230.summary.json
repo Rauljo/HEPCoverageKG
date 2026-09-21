@@ -1,0 +1,23 @@
+{
+  "run_id": "20260803T234732-hepkg-48230",
+  "started_at": "2026-08-03T23:47:32+00:00",
+  "git_sha": "6945b02-dirty",
+  "system": "hepkg",
+  "config": {
+    "kind": "planner",
+    "model": "Qwen/Qwen2.5-72B-Instruct-AWQ",
+    "max_rounds": 6,
+    "max_places": 8,
+    "minimal_prompt": false
+  },
+  "config_hash": "b29c4f777113",
+  "questions_path": "eval/questions/dev-2026-08-03-retrieval-reworded.jsonl",
+  "questions_hash": "140efea1d6a0",
+  "n_questions": 406,
+  "repeats": 1,
+  "host": "compute-0-0.local",
+  "model": "Qwen/Qwen2.5-72B-Instruct-AWQ",
+  "finished_at": "2026-08-04T03:40:00+00:00",
+  "n_records": 406,
+  "wall_seconds": 13948.0
+}

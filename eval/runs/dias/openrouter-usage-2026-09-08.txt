@@ -1,0 +1,7 @@
+05:50 enum3-start total_usage=680.509801032
+  usage now 680.709  enum3 cost $ 0.199
+  usage now 681.066
+  usage now 681.524  night total since 05:50 $ 1.01
+08:55 after fullstack2 total_usage=681.687
+  usage now 682.197  night $ 1.69
+15:08 end total_usage=683.57

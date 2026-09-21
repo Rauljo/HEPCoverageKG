@@ -1,0 +1,35 @@
+controls (these gate everything else)
+============================================================
+PASS  all-keep  kept  12/ 12 (100.0%)   q='Which analyses include a pileup modelling un' search='pileup uncertainty'
+PASS  all-keep  kept   8/  8 (100.0%)   q='Which analyses use proton-proton collisions ' search='proton-proton collisions 13 TeV'
+FAIL  all-drop  kept   4/ 30 (13.3%)   q='Which analyses use the Pythia generator?' search='jet energy scale'
+          e.g. hepkg:systematic:jet_energy_corrections_fast: This is a systematic uncertainty related to jet energy scale
+          e.g. hepkg:syst:hcal_inefficiency: This is a systematic uncertainty related to jet energy scale
+          e.g. hepkg:systematic:signal-bjes: This is a systematic uncertainty related to b jet energy sca
+PASS  all-drop  kept   1/ 30 ( 3.3%)   q='Which analyses apply a jet energy scale unce' search='Pythia'
+PASS  mixed-family kept  13/ 30 (43.3%)   q='Which analyses apply a jet energy scale unce' search='jet energy scale'
+
+GATE: FAILED -- fix the prompt before reading anything else
+
+critic ordering arms
+============================================================
+ranked           searches= 37 candidates= 2099 kept=  755 (36.0%) defaulted=  90 calls= 142
+                 keep-rate by original rank: [0.422, 0.393, 0.35, 0.273]  (should slope down)
+shuffleA         searches= 37 candidates= 2099 kept=  737 (35.1%) defaulted=  45 calls= 142
+                 keep-rate by original rank: [0.529, 0.357, 0.276, 0.243]  (should slope down)
+shuffleB         searches= 37 candidates= 2099 kept=  674 (32.1%) defaulted=  30 calls= 142
+                 keep-rate by original rank: [0.511, 0.319, 0.243, 0.21]  (should slope down)
+chunk60          searches= 37 candidates= 2099 kept= 2099 (100.0%) defaulted=2087 calls=  37
+                 keep-rate by original rank: [1.0, 1.0, 1.0, 1.0]  (should slope down)
+
+comparisons
+------------------------------------------------------------
+shuffleA vs shuffleB  (pure position bias)
+    n=2099  rung_flip=0.217  kept_flip=0.166  kept 0.351 -> 0.321
+    broader->unrelated: 135, unrelated->broader: 88, exact->unrelated: 71, broader->exact: 69, unrelated->exact: 55, exact->broader: 38
+ranked vs shuffleA  (how far it restates the retriever)
+    n=2099  rung_flip=0.265  kept_flip=0.195  kept 0.360 -> 0.351
+    broader->unrelated: 154, unrelated->broader: 118, broader->exact: 82, unrelated->exact: 78, exact->broader: 65, exact->unrelated: 60
+ranked vs chunk60  (whether chunking earns its calls)
+    n=2099  rung_flip=0.823  kept_flip=0.640  kept 0.360 -> 1.000
+    unrelated->broader: 1344, exact->broader: 384

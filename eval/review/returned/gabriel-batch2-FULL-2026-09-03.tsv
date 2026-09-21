@@ -1,0 +1,105 @@
+row	question_id	paper	verdict	notes
+1001	gf-01-cond	2004.01678	no	
+1002	gf-01-cond	2004.01678	no	
+1003	gf-01-cond	2401.05299	no	There is a cut on transverse missing mass in a CR. This cut includes MET. Agree with the answer, just making the subtle note why this variable was described.
+1004	gf-01-cond	2401.05299	no	The quotes mention searches but none of them say a search is being preformed.
+1005	gf-01-cond	2312.04450	no	EFT operators are usually high pT measurements that are converted into limits. It is kind of both, but in the end, we call these measurements.
+1006	gf-01-cond	2012.01581	no	
+1007	gf-01-cond	2012.01581	no	
+1008	gf-01-cond	2605.14245	yes	Surprising as the first three symbols say the cut is made on pTmiss!
+1009	gf-01-cond	2605.14245	no	
+1010	gf-01-cond	2001.06899	no	
+1011	gf-01-cond	2106.14246	unsure	Highly suggestive. The answer would strictly be "no" from this quote alone, but it is suspicious enough to have a look at the paper. Indeed it has bins of MET!! If this is ground truth for the paper, the correct answer is "yes". If this is ground truth for this snippet alone, then "no" is correct.
+1012	gf-01-cond	2106.14246	yes	The selection rejects b-jets so that means they are used.
+1013	gf-01-cond	2110.11231	no	
+1014	gf-01-cond	2103.04956	no	
+1015	gf-01-cond	2103.04956	no	
+1016	gf-01-cond	2506.13565	no	
+1017	gf-01-cond	2007.02873	yes	There is no way one uses a MET trigger online without then also requiring MET in the offline analysis.
+1018	gf-01-cond	2007.02873	yes	It literally says it is a characteristic of the signature - one would then ignore such a clear handle? No!
+1019	gf-01-cond	2007.02873	no	
+1020	gf-01-cond	2304.08962	no	
+1021	gf-01-cond	2304.08962	no	
+1022	gf-01-cond	2307.01094	yes	how did the model find no evidence!? it is in the sentence
+1023	gf-01-cond	2307.01094	yes	veto = use
+1024	gf-01-cond	2109.13808	no	
+1025	gf-01-cond	2109.13808	yes	
+1026	gf-01-cond	2109.13808	unsure	EFT is often a measurement but nothing to confirm that here
+1027	gf-01-cond	2503.19420	yes	
+1028	gf-01-cond	2503.19420	no	
+1029	gf-01-cond	2303.15340	no	
+1030	gf-01-cond	2303.15340	no	
+1031	gf-01-cond	2111.08340	no	
+1032	gf-01-cond	2111.08340	no	
+1033	gf-01-cond	2112.00895	no	
+1034	gf-01-cond	2112.00895	no	
+1035	gf-01-cond	2112.00895	no	
+1036	gf-02	2007.02873	no	This is a statement about the error not about the estimate itself.
+1037	gf-02	2008.05928	no	
+1038	gf-02	2009.04363	no	
+1039	gf-02	2012.01581	yes	It seems like matrix method with f = fail and p = pass and there being 3 leptons.
+1040	gf-02	2106.01676	yes	"using the matrix method" is a give away that it is using the matrix method.
+1041	gf-02	2402.08486	no	
+1042	gf-04	2112.00895	unsure	Language is not definitive as corrections are used for detector-level comparisons. The ground truth is though that this is a measurement.
+1043	gf-04	2206.09466	yes	
+1044	gf-04	2303.15340	yes	
+1045	gf-04	2307.01094	yes	
+1046	gf-04	2405.18661	yes	
+1047	gf-04	2504.13081	yes	
+1048	gf-04	2506.13565	yes	
+1049	gf-04	2508.13900	no	
+1050	gf-04	2604.21670	yes	
+1051	gf-04	2605.14245	no	
+1052	gf-05	2004.14060	no	Ground truth - no Higgs bosons in the decay chain so definitely a no for this paper.
+1053	gf-05	2106.14246	no	It could be that this is H->ZZ but more information is needed to know what the work is after. It is only clear that two Z's are reconstructed from leptons.
+1054	gf-05	2107.12553	yes	How did 1 say no - what is the logic?
+1055	gf-05	2110.11231	no	
+1056	gf-05	2304.08962	no	
+1057	gf-05	2401.07090	no	
+1058	gf-05	2506.13565	no	
+1059	gf-05	2508.13900	no	
+1060	gf-05	2604.21670	no	
+1061	gf-07	2106.01676	no	
+1062	gf-07	2109.13808	no	
+1063	gf-07	2201.11585	no	
+1064	gf-07	2208.12095	no	
+1065	gf-07	2211.08028	no	
+1066	gf-07	2307.01094	yes	
+1067	gf-07	2309.14442	no	
+1068	gf-07	2404.06204	no	
+1069	gf-07	2405.18661	no	
+1070	gf-07	2407.10549	no	
+1071	gf-07	2510.07527	no	
+1072	gf-07	2602.18611	no	
+1073	gf-07	2604.21670	no	
+1074	gf-07	2605.14245	no	
+1075	gf-08	2004.14060	yes	
+1076	gf-08	2007.02873	yes	
+1077	gf-08	2010.14293	no	
+1078	gf-08	2102.01444	yes	
+1079	gf-08	2110.11231	no	
+1080	gf-08	2112.03161	unsure	does not state what leptons are - from experience, most likely muon and electrons
+1081	gf-08	2202.08676	no	
+1082	gf-08	2206.09466	yes	
+1083	gf-08	2207.00348	yes	it is more subtle here but we have to belive the \ell\ell. The correct notation would be \ell\ell^\prime if it was two different types of leptons. Looking at the paper it is H->gamma gamma and it divides by production mode so the answer is yes (for this excerpt).
+1084	gf-08	2209.07327	no	
+1085	gf-08	2302.05225	no	
+1086	gf-08	2303.15340	yes	
+1087	gf-08	2307.01094	no	
+1088	gf-08	2312.04450	yes	
+1089	gf-08	2401.07090	yes	
+1090	gf-08	2503.19420	no	
+1091	gf-08	2508.13900	unsure	Not sure what a gold lepton is and if it can be a muon or an electron.
+1092	gf-08	2509.22535	no	
+1093	gf-08	2510.07527	yes	
+1094	gf-08	2602.18611	yes	
+1095	gf-08	2604.21670	no	
+1096	gf-08	2604.27044	no	only a muon channel - no electron channel, so technically "no" to the question asked above.
+1097	gf-08	2605.14245	yes	
+1098	gf-06	2006.05880	no	Mostly yes, but there is one important correction: the Z-mass window is common to all four 3l signal regions, so it should not be presented as the defining feature of SR^Z_1A. Also the evidence supports their being signal regions with 3 leptons but the specific focus of each is not included in the evidence list (but it is in the answer)
+1099	gf-10	2001.06899	yes	it is almost verbatim answered in the first snippet
+1100	gf-11	2001.06899	yes	This is good! The evidence however does not include the fact that "combined secondary vertex (Version 2)" was used. It is correctly stated in the answer, but missing from the evidence presented. And for bonus points, the paper also reports the efficiency extracted from data.
+1101	gf-12	2006.05880	yes	The result is a 2D exclusion contour in m_stop2 versus m_neutralino1. The excluded stop2 mass therefore changes with the neutralino mass. The paper highlights the strongest point: m_stop2 up to about 875 GeV is excluded when m_neutralino1 ~ 350 GeV.
+1102	gf-13	2001.06899	yes	Infomration is answer is more than what is in evidence presetned. It is not wrong, just not supported in this set.
+1103	gf-14	2006.05880	yes	
+1104	gf-15	2006.05880	yes	

@@ -483,7 +483,7 @@ def _b64(text: str) -> str:
 
 
 def write_app(items: list[dict], path: Path | str, title: str,
-              version: str = "v1", return_to: str = "Raul",
+              version: str = "v1", return_to: str = "the author",
               note: str = "") -> Path:
     """One self-contained page: click yes/no/unsure, get one file back.
 

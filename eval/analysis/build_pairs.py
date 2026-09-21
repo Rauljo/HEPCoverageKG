@@ -1,7 +1,8 @@
-import json, sqlite3, glob, collections, pickle, sys
+import json, sqlite3, glob, collections, pickle, sys, os
 from hepcoveragekg.eval import judge_gold as JG
 from hepcoveragekg.query import answer_critic as AC
-S="/private/tmp/claude-501/-Users-raulsal-Library-CloudStorage-OneDrive-UniversityCollegeLondon-Dissertation-HEPCoverageKG/0946ea08-c854-4158-a4c1-7dce0ce186f6/scratchpad/screen"
+# Directory of screened run files; override with SCREEN_DIR.
+S = os.environ.get("SCREEN_DIR", "eval/analysis/screen")
 qs=[json.loads(l) for l in open("eval/questions/gabriel-gold-2026-09-03-full.jsonl")]
 pool=collections.defaultdict(set)
 for f in sorted(glob.glob(f"{S}/*.jsonl")):

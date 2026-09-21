@@ -1,0 +1,35 @@
+{
+  "run_id": "20260901T145605-free-sql-84002",
+  "started_at": "2026-09-01T14:56:05+00:00",
+  "git_sha": "1e3881c-dirty",
+  "system": "free-sql",
+  "config": {
+    "kind": "free-sql",
+    "model": "",
+    "max_rounds": 6,
+    "max_rows": 200,
+    "statement_seconds": 15.0,
+    "tools": [
+      "sql",
+      "search"
+    ],
+    "persist": true,
+    "reviewer": false,
+    "state_objective": false,
+    "index_values": true,
+    "search_sets": true,
+    "concept_prompt": true,
+    "subgoals": false,
+    "subgoal_status": false
+  },
+  "config_hash": "c39ff033982d",
+  "questions_path": "eval/questions/gabriel-gold-2026-08-25.jsonl",
+  "questions_hash": "3a9c689b3af0",
+  "n_questions": 8,
+  "repeats": 3,
+  "host": "eduroam-int-dhcp-97-218-31.ucl.ac.uk",
+  "model": "qwen/qwen3-32b",
+  "finished_at": "2026-09-01T15:42:43+00:00",
+  "n_records": 24,
+  "wall_seconds": 2797.9
+}

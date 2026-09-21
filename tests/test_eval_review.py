@@ -146,7 +146,7 @@ def test_the_app_never_claims_to_send_anything():
     from hepcoveragekg.eval import review_app as RA
     with tempfile.TemporaryDirectory() as d:
         html = RA.write_app(_app_items(), pathlib.Path(d) / "a.html", "t",
-                            return_to="Raul").read_text()
+                            return_to="the author").read_text()
     flat = " ".join(html.split())
     assert "cannot send anything on its own" in flat
     assert "email it back" in flat
