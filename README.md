@@ -61,7 +61,6 @@ paper and the subgraph they stand on.
 | `hpc/` | Slurm job scripts for the UCL DIAS cluster (vLLM serving, evaluation arms) |
 | `docs/` | entity-relationship diagrams of the schema |
 | `tests/` | pytest suite (79 files) |
-| `vault/` | the project record: decisions, ideas, logs, literature notes, written during the work |
 
 ## Setup
 

@@ -31,3 +31,8 @@ eval/reader/*.jsonl
 # deleted the directory out from under the job scripts, which write into it
 # and fail in one second if it is missing (54209-12, 2026-09-05).
 /logs/
+
+# Personal project notes and agent instructions: not part of the public code.
+vault/
+CLAUDE.md
+.claude/
