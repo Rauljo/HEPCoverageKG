@@ -6,10 +6,10 @@ their event selection?*, *how many papers estimate a ttZ background from a contr
 region?*, *what does paper 2405.18661 measure?* Every paper in an answer comes with
 the quotes from that paper that justify it.
 
-This is the code of the MSc dissertation *Agentic GraphRAG over a knowledge graph of
-high-energy physics literature* (Raul Jose Salgado, UCL, 2026), supervised by
-Gabriel Facini. The dissertation is the documentation; this file says where things
-are and how to run them.
+This is the code of the MSc dissertation *Agentic GraphRAG for literature coverage
+review in high-energy physics* (UCL, 2026), supervised by Gabriel Facini. The
+dissertation is the documentation; this file says where things are and how to run
+them.
 
 ## What is here
 
